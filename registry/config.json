@@ -22,7 +22,6 @@
     "kleidos-dev/cla-sandbox": { "auto_approve": true }
   },
   "exempt": [
-    { "id": 28966312, "login": "jmrplens", "why": "the project owner" },
     { "id": 49699333, "login": "dependabot[bot]", "why": "Kleidos automation" },
     { "id": 41898282, "login": "github-actions[bot]", "why": "Kleidos automation" },
     { "id": 136622811, "login": "coderabbitai[bot]", "why": "review bot, co-author of suggestions applied by a signer" },
