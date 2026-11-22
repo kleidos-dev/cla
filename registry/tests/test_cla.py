@@ -233,7 +233,12 @@ class Verify(unittest.TestCase):
         return json.dumps({"schema": 1, "kind": "individual", "github_id": gid, "login_at_signing": "alice", "agreement": "kleidos-ca", "version": 1, "set_sha256": digest or CONFIG["versions"]["1"]["set_sha256"], "accepted_at": "2026-12-01T10:22:31Z", "method": "web", "evidence": {}, "recorded_at": "2026-12-01T10:23:02Z", "recorder_run_id": 1})
 
     def verify(self, since: str | None = None, verified: bool = True) -> list[str]:
-        return [f.problem for f in cla.verify_history(self.root, CONFIG, "signatures", since, lambda _sha: verified)]
+        ids = {cla.ACTIONS_BOT: cla.ACTIONS_BOT_ID, cla.OWNER_LOGIN: cla.OWNER_ID}
+
+        def info(sha: str) -> tuple[bool, int | None]:
+            return verified, ids.get(self.git("log", "-1", "--format=%an", sha))
+
+        return [f.problem for f in cla.verify_history(self.root, CONFIG, "signatures", since, info)]
 
     def test_a_clean_history_passes(self) -> None:
         self.commit_as(cla.ACTIONS_BOT, "sign: alice", {"signatures/individual/1.json": self.record(1)})

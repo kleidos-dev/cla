@@ -45,6 +45,7 @@ BRANCH = "signatures"
 OWNER_ID = 28966312
 OWNER_LOGIN = "jmrplens"
 ACTIONS_BOT = "github-actions[bot]"
+ACTIONS_BOT_ID = 41898282
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$")
 NOREPLY_RE = re.compile(r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I)
@@ -412,8 +413,15 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
     return None
 
 
-def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | None, verified: Callable[[str], bool]) -> list[Finding]:
-    """Linear, one record per commit, each GitHub's and verified (owner's redact:/entity: commits and the root aside)."""
+CommitInfo = Callable[[str], tuple[bool, int | None]]
+
+
+def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | None, info: CommitInfo) -> list[Finding]:
+    """Linear, one record per commit, each the recorder's verified commit (the owner's redact:/entity: commits and the root aside).
+
+    ``info(sha)`` answers, from GitHub, whether the commit is verified and
+    the numeric id of the account it is attributed to: a name in the git
+    metadata proves nothing, GitHub's signature check does."""
     findings: list[Finding] = []
     log = git(root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", ref, "--").strip().splitlines()
     commits = [line.split("\x00") for line in log]
@@ -428,10 +436,13 @@ def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | No
             findings.append(Finding(sha, "a merge commit: the history must be linear"))
         if i == 0 or i < start:
             continue
-        owners = author == OWNER_LOGIN and re.match(r"^(redact|entity):", subject)
+        verified, author_id = info(sha)
+        owners = author_id == OWNER_ID and re.match(r"^(redact|entity):", subject)
+        if not verified:
+            findings.append(Finding(sha, "not a verified commit"))
         changes = [line.split("\t") for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha).strip().splitlines()]
         if not owners:
-            if author != ACTIONS_BOT:
+            if author_id != ACTIONS_BOT_ID:
                 findings.append(Finding(sha, f"made by {author!r}, not by the recorder"))
             if len(changes) != 1:
                 findings.append(Finding(sha, f"changes {len(changes)} files, not one"))
@@ -443,8 +454,6 @@ def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | No
                 problem = check_record(config, path, git(root, "show", f"{sha}:{path}"))
                 if problem:
                     findings.append(Finding(sha, f"{path}: {problem}"))
-            if not verified(sha):
-                findings.append(Finding(sha, "not a verified commit"))
     return findings
 
 
@@ -493,10 +502,11 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         return 0
 
-    def verified(sha: str) -> bool:
-        return bool(gh.get(f"/repos/{registry}/commits/{sha}")["commit"]["verification"]["verified"])
+    def info(sha: str) -> tuple[bool, int | None]:
+        c = gh.get(f"/repos/{registry}/commits/{sha}")
+        return bool(c["commit"]["verification"]["verified"]), (c.get("author") or {}).get("id")
 
-    findings = verify_history(ROOT, config, args.ref, args.since, verified)
+    findings = verify_history(ROOT, config, args.ref, args.since, info)
     if args.merged_since:
         findings += verify_coverage(gh, config, registry, max(args.merged_since, config.get("coverage_from", "")))
     for f in findings:
