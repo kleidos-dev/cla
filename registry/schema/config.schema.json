@@ -10,6 +10,7 @@
     "agreement": { "const": "kleidos-ca" },
     "current_version": { "type": "integer", "minimum": 1 },
     "coverage_from": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Pull requests merged before this date predate the register and need no coverage record" },
+    "app_id": { "type": ["integer", "null"], "minimum": 1, "description": "The numeric id of the GitHub App kleidos-cla, once it exists: an acceptance posted through it is recorded with method web, any other with method comment" },
     "accepted_versions": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "uniqueItems": true },
     "versions": {
       "type": "object",
@@ -40,7 +41,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["auto_approve"],
-          "properties": { "auto_approve": { "type": "boolean" } }
+          "properties": { "auto_approve": { "type": "boolean", "description": "Whether the app approves the held fork runs of a pull request whose authors have all signed. Never true on a repository whose workflows can reach a self-hosted runner (registry/README.md)" } }
         }
       },
       "additionalProperties": false

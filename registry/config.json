@@ -4,6 +4,7 @@
   "current_version": 1,
   "accepted_versions": [1],
   "coverage_from": "2026-11-23",
+  "app_id": null,
   "versions": {
     "1": {
       "path": "agreements/v1",

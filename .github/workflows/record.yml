@@ -36,8 +36,13 @@ on:
 
 permissions: {}
 
+# One group per target, not one for the whole register: a group holds one
+# running and one pending run and cancels any older pending one, so a
+# shared group dropped recordings under a burst. Runs for different targets
+# race only on the signatures branch, and commit_file retries when the
+# branch moved under it. Two dispatches for the same target keep the newer.
 concurrency:
-  group: record
+  group: record-${{ inputs.kind }}-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.comment_id }}
   cancel-in-progress: false
 
 jobs:
@@ -70,9 +75,14 @@ jobs:
             [[ "$COMMENT_ID" =~ ^[1-9][0-9]{0,14}$ ]] || { echo "bad comment id"; exit 2; }
             args+=(--comment-id "$COMMENT_ID")
           fi
-          python3 -I registry/cla.py "${args[@]}"
+          # Exit 3 is a refusal (an author without a signature, or one that
+          # cannot be identified); anything else is a failure to retry.
+          rc=0
+          python3 -I registry/cla.py "${args[@]}" || rc=$?
+          if [[ $rc -eq 3 ]]; then echo "refused=true" >> "$GITHUB_OUTPUT"; fi
+          exit "$rc"
       - name: Report a merged pull request the register cannot cover
-        if: failure() && inputs.kind == 'coverage'
+        if: failure() && inputs.kind == 'coverage' && steps.record.outputs.refused == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ inputs.repo }}
