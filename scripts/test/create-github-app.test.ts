@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { createPublicKey, generateKeyPairSync, randomBytes, createSign, createVerify } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, "..", "create-github-app.ts");
 const FAKE = join(here, "fake-wrangler.mjs");
+const WORKER_DIR = join(here, "..", "..", "worker");
 const NAMES = ["APP_ID", "APP_PRIVATE_KEY", "CLIENT_ID", "CLIENT_SECRET", "WEBHOOK_SECRET", "SESSION_KEY"];
 
 const EXPECTED = {
@@ -28,7 +29,7 @@ const EXPECTED = {
   setup_url: "https://cla.kleidos.dev/setup",
   setup_on_update: false,
   request_oauth_on_install: false,
-  default_permissions: { metadata: "read", contents: "read", pull_requests: "write", checks: "write", statuses: "write", actions: "write" },
+  default_permissions: { metadata: "read", contents: "read", pull_requests: "write", checks: "write", actions: "write" },
   default_events: ["pull_request", "check_run", "workflow_run"],
 };
 
@@ -37,6 +38,7 @@ interface Mock {
   url: string;
   conversions: number;
   manifestErrors: string[];
+  owner: { id: number; login: string };
   publicPem: string;
   secrets: { client_secret: string; webhook_secret: string; pem: string };
 }
@@ -57,6 +59,7 @@ async function mockGitHub(): Promise<Mock> {
     url: "",
     conversions: 0,
     manifestErrors: [],
+    owner: { id: 357318718, login: "kleidos-dev" },
     publicPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
     secrets: { client_secret: `cs_${randomBytes(20).toString("hex")}`, webhook_secret: `wh_${randomBytes(20).toString("hex")}`, pem },
   };
@@ -79,7 +82,7 @@ async function mockGitHub(): Promise<Mock> {
       if (req.method === "POST" && url.pathname === "/app-manifests/abc123def456/conversions") {
         m.conversions++;
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: 4242, slug: "kleidos-cla", client_id: "Iv23liMOCK", html_url: "https://github.com/apps/kleidos-cla", ...m.secrets }));
+        res.end(JSON.stringify({ id: 4242, slug: "kleidos-cla", owner: m.owner, client_id: "Iv23liMOCK", html_url: "https://github.com/apps/kleidos-cla", ...m.secrets }));
         return;
       }
       res.writeHead(404).end();
@@ -93,19 +96,45 @@ async function mockGitHub(): Promise<Mock> {
 interface Run {
   code: number;
   out: string;
-  calls: { args: string[]; input: string }[];
+  calls: { args: string[]; input: string; cwd: string }[];
   work: string;
   tmp: string;
 }
 
-async function runScript(mock: Mock, opts: { fail?: string; whoami?: string; tamperState?: boolean } = {}): Promise<Run> {
+function rawGet(url: string, host: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(url, { headers: { host } }, (res) => {
+      let body = "";
+      res.on("data", (d: Buffer) => (body += d.toString()));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+interface Opts {
+  fail?: string;
+  whoami?: string;
+  list?: string;
+  wrangler?: string;
+  test?: boolean;
+  /** PATH for the script's children; empty keeps a real wrangler from starting at all. */
+  path?: string;
+  /** Before the genuine redirect: a stray callback with a forged state, and a request under another Host. */
+  stray?: boolean;
+  hostProbe?: { status: number; body: string } | null;
+}
+
+async function runScript(mock: Mock, opts: Opts = {}): Promise<Run> {
   const work = mkdtempSync(join(tmpdir(), "cla-work-"));
   const tmp = mkdtempSync(join(tmpdir(), "cla-tmp-"));
   const logDir = mkdtempSync(join(tmpdir(), "cla-log-"));
   const log = join(logDir, "wrangler.jsonl");
-  const child = spawn(process.execPath, [SCRIPT], {
+  // Run from an unrelated directory: the script must find worker/ by itself.
+  const child = spawn(process.execPath, [SCRIPT, ...(opts.test === false ? [] : ["--test"])], {
     cwd: work,
-    env: { PATH: process.env.PATH, HOME: work, TMPDIR: tmp, GITHUB_WEB_URL: mock.url, GITHUB_API_URL: mock.url, WRANGLER_BIN: FAKE, FAKE_WRANGLER_LOG: log, FAKE_WRANGLER_FAIL: opts.fail ?? "", FAKE_WRANGLER_WHOAMI: opts.whoami ?? "" },
+    env: { PATH: opts.path ?? process.env.PATH, HOME: work, TMPDIR: tmp, CLA_TEST_GITHUB_WEB: mock.url, CLA_TEST_GITHUB_API: mock.url, CLA_TEST_WRANGLER: opts.wrangler ?? FAKE, FAKE_WRANGLER_LOG: log, FAKE_WRANGLER_FAIL: opts.fail ?? "", FAKE_WRANGLER_WHOAMI: opts.whoami ?? "", FAKE_WRANGLER_LIST: opts.list ?? "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
@@ -131,9 +160,13 @@ async function runScript(mock: Mock, opts: { fail?: string; whoami?: string; tam
     const html = await (await fetch(local)).text();
     const action = /action="([^"]+)"/.exec(html)![1]!.replaceAll("&amp;", "&");
     const manifest = /name="manifest" value="([^"]+)"/.exec(html)![1]!.replace(/&(quot|amp|lt|gt|#39);/g, (_, e: string) => ({ quot: '"', amp: "&", lt: "<", gt: ">", "#39": "'" })[e]!);
+    if (opts.stray) {
+      opts.hostProbe = await rawGet(local, "rebound.example:80");
+      const forged = await fetch(`${local}callback?code=abc123def456&state=forged`);
+      assert.equal(forged.status, 400);
+    }
     const gh = await fetch(action, { method: "POST", body: new URLSearchParams({ manifest }), redirect: "manual" });
-    let back = gh.headers.get("location")!;
-    if (opts.tamperState) back = back.replace(/state=[^&]+/, "state=forged");
+    const back = gh.headers.get("location")!;
     await fetch(back).then((r) => r.text());
   }
   const code = await exited;
@@ -173,7 +206,7 @@ describe("create-github-app.ts", () => {
     assert.equal(r.code, 0, r.out);
     assert.deepEqual(mock.manifestErrors, []);
     assert.equal(r.calls[0]!.args[0], "whoami");
-    const puts = r.calls.filter((c) => c.args[0] === "secret");
+    const puts = r.calls.filter((c) => c.args[0] === "secret" && c.args[1] === "put");
     assert.deepEqual(puts.map((c) => c.args), NAMES.map((n) => ["secret", "put", n, "--name", "kleidos-cla"]));
     const v = Object.fromEntries(puts.map((c) => [c.args[2]!, c.input]));
     assert.equal(v.APP_ID, "4242");
@@ -198,13 +231,59 @@ describe("create-github-app.ts", () => {
     assert.match(r.out, /apps\/kleidos-cla\/installations\/new/);
   });
 
-  it("a wrong state aborts before the exchange", async () => {
+  it("runs the pinned wrangler inside worker/, whatever the caller's directory", async () => {
+    const r = await runScript(mock);
+    assert.equal(r.code, 0, r.out);
+    assert.ok(r.calls.length > 0);
+    for (const c of r.calls) assert.equal(c.cwd, WORKER_DIR);
+    assert.deepEqual(r.calls.slice(0, 2).map((c) => c.args), [["whoami"], ["secret", "list", "--name", "kleidos-cla"]]);
+  });
+
+  it("refuses before showing anything when wrangler is missing or cannot reach the Worker", async () => {
+    const missing = await runScript(mock, { wrangler: join(here, "no-such-wrangler") });
+    assert.equal(missing.code, 2);
+    assert.match(missing.out, /npm ci/);
+    assert.doesNotMatch(missing.out, /Open http/);
+    const unreachable = await runScript(mock, { list: "fail" });
+    assert.equal(unreachable.code, 2);
+    assert.match(unreachable.out, /cannot reach the Worker kleidos-cla/);
+    assert.doesNotMatch(unreachable.out, /Open http/);
+  });
+
+  it("without --test the test endpoints are ignored", async () => {
+    // It then looks for the real wrangler of worker/ (kept from starting by an empty PATH) and never for the fake.
     const before = mock.conversions;
-    const r = await runScript(mock, { tamperState: true });
-    assert.notEqual(r.code, 0);
+    const r = await runScript(mock, { test: false, path: "" });
+    assert.equal(r.code, 2);
+    assert.doesNotMatch(r.out, /Test mode/);
+    assert.match(r.out, /npm ci|wrangler login/);
     assert.equal(mock.conversions, before);
-    assert.equal(r.calls.filter((c) => c.args[0] === "secret").length, 0);
-    assert.match(r.out, /state of the redirect does not match/);
+    assert.equal(r.calls.length, 0);
+  });
+
+  it("a stray callback or another Host is refused and the genuine redirect still completes", async () => {
+    const before = mock.conversions;
+    const opts: Opts = { stray: true };
+    const r = await runScript(mock, opts);
+    assert.equal(r.code, 0, r.out);
+    assert.equal(opts.hostProbe?.status, 421);
+    assert.doesNotMatch(opts.hostProbe?.body ?? "", /state=/);
+    assert.equal(mock.conversions, before + 1);
+    assert.equal(r.calls.filter((c) => c.args[0] === "secret" && c.args[1] === "put").length, 6);
+    assert.match(r.out, /Refused a redirect whose state does not match/);
+  });
+
+  it("an app that is not kleidos-cla of kleidos-dev stores nothing", async () => {
+    mock.owner = { id: 1, login: "someone-else" };
+    try {
+      const r = await runScript(mock);
+      assert.notEqual(r.code, 0);
+      assert.equal(r.calls.filter((c) => c.args[0] === "secret" && c.args[1] === "put").length, 0);
+      assert.doesNotMatch(r.out, /installations\/new/);
+      assert.match(r.out, /Nothing was stored/);
+    } finally {
+      mock.owner = { id: 357318718, login: "kleidos-dev" };
+    }
   });
 
   it("a failing wrangler exits non-zero and names what was not stored", async () => {
@@ -212,6 +291,7 @@ describe("create-github-app.ts", () => {
     assert.notEqual(r.code, 0);
     assert.match(r.out, /NOT stored: CLIENT_SECRET\./);
     assert.match(r.out, /Stored in the Worker kleidos-cla: APP_ID, APP_PRIVATE_KEY, CLIENT_ID, WEBHOOK_SECRET, SESSION_KEY\./);
+    // The fake wrangler echoed the value it refused: none of it reaches the output.
     assert.ok(!r.out.includes(mock.secrets.client_secret));
   });
 
