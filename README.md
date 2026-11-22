@@ -113,10 +113,12 @@ The code:
 
 ## Setting it up (owner)
 
+Done already: this repository, its `signatures` branch, and the Queue `kleidos-cla` in the Cloudflare account "Kleidos". The rest needs the owner's own credentials:
+
 1. `cd worker && npm ci && npx wrangler login`.
-2. `node ../scripts/create-github-app.ts` and open the address it prints. It posts the manifest (public app, the permissions `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write`, `statuses: write`, `actions: write`, the events `pull_request`, `check_run`, `workflow_run`) to GitHub, exchanges the code and pipes `APP_ID`, `APP_PRIVATE_KEY` (converted to PKCS#8), `CLIENT_ID`, `CLIENT_SECRET`, `WEBHOOK_SECRET` and a new `SESSION_KEY` into `wrangler secret put`. Nothing secret is printed or written to disk.
-3. Install the app on `kleidos-dev`, on selected repositories only; add its bot account id to the `exempt` list.
-4. `npm run deploy` from a clean checkout of a signed commit (it checks the digests first). Until the secrets exist, the Worker serves the texts and answers 503 on everything else.
+2. `npm run deploy` from a clean checkout of a signed commit of `main`: it checks the digests and that the tree is clean, then deploys the Worker `kleidos-cla` with its custom domain `cla.kleidos.dev` (the DNS record and the certificate are made by Cloudflare), the Queue consumer and the cron. Until the secrets exist the Worker serves the texts and `/healthz` and answers 503 on everything else.
+3. `node ../scripts/create-github-app.ts` and open the address it prints. It posts the manifest (public app; permissions `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write`, `statuses: write`, `actions: write`; events `pull_request`, `check_run`, `workflow_run`) to GitHub, exchanges the code and pipes `APP_ID`, `APP_PRIVATE_KEY` (converted to PKCS#8), `CLIENT_ID`, `CLIENT_SECRET`, `WEBHOOK_SECRET` and a new `SESSION_KEY` into `wrangler secret put`. Nothing secret is printed or written to disk.
+4. Install the app on `kleidos-dev`, on selected repositories only (`cla` and `cla-sandbox` first), and add its bot account id to the `exempt` list of `registry/config.json`.
 5. After the check has reported once on a repository, require `📝 CLA` there, pinned to the app id.
 
 ## Licence
