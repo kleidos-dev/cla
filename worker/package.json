@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ../scripts/tsconfig.json",
     "test": "vitest run",
-    "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
+    "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && git verify-commit HEAD && git fetch --quiet origin main && git merge-base --is-ancestor HEAD origin/main && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
     "test:scripts": "node --test ../scripts/test/"
   },
   "devDependencies": {

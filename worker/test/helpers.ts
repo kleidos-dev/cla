@@ -7,7 +7,7 @@ import type { QueueMessage } from "../src/messages";
 import { resetRegistryCache } from "../src/registry";
 import { b64urlEncode, hex, utf8 } from "../src/util";
 import type { FakePr, User } from "./fakegh";
-import { APP_ID, CLIENT_ID, CLIENT_SECRET, FakeGitHub, REGISTRY, commit, sha } from "./fakegh";
+import { APP_ID, CLIENT_ID, CLIENT_SECRET, FakeGitHub, ORG_ID, REGISTRY, commit, sha } from "./fakegh";
 import configJson from "../../registry/config.json";
 
 export const ORIGIN = "https://cla.kleidos.dev";
@@ -120,7 +120,7 @@ export async function webhook(w: World, event: string, payload: unknown, opts: {
 }
 
 export function prEvent(pr: FakePr, action: string, extra: Record<string, unknown> = {}) {
-  return { action, number: pr.number, pull_request: { number: pr.number }, repository: { full_name: pr.repo, id: 1 }, installation: { id: 1 }, ...extra };
+  return { action, number: pr.number, pull_request: { number: pr.number }, repository: { full_name: pr.repo, id: 1, owner: { id: ORG_ID } }, installation: { id: 1 }, ...extra };
 }
 
 export function openPr(w: World, opener: User, opts: { repo?: string; number?: number; commits?: FakePr["commits"]; files?: FakePr["files"]; fork?: string } = {}): FakePr {

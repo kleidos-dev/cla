@@ -2,13 +2,22 @@
 import type { Account, CommitNode } from "./authors";
 import { commitAuthors } from "./authors";
 import type { GitHub } from "./github";
+import { GitHubError } from "./github";
 import type { Config, Registry, SignatureRecord } from "./registry";
 import { coveringEntity, recordValid } from "./registry";
 import { normalizeSentence } from "./util";
 
 export const CHECK_NAME = "📝 CLA";
 export const MARKER = "<!-- kleidos-cla:v1 -->";
-export const MAX_COMMITS = 1000;
+/** GitHub lists at most 250 commits of a pull request (REST and GraphQL alike); more cannot be checked. */
+export const MAX_COMMITS = 250;
+
+/** The pull request's head moved while it was being read: nothing read can be pinned to one commit. */
+export class HeadMovedError extends Error {
+  constructor() {
+    super("head moved");
+  }
+}
 
 export interface PullRequest {
   number: number;
@@ -16,9 +25,10 @@ export interface PullRequest {
   merged: boolean;
   locked: boolean;
   html_url: string;
+  created_at: string;
   user: { id: number; login: string; type: string };
   head: { sha: string; repo: { full_name: string } | null };
-  base: { repo: { id: number; full_name: string; private: boolean } };
+  base: { sha: string; repo: { id: number; full_name: string; private: boolean } };
   changed_files?: number;
 }
 
@@ -56,11 +66,12 @@ export interface Assessment {
   botComment: { id: number; body: string } | null;
 }
 
-const COMMITS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid message authoredDate parents{totalCount} authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}`;
+const COMMITS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid message authoredDate parents{totalCount} authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}`;
 
 interface CommitsPage {
   repository: {
     pullRequest: {
+      headRefOid: string;
       commits: { totalCount: number; pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: { commit: CommitNode }[] };
     } | null;
   } | null;
@@ -88,7 +99,12 @@ export function isBotComment(c: IssueComment, appId: number): boolean {
  * has: the opener, every commit author and co-author, less the exempt ids
  * and the accounts an entity covers on the commit's date, plus the openers
  * of other open pull requests with the same head commit (a check belongs to
- * a commit). Every fact comes from GitHub at this moment.
+ * a commit). Every fact comes from GitHub at this moment, and every page
+ * of commits is checked against the head commit read first, so what is
+ * assessed is that one commit (HeadMovedError otherwise).
+ *
+ * The opener is dated by the pull request's creation, every author by the
+ * commit's authored date; the recorder (registry/cla.py) uses the same rule.
  */
 export async function assess(gh: GitHub, registry: Registry, config: Config, repo: string, prNumber: number, token: string): Promise<Assessment> {
   const appId = Number(gh.env.APP_ID);
@@ -104,7 +120,7 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
     if (hit) hit.dates.push(date);
     else authorsById.set(a.id, { account: a, dates: [date] });
   };
-  add(opener, new Date().toISOString().slice(0, 10));
+  add(opener, pr.created_at.slice(0, 10));
 
   const unknownCommits: string[] = [];
   let tooManyCommits = false;
@@ -112,27 +128,33 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
   let seen = 0;
   for (;;) {
     const page: CommitsPage = await gh.graphql<CommitsPage>(token, COMMITS_QUERY, { owner, name, number: prNumber, cursor });
-    const commits = page.repository?.pullRequest?.commits;
-    if (!commits) break;
+    const pull = page.repository?.pullRequest;
+    if (!pull?.commits) throw new GitHubError(200, "bad_response");
+    if (pull.headRefOid !== pr.head.sha) throw new HeadMovedError();
+    const commits = pull.commits;
     if (commits.totalCount > MAX_COMMITS) {
       tooManyCommits = true;
       break;
     }
     for (const { commit } of commits.nodes) {
       seen++;
-      if (commit.parents.totalCount > 1) continue;
+      // Merge commits count like any other: a merge can carry changes of its own.
       const ca = commitAuthors(commit);
       if (ca.unidentified > 0 || ca.tooMany) unknownCommits.push(commit.oid.slice(0, 7));
       for (const a of ca.accounts) add(a, ca.date);
     }
-    if (!commits.pageInfo.hasNextPage || seen >= MAX_COMMITS) break;
+    if (!commits.pageInfo.hasNextPage || seen >= MAX_COMMITS) {
+      // Fewer commits seen than GitHub counts: the list was cut, so not every author is known.
+      if (seen < commits.totalCount) tooManyCommits = true;
+      break;
+    }
     cursor = commits.pageInfo.endCursor;
   }
 
   if (pr.state === "open") {
     const open = await gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
     for (const other of open.items) {
-      if (other.number !== pr.number && other.head.sha === pr.head.sha) add(accountOf(other.user), new Date().toISOString().slice(0, 10));
+      if (other.number !== pr.number && other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
     }
   }
 

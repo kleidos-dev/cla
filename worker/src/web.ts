@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { AGREEMENT_VERSION, FILES, NOTICES, checkIntegrity } from "./agreement";
 import type { Assessment } from "./assess";
-import { assess } from "./assess";
+import { HeadMovedError, acceptedSentences, assess } from "./assess";
 import type { Bot } from "./bot";
 import type { ConfiguredEnv } from "./env";
 import { GitHubError, NotAllowedError, WEB } from "./github";
@@ -14,7 +14,7 @@ import type { Config, SignatureRecord } from "./registry";
 import { recordValid } from "./registry";
 import type { Session } from "./session";
 import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, SESSION_TTL, clearCookie, readSession, readTransaction, sessionCookie, transactionCookie } from "./session";
-import { b64urlEncode, clientIp, isLogin, nowSeconds, randomB64url, safeEqual, utf8 } from "./util";
+import { b64urlEncode, clientIp, isLogin, normalizeSentence, nowSeconds, randomB64url, readCapped, safeEqual, utf8 } from "./util";
 
 export const MAX_FORM_BYTES = 4096;
 const SIGN_PATH = /^\/sign\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/([1-9][0-9]{0,9})$/;
@@ -136,6 +136,7 @@ async function signerStatus(bot: Bot, config: Config, t: Target, account: { id: 
 function guard<T>(fn: () => Promise<T>): Promise<T | Response> {
   return fn().catch(async (e: unknown) => {
     if (e instanceof NotAllowedError) return messagePage(404, "Not served", "This repository is not served by the Kleidos CLA bot.");
+    if (e instanceof HeadMovedError) return messagePage(503, "The pull request changed", "The pull request received new commits while it was being read. Nothing was posted. Reload this page.");
     if (e instanceof GitHubError) {
       log("github error", { status: e.status, reason: e.kind, request_id: e.requestId });
       if (e.kind === "rate_limited") return messagePage(429, "GitHub is rate limiting", "GitHub asked us to slow down. Wait a minute and reload this page.");
@@ -156,6 +157,7 @@ async function servedTarget(bot: Bot, path: string): Promise<{ t: Target; config
 
 export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys, path: string): Promise<Response> {
   if (!(await env.RL_SIGN.limit({ key: clientIp(req) })).success) return messagePage(429, "Too many requests", "Too many requests from your network. Wait a minute and reload this page.");
+  let replaced: string | null = null;
   const r = await guard(async () => {
     const st = await servedTarget(bot, path);
     if (!st) return messagePage(404, "Not found", "There is no pull request to sign for at this address.");
@@ -168,16 +170,18 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       return page(`${head}\n${off}\n${SUMMARY}\n${await versionLine(env)}\n<p><a href="#before">Jump to the acceptance</a></p>\n${signing.on ? signInLink(t) + GITHUB_SCREEN : ""}\n${agreementText("individual")}\n${BEFORE}\n${signing.on ? signInLink(t) : ""}`, { title: `Sign the Kleidos Contributor Agreement · ${t.repo}#${t.pr}` });
     }
     const logoutCsrf = await csrfToken(keys.csrf, [session.sid, "logout"]);
+    let notice = "";
     if (session.pending && session.pending.repo === t.repo && session.pending.pr === t.pr) {
       const rec = await bot.registry.signature(session.id);
       const recorded = recordValid(config, rec);
-      const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;
-      const path2 = `signatures/individual/${session.id}.json`;
-      const entry = recorded
-        ? `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/${commit ?? "signatures"}/${path2}">${path2}</a>`
-        : "being recorded (this page refreshes itself)";
-      return page(
-        `<h1>Your acceptance</h1>
+      if (recorded || (await acceptanceStands(bot, config, t, session.id, session.pending.comment_id))) {
+        const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;
+        const path2 = `signatures/individual/${session.id}.json`;
+        const entry = recorded
+          ? `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/${commit ?? "signatures"}/${path2}">${path2}</a>`
+          : `being recorded, usually within a minute. <a href="${escapeHtml(t.path)}">Check again</a>`;
+        return page(
+          `<h1>Your acceptance</h1>
 <div class="box ok" role="status">
 <p>You accepted the Kleidos Contributor Agreement.</p>
 <ul>
@@ -188,13 +192,19 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
 <li>Register entry: ${entry}</li>
 </ul>
 </div>
-<p>This page is your confirmation: save or print it. The full text you accepted stays at <a href="/agreement">cla.kleidos.dev/agreement</a>, and the check on ${prLink(t)} turns green once the entry is recorded.</p>
+<p>This page is your confirmation: save or print it. The full text you accepted stays at <a href="/agreement">cla.kleidos.dev/agreement</a>, and the check on ${prLink(t)} turns green by itself once the entry is recorded.</p>
 ${whoami(session, t, logoutCsrf)}`,
-        { title: "Your acceptance · Kleidos Contributor Agreement", headers: recorded ? {} : { refresh: "20" } },
-      );
+          { title: "Your acceptance · Kleidos Contributor Agreement" },
+        );
+      }
+      // The acceptance comment was edited or deleted, so the recorder will refuse it: say so and let the signer sign again.
+      const rest: Session = { ...session };
+      delete rest.pending;
+      replaced = await sessionCookie(keys, rest);
+      notice = `<div class="box alert" role="alert"><p>Your acceptance comment on this pull request was edited or deleted, so it cannot be recorded. Nothing is kept from it. To accept, sign in again below.</p></div>`;
     }
     const s = await signerStatus(bot, config, t, session);
-    const who = whoami(session, t, logoutCsrf);
+    const who = notice + whoami(session, t, logoutCsrf);
     switch (s.status) {
       case "private":
         return messagePage(404, "Not found", "There is no pull request to sign for at this address.");
@@ -223,7 +233,20 @@ ${whoami(session, t, logoutCsrf)}`,
       }
     }
   });
+  if (replaced) r.headers.append("set-cookie", replaced);
   return r;
+}
+
+/** Whether an acceptance comment still exists, is the account's own, unedited, and is an accepted sentence: what the recorder will check. */
+async function acceptanceStands(bot: Bot, config: Config, t: Target, account: number, commentId: number): Promise<boolean> {
+  const token = await bot.gh.token([t.repo], { pull_requests: "read" });
+  try {
+    const c = (await bot.gh.request<{ body: string; created_at: string; updated_at: string; user: { id: number } | null }>("GET", `/repos/${t.repo}/issues/comments/${commentId}`, { token })).data;
+    return c.user?.id === account && c.updated_at === c.created_at && acceptedSentences(config).has(normalizeSentence(c.body));
+  } catch (e) {
+    if (e instanceof GitHubError && e.kind === "not_found") return false;
+    throw e;
+  }
 }
 
 async function pkceChallenge(verifier: string): Promise<string> {
@@ -261,15 +284,17 @@ export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys:
   if (!(await env.RL_AUTH.limit({ key: clientIp(req) })).success) return messagePage(429, "Too many requests", "Too many sign-in attempts from your network. Wait a minute and try again.");
   const clear = clearCookie(OAUTH_COOKIE);
   const tx = await readTransaction(req, keys);
-  const back = tx ? { href: tx.return, label: "Back to the sign page" } : undefined;
-  if (url.searchParams.get("error")) return messagePage(400, "Authorization cancelled", "GitHub's authorization was cancelled, so nothing was signed or posted.", back, [clear]);
   if (!tx) return messagePage(400, "Session expired", "The sign-in took too long or was already used. Go back to the pull request and follow its link again.", undefined, [clear]);
+  const back = { href: tx.return, label: "Back to the sign page" };
   const state = url.searchParams.get("state") ?? "";
   const code = url.searchParams.get("code") ?? "";
+  // The state is compared before anything else, the error branch included:
+  // a redirect that did not come from this sign-in leaves it untouched.
   if (!safeEqual(state, tx.state)) {
     log("oauth refused", { reason: "state" });
-    return messagePage(400, "Sign-in refused", "This sign-in did not start here. Nothing was signed. Follow the pull request's link again.", undefined, [clear]);
+    return messagePage(400, "Sign-in refused", "This sign-in did not start here. Nothing was signed. Follow the pull request's link again.", url.searchParams.get("error") ? back : undefined);
   }
+  if (url.searchParams.get("error")) return messagePage(400, "Authorization cancelled", "GitHub's authorization was cancelled, so nothing was signed or posted.", back, [clear]);
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(code)) return messagePage(400, "Sign-in refused", "GitHub's answer was not valid. Follow the pull request's link again.", undefined, [clear]);
   const r = await guard(async () => {
     const st = await servedTarget(bot, tx.return);
@@ -297,7 +322,7 @@ export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys:
     const keep = s.status === "must_sign";
     if (!keep) await revokeGrant(env, bot, token);
     const session: Session = { v: 1, sid: randomB64url(16), id: user.id, login: user.login, type: user.type, exp: nowSeconds() + SESSION_TTL, ...(keep ? { token, for: `${st.t.repo}#${st.t.pr}` } : {}) };
-    log("signed in", { account: user.id, repo: st.t.repo, pr: st.t.pr, outcome: s.status });
+    log("signed in", { repo: st.t.repo, pr: st.t.pr, outcome: s.status });
     return redirect(st.t.path, 303, [clear, await sessionCookie(keys, session)]);
   });
   return r;
@@ -311,10 +336,8 @@ function sameOrigin(req: Request, env: ConfiguredEnv): boolean {
 
 async function readForm(req: Request): Promise<URLSearchParams | null> {
   if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) return null;
-  const length = Number.parseInt(req.headers.get("content-length") ?? "0", 10);
-  if (length > MAX_FORM_BYTES) return null;
-  const buf = await req.arrayBuffer();
-  if (buf.byteLength > MAX_FORM_BYTES) return null;
+  const buf = await readCapped(req, MAX_FORM_BYTES);
+  if (!buf) return null;
   return new URLSearchParams(new TextDecoder().decode(buf));
 }
 
@@ -340,7 +363,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   const version = Number(form.get("version"));
   const csrfOk = await csrfVerify(keys.csrf, [session.sid, "agree", `${t.repo}#${t.pr}`, String(version)], form.get("csrf") ?? "");
   if (!csrfOk) {
-    log("agree refused", { reason: "csrf", account: session.id });
+    log("agree refused", { reason: "csrf" });
     return messagePage(403, "Refused", "This form is out of date or was not made for you, so nothing was posted. Reload the sign page and try again.", { href: t.path, label: "Back to the sign page" });
   }
   if (form.get("accept") !== "yes") return messagePage(400, "Not accepted", "The box was not ticked, so nothing was posted.", { href: t.path, label: "Back to the sign page" });
@@ -356,7 +379,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
     }
     const s = await signerStatus(bot, config, t, session);
     if (s.status !== "must_sign") {
-      log("agree refused", { reason: s.status, account: session.id, repo: t.repo, pr: t.pr });
+      log("agree refused", { reason: s.status, repo: t.repo, pr: t.pr });
       const why: Record<string, [number, string]> = {
         closed: [409, "This pull request is closed, so nothing was posted."],
         locked: [409, "This pull request is locked, so nothing was posted."],
@@ -367,26 +390,41 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
       const [status, sentence] = why[s.status] ?? [403, `@${session.login} does not need to sign on this pull request, so nothing was posted.`];
       return messagePage(status, "Nothing posted", sentence, { href: t.path, label: "Back to the sign page" });
     }
+    const confirm = async (c: { id: number; html_url: string; created_at: string }, queue: boolean): Promise<Response> => {
+      const next: Session = { v: 1, sid: session.sid, id: session.id, login: session.login, type: session.type, exp: session.exp, pending: { repo: t.repo, pr: t.pr, comment_id: c.id, comment_url: c.html_url, at: c.created_at } };
+      if (queue) {
+        try {
+          await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr, record_comment: c.id });
+        } catch {
+          log("enqueue failed", { repo: t.repo, pr: t.pr });
+        }
+      }
+      return redirect(t.path, 303, [await sessionCookie(keys, next)]);
+    };
+    // A second submission (a double click, a reload of the post) finds the first acceptance and confirms it.
+    const already = (assessed: Assessment) => assessed.acceptances.find((x) => x.account === session.id && !x.edited);
+    const earlier = already(s.a);
+    if (earlier) {
+      await revokeGrant(env, bot, session.token!);
+      return confirm({ id: earlier.commentId, html_url: earlier.commentUrl, created_at: earlier.createdAt }, false);
+    }
     const sentence = sentenceFor(AGREEMENT_VERSION, signing.setSha256);
     let posted: { id: number; html_url: string; created_at: string };
     try {
       posted = (await bot.gh.request<{ id: number; html_url: string; created_at: string }>("POST", `/repos/${t.repo}/issues/${t.pr}/comments`, { token: session.token! }, { body: sentence })).data;
     } catch (e) {
       if (e instanceof GitHubError && (e.kind === "unauthorized" || e.kind === "forbidden" || e.kind === "not_found")) {
-        log("agree refused", { reason: "github_" + e.kind, account: session.id });
+        log("agree refused", { reason: "github_" + e.kind, repo: t.repo, pr: t.pr });
+        // The grant may have been revoked by a first submission that did post: look before saying nothing was posted.
+        const again = already((await signerStatus(bot, config, t, session)).a);
+        if (again) return confirm({ id: again.commentId, html_url: again.commentUrl, created_at: again.createdAt }, false);
         return messagePage(401, "Sign in again", "GitHub did not accept the comment with your sign-in (it may have expired or been revoked). Nothing was posted.", { href: t.path, label: "Back to the sign page" }, [clearCookie(SESSION_COOKIE)]);
       }
       throw e;
     }
     await revokeGrant(env, bot, session.token!);
-    const next: Session = { v: 1, sid: session.sid, id: session.id, login: session.login, type: session.type, exp: session.exp, pending: { repo: t.repo, pr: t.pr, comment_id: posted.id, comment_url: posted.html_url, at: posted.created_at } };
-    try {
-      await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr, record_comment: posted.id });
-    } catch {
-      log("enqueue failed", { repo: t.repo, pr: t.pr });
-    }
-    log("signed", { account: session.id, repo: t.repo, pr: t.pr });
-    return redirect(t.path, 303, [await sessionCookie(keys, next)]);
+    log("signed", { repo: t.repo, pr: t.pr });
+    return confirm(posted, true);
   });
   return r;
 }

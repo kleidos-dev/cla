@@ -70,7 +70,7 @@ async function publicRoute(path: string, env: Env): Promise<Response | null> {
       return securityTxt(env);
   }
   const file = /^\/agreement\/v(\d+)\/([A-Za-z0-9.]+)$/.exec(path);
-  if (file && Number(file[1]) === AGREEMENT_VERSION && FILES[file[2]!] !== undefined) {
+  if (file && Number(file[1]) === AGREEMENT_VERSION && Object.hasOwn(FILES, file[2]!)) {
     const name = file[2]!;
     const h = securityHeaders(new Headers({ "content-type": name.endsWith(".md") ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${name}"` }), "public");
     return new Response(FILES[name], { headers: h });

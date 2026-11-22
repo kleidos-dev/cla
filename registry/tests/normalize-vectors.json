@@ -1,0 +1,41 @@
+{
+  "comment": "Shared by registry/tests/test_cla.py and worker/test/texts.test.ts: both normalisations must give these outputs.",
+  "vectors": [
+    {
+      "in": "  a \n\t b  ",
+      "out": "a b"
+    },
+    {
+      "in": "\ufeffa b\ufeff",
+      "out": "a b"
+    },
+    {
+      "in": "a\u001cb\u001fc",
+      "out": "a b c"
+    },
+    {
+      "in": "a\u0085b",
+      "out": "a b"
+    },
+    {
+      "in": "a\u00a0\u2003\u3000b",
+      "out": "a b"
+    },
+    {
+      "in": "a\u2028\u2029b",
+      "out": "a b"
+    },
+    {
+      "in": "e\u0301",
+      "out": "\u00e9"
+    },
+    {
+      "in": "a\u200bb",
+      "out": "a\u200bb"
+    },
+    {
+      "in": "\u0430",
+      "out": "\u0430"
+    }
+  ]
+}

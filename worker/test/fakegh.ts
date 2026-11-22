@@ -34,7 +34,13 @@ export interface FakePr {
   head: { sha: string; repo: string };
   files: { filename: string; previous_filename?: string }[];
   commits: CommitNode[];
+  created_at?: string;
+  merged_at?: string | null;
 }
+
+/** The `.github` tree object of every base commit in the fake. */
+export const BASE_GITHUB_TREE = "9".repeat(40);
+export const BASE_SHA = "b".repeat(40);
 
 export interface FakeComment {
   id: number;
@@ -73,7 +79,15 @@ export class FakeGitHub {
   checkRuns: { id: number; repo: string; head_sha: string; name: string; app_id: number; conclusion: string; title: string; summary: string; details_url: string; external_id: string }[] = [];
   files = new Map<string, string>();
   recordCommits = new Map<number, string>();
-  runs: { id: number; repo: string; head_sha: string; head_repository: string; status: string; approved: boolean }[] = [];
+  /** Records whose last commit was pushed by somebody other than the recorder. */
+  forgedRecords = new Set<number>();
+  runs: { id: number; repo: string; head_sha: string; head_repository: string; status: string; approved: boolean; jobs?: { labels: string[]; runner_group_name?: string | null }[] }[] = [];
+  /** The `.github` tree object of a commit, when a test pins it (otherwise derived from the pull request's files). */
+  githubTrees = new Map<string, string | null>();
+  /** Called before every request is answered, to move state mid-flight. */
+  onRequest: ((method: string, path: string) => void) | null = null;
+  /** GitHub's cap on the commits it lists for one pull request. */
+  commitCap = 250;
   dispatches: { kind: string; repo: string; pr: string; comment_id: string }[] = [];
   deletedInstallations: number[] = [];
   revokedGrants: string[] = [];
@@ -183,8 +197,9 @@ export class FakeGitHub {
       locked: p.locked,
       html_url: `https://github.com/${p.repo}/pull/${p.number}`,
       user: { id: p.user.id, login: p.user.login, type: p.user.type },
+      created_at: p.created_at ?? "2026-11-20T09:00:00Z",
       head: { sha: p.head.sha, repo: { full_name: p.head.repo } },
-      base: { repo: { id: repo.id, full_name: p.repo, private: repo.private } },
+      base: { sha: BASE_SHA, repo: { id: repo.id, full_name: p.repo, private: repo.private } },
       changed_files: p.files.length,
     };
   }
@@ -204,6 +219,7 @@ export class FakeGitHub {
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     this.requests.push({ method: req.method, url: url.pathname + url.search });
+    this.onRequest?.(req.method, url.pathname);
     if (this.failNext && this.failNext.match.test(`${req.method} ${url.pathname}`)) {
       const f = this.failNext;
       this.failNext = null;
@@ -290,9 +306,10 @@ export class FakeGitHub {
       const pr = this.pulls.get(`${repo}#${v.number}`);
       if (!pr) return json({ data: { repository: { pullRequest: null } } });
       const start = v.cursor ? Number(v.cursor) : 0;
-      const nodes = pr.commits.slice(start, start + 100).map((commit) => ({ commit }));
+      const listed = pr.commits.slice(0, this.commitCap);
+      const nodes = listed.slice(start, start + 100).map((commit) => ({ commit }));
       const end = start + nodes.length;
-      return json({ data: { repository: { pullRequest: { commits: { totalCount: pr.commits.length, pageInfo: { hasNextPage: end < pr.commits.length, endCursor: String(end) }, nodes } } } } });
+      return json({ data: { repository: { pullRequest: { headRefOid: pr.head.sha, commits: { totalCount: pr.commits.length, pageInfo: { hasNextPage: end < listed.length, endCursor: String(end) }, nodes } } } } });
     }
 
     // Repository endpoints, installation or user token
@@ -310,14 +327,21 @@ export class FakeGitHub {
     }
     if ((m = /^\/contents\/(.+)$/.exec(rest))) {
       if (!this.can(t, repo, "contents", "read")) return json({ message: "Forbidden" }, 403);
-      const content = this.files.get(`${url.searchParams.get("ref") ?? "main"}:${m[1]}`);
-      return content === undefined ? json({ message: "Not Found" }, 404) : new Response(content, { headers: { "content-type": "application/vnd.github.raw+json" } });
+      const ref = url.searchParams.get("ref") ?? "main";
+      const content = this.files.get(`${ref}:${m[1]}`);
+      if (content === undefined) {
+        const prefix = `${ref}:${m[1]}/`;
+        const names = [...this.files.keys()].filter((k) => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")).map((k) => ({ name: k.slice(prefix.length), type: "file" }));
+        return names.length ? json(names) : json({ message: "Not Found" }, 404);
+      }
+      return new Response(content, { headers: { "content-type": "application/vnd.github.raw+json" } });
     }
     if (rest === "/commits" && req.method === "GET") {
       if (!this.can(t, repo, "contents", "read")) return json({ message: "Forbidden" }, 403);
       const id = Number(/signatures\/individual\/(\d+)\.json/.exec(url.searchParams.get("path") ?? "")?.[1]);
       const sha = this.recordCommits.get(id);
-      return json(sha ? [{ sha }] : []);
+      const forged = this.forgedRecords.has(id);
+      return json(sha ? [{ sha, author: { id: forged ? 666666 : 41898282 }, committer: { login: forged ? "mallory" : "web-flow" }, commit: { verification: { verified: true, reason: "valid" } } }] : []);
     }
     if ((m = /^\/actions\/workflows\/([^/]+)\/dispatches$/.exec(rest))) {
       if (!this.can(t, repo, "actions", "write")) return json({ message: "Forbidden" }, 403);
@@ -326,7 +350,8 @@ export class FakeGitHub {
     }
     if (rest === "/pulls" && req.method === "GET") {
       if (!this.can(t, repo, "pull_requests", "read")) return json({ message: "Forbidden" }, 403);
-      return json([...this.pulls.values()].filter((x) => x.repo === repo && x.state === "open").map((x) => this.prJson(x)));
+      const state = url.searchParams.get("state") ?? "open";
+      return json([...this.pulls.values()].filter((x) => x.repo === repo && x.state === state).map((x) => ({ ...this.prJson(x), merged_at: x.merged_at ?? null })));
     }
     if ((m = /^\/pulls\/(\d+)$/.exec(rest))) {
       if (!this.can(t, repo, "pull_requests", "read")) return json({ message: "Forbidden" }, 403);
@@ -352,6 +377,11 @@ export class FakeGitHub {
       const c: FakeComment = { id: this.next(), repo, pr: n, body: String(data.body), user, created_at: now, updated_at: now, via_app: true };
       this.comments.push(c);
       return json(this.commentJson(c), 201);
+    }
+    if ((m = /^\/issues\/comments\/(\d+)$/.exec(rest)) && req.method === "GET") {
+      if (!this.can(t, repo, "pull_requests", "read")) return json({ message: "Forbidden" }, 403);
+      const c = this.comments.find((x) => x.id === Number(m![1]) && x.repo === repo);
+      return c ? json(this.commentJson(c)) : json({ message: "Not Found" }, 404);
     }
     if ((m = /^\/issues\/comments\/(\d+)$/.exec(rest)) && req.method === "PATCH") {
       if (!this.can(t, repo, "pull_requests", "write") || t.kind !== "installation") return json({ message: "Forbidden" }, 403);
@@ -379,6 +409,19 @@ export class FakeGitHub {
       Object.assign(r, { conclusion: String(data.conclusion), title: out.title, summary: out.summary });
       return json({});
     }
+    if ((m = /^\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/.exec(rest))) {
+      if (!this.can(t, repo, "contents", "read")) return json({ message: "Forbidden" }, 403);
+      return m[1] === BASE_SHA ? json({ merge_base_commit: { sha: BASE_SHA } }) : json({ message: "Not Found" }, 404);
+    }
+    if ((m = /^\/git\/trees\/([0-9a-f]{40})$/.exec(rest))) {
+      if (!this.can(t, repo, "contents", "read")) return json({ message: "Forbidden" }, 403);
+      const tree = this.githubTreeOf(m[1]!);
+      return json({ sha: m[1], truncated: false, tree: [{ path: "README.md", mode: "100644", type: "blob", sha: "1".repeat(40) }, ...(tree ? [{ path: ".github", mode: "040000", type: "tree", sha: tree }] : [])] });
+    }
+    if ((m = /^\/actions\/runs\/(\d+)\/jobs$/.exec(rest))) {
+      if (!this.can(t, repo, "actions", "read")) return json({ message: "Forbidden" }, 403);
+      return json({ jobs: this.runs.find((x) => x.id === Number(m![1]))?.jobs ?? [] });
+    }
     if (rest === "/actions/runs" && req.method === "GET") {
       if (!this.can(t, repo, "actions", "read")) return json({ message: "Forbidden" }, 403);
       const runs = this.runs.filter((r) => r.repo === repo && r.head_sha === url.searchParams.get("head_sha") && r.status === "action_required" && !r.approved);
@@ -391,6 +434,14 @@ export class FakeGitHub {
       return json({}, 201);
     }
     return json({ message: `fake: no route ${req.method} ${p}` }, 404);
+  }
+
+  /** The `.github` tree of a commit: pinned by a test, else the base's, changed when the pull request with that head touches `.github/`. */
+  githubTreeOf(sha: string): string | null {
+    if (this.githubTrees.has(sha)) return this.githubTrees.get(sha)!;
+    const pr = [...this.pulls.values()].find((x) => x.head.sha === sha);
+    const touched = pr?.files.some((f) => f.filename.startsWith(".github/") || (f.previous_filename ?? "").startsWith(".github/"));
+    return touched ? "8".repeat(40) : BASE_GITHUB_TREE;
   }
 
   /** The latest check run of the app on a commit. */

@@ -49,7 +49,7 @@ export function checkIntegrity(): Promise<Integrity> {
         ok = false;
         continue;
       }
-      const text = FILES[m[2]!];
+      const text = Object.hasOwn(FILES, m[2]!) ? FILES[m[2]!] : undefined;
       const actual = text === undefined ? "" : await sha256Hex(text);
       files[m[2]!] = actual;
       if (actual !== m[1]) ok = false;

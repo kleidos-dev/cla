@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cron, makeBot } from "../src/bot";
 import type { ConfiguredEnv } from "../src/env";
-import { commit, sha } from "./fakegh";
+import { ORG_ID, commit, sha } from "./fakegh";
 import type { World } from "./helpers";
 import { SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
 
@@ -141,7 +141,7 @@ describe("evaluation", () => {
     expect(foreign.approved).toBe(false);
     await opened(w, pr, "synchronize");
     const fresh = heldRun(w, pr, "alice/cla-sandbox");
-    await webhook(w, "workflow_run", { action: "requested", workflow_run: { event: "pull_request", head_sha: pr.head.sha, status: "queued" }, repository: { full_name: SANDBOX } });
+    await webhook(w, "workflow_run", { action: "requested", workflow_run: { event: "pull_request", head_sha: pr.head.sha, status: "queued" }, repository: { full_name: SANDBOX, owner: { id: ORG_ID } } });
     await drain(w);
     expect(fresh.approved).toBe(true);
     expect(foreign.approved).toBe(false);

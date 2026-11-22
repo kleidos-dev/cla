@@ -5,6 +5,9 @@ import { MARKER, allClear } from "./assess";
 import type { Config } from "./registry";
 import { isLogin } from "./util";
 
+/** Whether the head commit changes `.github/` against its merge base; "unknown" when that could not be read. */
+export type GithubState = "untouched" | "touched" | "unknown";
+
 export interface TextContext {
   origin: string;
   registry: string;
@@ -12,7 +15,9 @@ export interface TextContext {
   config: Config;
   /** The commit of the signatures branch that added each record, by account id. */
   recordCommits: Map<number, string | null>;
-  touchesGithub: boolean;
+  github: GithubState;
+  /** The repository's `auto_approve`: whether the app starts a signer's held checks. */
+  autoApprove: boolean;
   lateRecording: number[];
   now: Date;
 }
@@ -80,6 +85,14 @@ function specialLines(a: Assessment, ctx: TextContext): string[] {
   return out;
 }
 
+/** Who starts the checks once everyone has signed, in one sentence, or null when the app does. */
+function manualStart(ctx: TextContext): string | null {
+  if (!ctx.autoApprove) return "In this repository the checks of an outside pull request are started by a maintainer, not automatically.";
+  if (ctx.github === "touched") return "This pull request changes files under `.github/`, so its checks are started by a maintainer, not automatically.";
+  if (ctx.github === "unknown") return "Whether this pull request changes `.github/` could not be checked automatically, so its checks are started by a maintainer.";
+  return null;
+}
+
 const PRIVACY_LINE =
   "<sub>**Your data.** José M. Requena Plens (controller) records your GitHub account id and login, the version you accepted, the time and a link to your acceptance on this pull request, to know which contributions the agreement covers and to keep proof of it. The record is public. No email, real name or IP address is stored. If you are listed here as a commit co-author, your account was found from the commit metadata of this pull request. You have the rights of access, rectification, erasure, restriction, objection and portability (GDPR arts. 15 to 22): write to mail@kleidos.dev. [Full notice](https://cla.kleidos.dev/privacy).</sub>";
 
@@ -91,18 +104,23 @@ export function commentBody(a: Assessment, ctx: TextContext): string {
     lines.push(
       "### 📝 Contributor Agreement accepted",
       "",
-      "Everyone who wrote this pull request has accepted the Kleidos Contributor Agreement. The checks of this pull request run by themselves from now on, and so will those of your later pull requests in any Kleidos repository.",
+      ctx.autoApprove
+        ? "Everyone who wrote this pull request has accepted the Kleidos Contributor Agreement. The checks of this pull request run by themselves from now on, and so will those of your later pull requests in any Kleidos repository that starts them automatically."
+        : "Everyone who wrote this pull request has accepted the Kleidos Contributor Agreement; it covers your later pull requests in every Kleidos repository too.",
       "",
       ...signedTable(a, ctx),
       "",
     );
     const nn = notNeeded(a);
     if (nn) lines.push(nn, "");
-    if (ctx.touchesGithub) lines.push("This pull request changes files under `.github/`, so its checks are started by a maintainer, not automatically.", "");
+    const manual = manualStart(ctx);
+    if (manual) lines.push(manual, "");
     lines.push(
       `This message and the entry it links are your confirmation; the full text you accepted stays at [cla.kleidos.dev/agreement](${ctx.origin}/agreement).`,
       "",
-      "**En español:** todas las personas que han escrito este pull request han aceptado el acuerdo; las comprobaciones se ejecutan solas desde ahora.",
+      manual
+        ? "**En español:** todas las personas que han escrito este pull request han aceptado el acuerdo; las comprobaciones las inicia una persona que mantiene el repositorio."
+        : "**En español:** todas las personas que han escrito este pull request han aceptado el acuerdo; las comprobaciones se ejecutan solas desde ahora.",
     );
     return lines.join("\n");
   }
@@ -122,7 +140,7 @@ export function commentBody(a: Assessment, ctx: TextContext): string {
     "",
     '- **How:** the link opens cla.kleidos.dev. You sign in with GitHub, read the agreement and its Addendum, tick one box and click "I agree". Each person listed signs with their own account.',
     "- **What it does:** you keep your copyright. You give José M. Requena Plens a non-exclusive licence, free of charge, that lets him publish your contribution under the project's open-source licence and also license it under other terms, including paid commercial licences.",
-    `- **What happens next:** your acceptance line is posted on this pull request under your account and recorded in the public register at [${ctx.registry}](https://github.com/${ctx.registry}); this comment is updated and the checks start by themselves.`,
+    `- **What happens next:** your acceptance line is posted on this pull request under your account and recorded in the public register at [${ctx.registry}](https://github.com/${ctx.registry}); this comment is updated${ctx.autoApprove ? " and the checks start by themselves" : ", and a maintainer starts the checks"}.`,
     `- **The text:** Kleidos Contributor Agreement, version ${d.version}, SHA-256 \`${d.sha}\` ([files](${filesUrl(ctx, d.version)})). It can only be concluded in English.`,
     "",
     `If you wrote this for your employer, or you are under 18, do not sign here: see [who signs](https://github.com/${ctx.registry}#who-signs).`,
@@ -156,7 +174,8 @@ export function checkOutput(a: Assessment, ctx: TextContext): CheckOutput {
   for (const oid of a.unknownCommits) lines.push(`- Commit \`${oid}\`: an author's email is linked to no GitHub account.`);
   for (const b of a.unlistedBots) lines.push(`- \`${isLogin(b.login) ? b.login : "an automation account"}\` is an automation account that is not on the exemption list; a maintainer will look at it.`);
   if (a.tooManyCommits) lines.push("- Too many commits to check automatically; a maintainer will look at it.");
-  if (ctx.touchesGithub) lines.push("", "This pull request changes files under `.github/`, so its checks are started by a maintainer, not automatically.");
+  const manual = manualStart(ctx);
+  if (manual && allClear(a)) lines.push("", manual);
   if (allClear(a)) {
     const title = a.required.length === 0 ? "No signature needed" : "Contributor Agreement accepted";
     return { conclusion: "success", title, summary: lines.join("\n") };

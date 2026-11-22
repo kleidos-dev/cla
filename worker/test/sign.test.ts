@@ -73,9 +73,12 @@ describe("web signing", () => {
     expect([...w.gh.tokens.values()].filter((t) => t.kind === "user" && !t.revoked)).toHaveLength(0);
     expect(w.queue.sent.map((s) => s.body)).toEqual([{ kind: "evaluate", repo: SANDBOX, pr: pr.number, record_comment: acceptance.id }]);
 
+    // No automatic refresh (WCAG 2.2.1): a "Check again" link instead.
     const pending = await b.get(path);
-    expect(pending.headers.get("refresh")).toBe("20");
-    expect(await pending.text()).toContain("being recorded");
+    expect(pending.headers.get("refresh")).toBeNull();
+    const pendingHtml = await pending.text();
+    expect(pendingHtml).toContain("being recorded");
+    expect(pendingHtml).toContain(`<a href="${path}">Check again</a>`);
 
     await drain(w, 1);
     expect(w.gh.dispatches).toEqual([{ kind: "sign", repo: SANDBOX, pr: String(pr.number), comment_id: String(acceptance.id) }]);
@@ -177,10 +180,16 @@ describe("web signing", () => {
     const login = await a.get(`/auth/login?return=${encodeURIComponent(path)}`);
     const authorize = new URL(login.headers.get("location")!);
     const code = w.gh.issueCode(alice, authorize.searchParams.get("code_challenge")!);
+    // A stray redirect (a wrong state, or a cross-site ?error=) refuses, but leaves the sign-in in progress intact.
     const wrong = await a.get(`/auth/callback?code=${code}&state=${"x".repeat(43)}`);
     expect(wrong.status).toBe(400);
     expect(a.jar.has("__Host-cla")).toBe(false);
-    expect(a.jar.has("__Host-cla-oauth")).toBe(false);
+    expect(a.jar.has("__Host-cla-oauth")).toBe(true);
+    expect((await a.get(`/auth/callback?error=access_denied&state=${"y".repeat(43)}`)).status).toBe(400);
+    expect(a.jar.has("__Host-cla-oauth")).toBe(true);
+    const genuine = await a.get(`/auth/callback?code=${code}&state=${authorize.searchParams.get("state")}`);
+    expect(genuine.status).toBe(303);
+    expect(a.jar.has("__Host-cla")).toBe(true);
 
     const attacker = new Browser(w, mallory);
     const { callbackUrl } = await attacker.signIn(path);

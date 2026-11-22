@@ -3,7 +3,8 @@
  * The Worker's only logger. A line carries the fields of an allowlist, each
  * a number, a boolean or a short string of a safe alphabet; anything else is
  * dropped before it is written. No request body, header, cookie, token,
- * email, address or OAuth parameter can reach the logs through it.
+ * email, address, OAuth parameter or account id can reach the logs through
+ * it (PRIVACY.md: nothing is kept of a sign-in that does not accept).
  */
 const FIELDS = new Set([
   "event",
@@ -12,8 +13,6 @@ const FIELDS = new Set([
   "kind",
   "repo",
   "pr",
-  "account",
-  "accounts",
   "installation",
   "outcome",
   "reason",

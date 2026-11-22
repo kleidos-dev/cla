@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APP_ID } from "./fakegh";
+import { APP_ID, ORG_ID } from "./fakegh";
 import { SANDBOX, drain, openPr, prEvent, sign, webhook, world } from "./helpers";
 
 afterEach(() => {
@@ -64,16 +64,27 @@ describe("webhook signature", () => {
 
   it("maps every event it serves and ignores the rest", async () => {
     const w = await world();
+    const owner = { id: ORG_ID };
     const pr = openPr(w, alice);
     const sha = pr.head.sha;
     await webhook(w, "pull_request", prEvent(pr, "labeled"));
     await webhook(w, "pull_request", prEvent(pr, "edited"));
     await webhook(w, "pull_request", prEvent(pr, "edited", { changes: { base: { ref: { from: "dev" } } } }));
-    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: APP_ID }, external_id: `77#${pr.number}` }, repository: { full_name: SANDBOX, id: 77 } });
-    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: 5 }, external_id: `77#${pr.number}` }, repository: { full_name: SANDBOX, id: 77 } });
-    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: APP_ID }, external_id: `78#${pr.number}` }, repository: { full_name: SANDBOX, id: 77 } });
-    await webhook(w, "workflow_run", { action: "completed", workflow_run: { event: "pull_request", head_sha: sha, conclusion: "action_required" }, repository: { full_name: SANDBOX } });
-    await webhook(w, "workflow_run", { action: "completed", workflow_run: { event: "pull_request", head_sha: sha, conclusion: "success" }, repository: { full_name: SANDBOX } });
+    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: APP_ID }, external_id: `77#${pr.number}` }, repository: { full_name: SANDBOX, id: 77, owner } });
+    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: 5 }, external_id: `77#${pr.number}` }, repository: { full_name: SANDBOX, id: 77, owner } });
+    await webhook(w, "check_run", { action: "rerequested", check_run: { name: "📝 CLA", app: { id: APP_ID }, external_id: `78#${pr.number}` }, repository: { full_name: SANDBOX, id: 77, owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: { event: "pull_request", head_sha: sha, conclusion: "action_required" }, repository: { full_name: SANDBOX, owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: { event: "pull_request", head_sha: sha, conclusion: "success" }, repository: { full_name: SANDBOX, owner } });
+    // A Record run of the register that succeeded re-evaluates the pull request it recorded; anything else of the register does not.
+    const record = { event: "workflow_dispatch", path: ".github/workflows/record.yml", head_branch: "main", conclusion: "success", display_title: `Record sign ${SANDBOX}#${pr.number} 4242` };
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: record, repository: { full_name: "kleidos-dev/cla", owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: { ...record, conclusion: "failure" }, repository: { full_name: "kleidos-dev/cla", owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: { ...record, path: ".github/workflows/other.yml" }, repository: { full_name: "kleidos-dev/cla", owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: { ...record, display_title: `Record coverage ${SANDBOX}#${pr.number} ` }, repository: { full_name: "kleidos-dev/cla", owner } });
+    await webhook(w, "workflow_run", { action: "completed", workflow_run: record, repository: { full_name: "someone/cla", owner } });
+    // A delivery from a repository of an account that is not served is dropped before anything is queued.
+    await webhook(w, "pull_request", { ...prEvent(pr, "opened"), repository: { full_name: SANDBOX, id: 1, owner: { id: 4242 } } });
+    await webhook(w, "pull_request", { ...prEvent(pr, "opened"), repository: { full_name: SANDBOX, id: 1 } });
     await webhook(w, "installation", { action: "created", installation: { id: 66 } });
     await webhook(w, "github_app_authorization", { action: "revoked" });
     await webhook(w, "issue_comment", { action: "created" });
@@ -81,6 +92,7 @@ describe("webhook signature", () => {
       { kind: "evaluate", repo: SANDBOX, pr: pr.number },
       { kind: "evaluate", repo: SANDBOX, pr: pr.number },
       { kind: "held", repo: SANDBOX, sha },
+      { kind: "evaluate", repo: SANDBOX, pr: pr.number },
       { kind: "installation", installation: 66 },
     ]);
   });

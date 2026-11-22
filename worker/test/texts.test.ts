@@ -100,7 +100,7 @@ describe("pure helpers", () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
     log("x", { repo: "a/b", token: "ghu_secret", email: "a@b.c", reason: "ghs_abc", account: 5 });
-    expect(JSON.parse(lines[0]!)).toEqual({ msg: "x", repo: "a/b", reason: "redacted", account: 5 });
+    expect(JSON.parse(lines[0]!)).toEqual({ msg: "x", repo: "a/b", reason: "redacted" });
   });
 });
 
@@ -117,7 +117,8 @@ describe("pages and hygiene", () => {
       if (r.headers.get("content-type")?.startsWith("text/html")) {
         expect(r.headers.get("content-security-policy")).toBe(CSP);
         expect(r.headers.get("x-frame-options")).toBe("DENY");
-        expect(r.headers.get("referrer-policy")).toBe("no-referrer");
+        // same-origin, not no-referrer: under no-referrer a browser posts the form with `Origin: null`.
+        expect(r.headers.get("referrer-policy")).toBe("same-origin");
         expect(r.headers.get("strict-transport-security")).toContain("includeSubDomains");
       }
       for (const c of r.headers.getSetCookie()) {

@@ -24,14 +24,29 @@ export interface Env {
 /** The Env once every secret is present. */
 export type ConfiguredEnv = Env & Required<Pick<Env, "APP_ID" | "APP_PRIVATE_KEY" | "CLIENT_ID" | "CLIENT_SECRET" | "WEBHOOK_SECRET" | "SESSION_KEY">>;
 
+/**
+ * Configured only when every secret is present and the account allowlist
+ * names at least one account: with an empty or unparsable allowlist the
+ * cron and the installation handler would remove every installation.
+ */
 export function isConfigured(env: Env): env is ConfiguredEnv {
-  return Boolean(env.APP_ID && env.APP_PRIVATE_KEY && env.CLIENT_ID && env.CLIENT_SECRET && env.WEBHOOK_SECRET && env.SESSION_KEY);
+  return Boolean(env.APP_ID && env.APP_PRIVATE_KEY && env.CLIENT_ID && env.CLIENT_SECRET && env.WEBHOOK_SECRET && env.SESSION_KEY) && parseAllowlist(env.ALLOWED_ACCOUNT_IDS).size > 0;
 }
 
-export function allowedAccounts(env: Env): Set<number> {
+function parseAllowlist(raw: string | undefined): Set<number> {
   return new Set(
-    env.ALLOWED_ACCOUNT_IDS.split(",")
-      .map((s) => Number.parseInt(s.trim(), 10))
-      .filter((n) => Number.isSafeInteger(n) && n > 0),
+    (raw ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => /^[1-9][0-9]{0,15}$/.test(s))
+      .map(Number)
+      .filter((n) => Number.isSafeInteger(n)),
   );
+}
+
+/** The accounts the app may be installed on. Throws on an empty list: nothing is ever removed in that state. */
+export function allowedAccounts(env: Env): Set<number> {
+  const ids = parseAllowlist(env.ALLOWED_ACCOUNT_IDS);
+  if (ids.size === 0) throw new Error("ALLOWED_ACCOUNT_IDS is empty");
+  return ids;
 }

@@ -12,7 +12,10 @@ const SECURITY_HEADERS: Record<string, string> = {
   "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
-  "referrer-policy": "no-referrer",
+  // Not no-referrer: under that policy a browser sends `Origin: null` on a
+  // same-origin form post, and /agree and /auth/logout require the real
+  // origin. same-origin still sends nothing to any other host.
+  "referrer-policy": "same-origin",
   "cross-origin-opener-policy": "same-origin",
   "cross-origin-resource-policy": "same-origin",
   "permissions-policy": "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()",
@@ -40,6 +43,18 @@ export interface PageOptions {
   cookies?: string[];
 }
 
+/** The skip link, header and footer, in the page's own language (WCAG 3.1.2). */
+const CHROME_EN = {
+  top: `<a class="skip" href="#main">Skip to the content</a>
+<header><nav aria-label="Site"><a href="/agreement">Kleidos Contributor Agreement</a></nav></header>`,
+  bottom: `<footer><p><a href="/agreement">Agreement</a> · <a href="/agreement/es" hreflang="es" lang="es">Resumen en español</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/kleidos-dev/cla">Register and source</a> · Contact: <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></p></footer>`,
+};
+const CHROME_ES = {
+  top: `<a class="skip" href="#main">Saltar al contenido</a>
+<header><nav aria-label="Sitio"><a href="/agreement" hreflang="en" lang="en">Kleidos Contributor Agreement</a></nav></header>`,
+  bottom: `<footer><p><a href="/agreement" hreflang="en">Acuerdo (en inglés)</a> · <a href="/agreement/es">Resumen en español</a> · <a href="/privacy/es">Privacidad</a> · <a href="https://github.com/kleidos-dev/cla">Registro y código fuente</a> · Contacto: <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></p></footer>`,
+};
+
 export async function page(body: string, opts: PageOptions): Promise<Response> {
   const lang = opts.lang ?? "en";
   const html = `<!doctype html>
@@ -52,12 +67,11 @@ export async function page(body: string, opts: PageOptions): Promise<Response> {
 <link rel="stylesheet" href="${await stylesheetPath()}">
 </head>
 <body>
-<a class="skip" href="#main">${lang === "es" ? "Saltar al contenido" : "Skip to the content"}</a>
-<header><nav aria-label="Site"><a href="/agreement">Kleidos Contributor Agreement</a></nav></header>
+${lang === "es" ? CHROME_ES.top : CHROME_EN.top}
 <main id="main">
 ${body}
 </main>
-<footer><p><a href="/agreement">Agreement</a> · <a href="/agreement/es" hreflang="es" lang="es">Resumen en español</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/kleidos-dev/cla">Register and source</a> · Contact: <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></p></footer>
+${lang === "es" ? CHROME_ES.bottom : CHROME_EN.bottom}
 </body>
 </html>
 `;

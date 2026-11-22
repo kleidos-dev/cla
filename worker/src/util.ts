@@ -63,13 +63,56 @@ export function nowSeconds(): number {
 }
 
 /**
- * The acceptance sentence as the recorder compares it: Unicode NFC,
- * trimmed, every run of whitespace collapsed to one space.
+ * The characters either JavaScript's or Python's `\s` counts as white
+ * space, spelled out: the recorder (registry/cla.py, WHITESPACE) uses the
+ * same list, so both sides normalise a comment to the same string.
+ */
+// eslint-disable-next-line no-control-regex -- U+001C to U+001F are white space to Python, so they are listed on purpose.
+const WHITESPACE = /[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
+
+/**
+ * The acceptance sentence as the recorder compares it: Unicode NFC, every
+ * run of white space collapsed to one space, trimmed.
  */
 export function normalizeSentence(s: string): string {
-  return s.normalize("NFC").trim().replace(/\s+/gu, " ");
+  return s.normalize("NFC").replace(WHITESPACE, " ").replace(/^ | $/g, "");
 }
 
 export function clientIp(req: Request): string {
   return req.headers.get("cf-connecting-ip") ?? "unknown";
+}
+
+/**
+ * The request body, read through its stream and abandoned as soon as it
+ * passes `max` bytes, whatever Content-Length says (or does not say).
+ * Null when it is too large.
+ */
+export async function readCapped(req: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  const declared = Number.parseInt(req.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declared) && declared > max) {
+    await req.body?.cancel();
+    return null;
+  }
+  if (!req.body) return new Uint8Array(0);
+  const reader = (req.body as ReadableStream<Uint8Array>).getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const chunk: ReadableStreamReadResult<Uint8Array> = await reader.read();
+    if (chunk.done) break;
+    const value = chunk.value;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
 }

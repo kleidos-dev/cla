@@ -18,6 +18,8 @@ export interface Config {
   versions: Record<string, VersionInfo>;
   served_repositories: Record<string, { auto_approve: boolean }>;
   exempt: { id: number; login: string; why: string }[];
+  coverage_from?: string;
+  app_id?: number | null;
 }
 
 export interface Entity {
@@ -48,6 +50,62 @@ export const CONFIG_PATH = "registry/config.json";
 export const ENTITIES_PATH = "registry/entities.json";
 export const SIGNATURES_BRANCH = "signatures";
 export const RECORD_WORKFLOW = "record.yml";
+/** github-actions[bot], the author of every commit the recorder makes. */
+export const ACTIONS_BOT_ID = 41898282;
+
+interface CommitFacts {
+  sha: string;
+  author: { id: number } | null;
+  committer: { login: string } | null;
+  commit?: { verification?: { verified: boolean; reason: string } };
+}
+
+const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const HEX64 = /^[0-9a-f]{64}$/;
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+const PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/pull\/[1-9][0-9]{0,9}$/;
+const RECORD_KEYS = ["schema", "kind", "github_id", "login_at_signing", "agreement", "version", "set_sha256", "accepted_at", "method", "evidence", "recorded_at", "recorder_run_id"];
+const EVIDENCE_KEYS = ["pr_url", "comment_url", "comment_id", "comment_body_sha256"];
+
+function posInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
+}
+
+function sameKeys(o: object, keys: string[]): boolean {
+  const k = Object.keys(o);
+  return k.length === keys.length && keys.every((x) => Object.hasOwn(o, x));
+}
+
+/** registry/schema/individual.schema.json, checked field by field; registry/cla.py check_record does the same. */
+export function isSignatureRecord(v: unknown, id: number): v is SignatureRecord {
+  if (typeof v !== "object" || v === null || !sameKeys(v, RECORD_KEYS)) return false;
+  const r = v as Record<string, unknown>;
+  const e = r.evidence as Record<string, unknown> | null;
+  if (typeof e !== "object" || e === null || !sameKeys(e, EVIDENCE_KEYS)) return false;
+  return (
+    r.schema === 1 &&
+    r.kind === "individual" &&
+    r.github_id === id &&
+    typeof r.login_at_signing === "string" &&
+    LOGIN.test(r.login_at_signing) &&
+    r.agreement === "kleidos-ca" &&
+    posInt(r.version) &&
+    typeof r.set_sha256 === "string" &&
+    HEX64.test(r.set_sha256) &&
+    typeof r.accepted_at === "string" &&
+    TIME.test(r.accepted_at) &&
+    (r.method === "web" || r.method === "comment") &&
+    typeof e.pr_url === "string" &&
+    PR_URL.test(e.pr_url) &&
+    posInt(e.comment_id) &&
+    e.comment_url === `${e.pr_url}#issuecomment-${e.comment_id}` &&
+    typeof e.comment_body_sha256 === "string" &&
+    HEX64.test(e.comment_body_sha256) &&
+    typeof r.recorded_at === "string" &&
+    TIME.test(r.recorded_at) &&
+    posInt(r.recorder_run_id)
+  );
+}
 
 const cache = new Map<string, { value: unknown; expires: number }>();
 
@@ -121,22 +179,65 @@ export class Registry {
     return Array.isArray(v?.entities) ? v.entities : [];
   }
 
-  /** The signature of one account, or null. Not cached: a new record must show at once. */
+  /**
+   * The signature of one account, or null. Not cached: a new record must
+   * show at once. A record counts only when it has the schema's exact shape
+   * and the last commit that touched it is the recorder's: authored by
+   * github-actions[bot], committed by GitHub (web-flow) and carrying a
+   * valid signature. A file pushed by anybody else is not a signature.
+   */
   async signature(id: number): Promise<SignatureRecord | null> {
     const text = await this.raw(`signatures/individual/${id}.json`, SIGNATURES_BRANCH);
     if (text === null) return null;
+    let rec: unknown;
     try {
-      const rec = JSON.parse(text) as SignatureRecord;
-      return rec.github_id === id && rec.kind === "individual" ? rec : null;
+      rec = JSON.parse(text);
     } catch {
       return null;
     }
+    if (!isSignatureRecord(rec, id)) return null;
+    const commit = await this.lastCommit(id);
+    return commit?.byRecorder ? rec : null;
+  }
+
+  private commits = new Map<number, Promise<{ sha: string; byRecorder: boolean } | null>>();
+
+  /** The commit on the signatures branch that last touched a record, and whether it is the recorder's. */
+  private lastCommit(id: number): Promise<{ sha: string; byRecorder: boolean } | null> {
+    let hit = this.commits.get(id);
+    if (!hit) {
+      hit = (async () => {
+        const r = await this.gh.request<CommitFacts[]>("GET", `/repos/${this.repo}/commits?sha=${SIGNATURES_BRANCH}&path=signatures/individual/${id}.json&per_page=1`, { token: await this.readToken() });
+        const c = r.data[0];
+        if (!c || !/^[0-9a-f]{40}$/.test(c.sha)) return null;
+        const v = c.commit?.verification;
+        return { sha: c.sha, byRecorder: c.author?.id === ACTIONS_BOT_ID && c.committer?.login === "web-flow" && v?.verified === true && v.reason === "valid" };
+      })();
+      hit.catch(() => this.commits.delete(id));
+      this.commits.set(id, hit);
+    }
+    return hit;
   }
 
   /** The commit on the signatures branch that added a record, for the confirmation link. */
   async recordCommit(id: number): Promise<string | null> {
-    const r = await this.gh.request<{ sha: string }[]>("GET", `/repos/${this.repo}/commits?sha=${SIGNATURES_BRANCH}&path=signatures/individual/${id}.json&per_page=1`, { token: await this.readToken() });
-    return r.data[0]?.sha ?? null;
+    return (await this.lastCommit(id))?.sha ?? null;
+  }
+
+  /** The pull request numbers of a repository that have a coverage record (one directory listing). */
+  async coverageNumbers(repo: string): Promise<Set<number>> {
+    try {
+      const r = await this.gh.request<{ name: string; type: string }[]>("GET", `/repos/${this.repo}/contents/coverage/${repo}?ref=${SIGNATURES_BRANCH}`, { token: await this.readToken() });
+      const out = new Set<number>();
+      for (const f of Array.isArray(r.data) ? r.data : []) {
+        const m = /^([1-9][0-9]{0,9})\.json$/.exec(f.name);
+        if (m && f.type === "file") out.add(Number(m[1]));
+      }
+      return out;
+    } catch (e) {
+      if (e instanceof GitHubError && e.kind === "not_found") return new Set();
+      throw e;
+    }
   }
 
   /** Dispatches the registry's recorder; it re-reads everything from GitHub itself. */
