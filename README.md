@@ -33,7 +33,7 @@ Check it yourself with `sha256sum -c SHA256SUMS && sha256sum SHA256SUMS` inside 
 2. The bot `kleidos-cla` comments with a **Read and sign the agreement** link, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
 3. The link opens `cla.kleidos.dev/sign/<owner>/<repo>/<number>`, where the whole text can be read without signing in. Click **Sign in with GitHub to accept**. GitHub asks you to authorize the app `kleidos-cla`; it reads your account id and login and, when you click "I agree", posts one comment on that pull request for you.
 4. Back on the page, tick the box and click **I agree: post my acceptance on the pull request**. The acceptance sentence is posted on the pull request under your account; that comment is your signature. The app's permission is revoked at once.
-5. Within a minute the register records it, the bot's comment turns to "accepted", `📝 CLA` turns green and the waiting checks start by themselves. Later pull requests, in any Kleidos repository, are green from the start.
+5. Within a minute the register records it, the bot's comment turns to "accepted" and `📝 CLA` turns green. Where the repository lets the app start an outside contributor's checks, the waiting checks start by themselves; elsewhere a maintainer starts them, and the comment says which. Later pull requests, in any Kleidos repository, are green from the start.
 
 Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1:
 
@@ -41,7 +41,7 @@ Each author of a pull request signs with their own account: the opener, every co
 I have read and I accept the Kleidos Contributor Agreement, version 1 (SHA-256 89c1d46b9b10), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.
 ```
 
-If the site is down, you can post that sentence yourself as a new comment on your pull request, alone and unedited; the register records it the same way (`method: "comment"`).
+If the site is down, you can post that sentence yourself as a new comment on your pull request, alone and unedited; the register records it the same way (`method: "comment"`). That fallback means that whatever can comment as your account (a token, the `gh` CLI, another app you authorized) can also accept for it: keep those in mind as you would your password. The register tells the two methods apart by the app's numeric id (`app_id` in `registry/config.json`), never by its name.
 
 ## Who signs
 
@@ -98,7 +98,7 @@ signer ── sign in with GitHub ──▶│ /sign, /auth, /agree            �
 
 - **The Worker never writes the register.** The GitHub App has no contents write at all. The click on "I agree" makes the app post the sentence with the signer's own short-lived user token, so GitHub itself witnesses who signed; this repository's own job then re-reads that comment from GitHub and records it. A compromised Worker could not fabricate a signature for an account that is not authorizing the app at that moment, could not backdate one (`accepted_at` is GitHub's), and could not alter or remove a record.
 - **Every fact is re-read on every event.** Queue messages carry identifiers only; a lost, repeated or replayed webhook only causes a recomputation. Webhooks are checked against their HMAC signature before anything is parsed.
-- **CI waits through GitHub's own fork approval** ("Require approval for all external contributors"). The app approves the held runs of a pull request once every author has signed, except when it changes anything under `.github/`: those wait for a maintainer. `pull_request_target` is used nowhere.
+- **CI waits through GitHub's own fork approval** ("Require approval for all external contributors"). In a repository whose `auto_approve` is true, the app approves the held runs of a pull request once every author has signed, except when its head commit changes anything under `.github/` (read from that commit's own tree against its merge base, so a head that moves cannot change the answer), or when a held run may target a self-hosted runner: those wait for a maintainer. `pull_request_target` is used nowhere.
 - **The merge block** is the required status check `📝 CLA`, pinned to the app in each repository's ruleset.
 - **The sign page** runs no JavaScript at all, loads nothing from elsewhere, and sends a strict Content-Security-Policy. The session and the OAuth transaction live in two encrypted `__Host-` cookies; the server keeps no session.
 
@@ -116,10 +116,11 @@ The code:
 Done already: this repository, its `signatures` branch, and the Queue `kleidos-cla` in the Cloudflare account "Kleidos". The rest needs the owner's own credentials:
 
 1. `cd worker && npm ci && npx wrangler login`.
-2. `npm run deploy` from a clean checkout of a signed commit of `main`: it checks the digests and that the tree is clean, then deploys the Worker `kleidos-cla` with its custom domain `cla.kleidos.dev` (the DNS record and the certificate are made by Cloudflare), the Queue consumer and the cron. Until the secrets exist the Worker serves the texts and `/healthz` and answers 503 on everything else.
-3. `node ../scripts/create-github-app.ts` and open the address it prints. It posts the manifest (public app; permissions `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write`, `statuses: write`, `actions: write`; events `pull_request`, `check_run`, `workflow_run`) to GitHub, exchanges the code and pipes `APP_ID`, `APP_PRIVATE_KEY` (converted to PKCS#8), `CLIENT_ID`, `CLIENT_SECRET`, `WEBHOOK_SECRET` and a new `SESSION_KEY` into `wrangler secret put`. Nothing secret is printed or written to disk.
-4. Install the app on `kleidos-dev`, on selected repositories only (`cla` and `cla-sandbox` first), and add its bot account id to the `exempt` list of `registry/config.json`.
+2. `npm run deploy` from a clean checkout of a signed commit of `main`: it checks the digests, that the tree is clean, that `HEAD` carries a good signature and is on `origin/main`, then deploys the Worker `kleidos-cla` with its custom domain `cla.kleidos.dev` (the DNS record and the certificate are made by Cloudflare), the Queue consumer and the cron. Until the secrets exist the Worker serves the texts and `/healthz` and answers 503 on everything else.
+3. `node scripts/create-github-app.ts` (from any directory) and open the address it prints. It runs the wrangler pinned in `worker/` (never `npx`) and first checks that `wrangler secret list` reaches the Worker, so the one-time code is never spent on a missing target. It posts the manifest (public app; permissions `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write`, `actions: write`; events `pull_request`, `check_run`, `workflow_run`) to GitHub, checks that the app it gets back is `kleidos-cla` of `kleidos-dev`, and pipes `APP_ID`, `APP_PRIVATE_KEY` (converted to PKCS#8), `CLIENT_ID`, `CLIENT_SECRET`, `WEBHOOK_SECRET` and a new `SESSION_KEY` into `wrangler secret put`. Nothing secret is printed or written to disk.
+4. Install the app on `kleidos-dev`, on selected repositories only (`cla` and `cla-sandbox` first). In `registry/config.json` set `app_id` to the app's id and add its bot account id to the `exempt` list.
 5. After the check has reported once on a repository, require `📝 CLA` there, pinned to the app id.
+6. Keep every other app with write access off `kleidos-dev/cla` (`gh api /orgs/kleidos-dev/installations` after each new app): an app that can push to `main` or `signatures` can change the configuration or write a record, and is part of the register's trust root.
 
 ## Licence
 

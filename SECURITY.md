@@ -18,6 +18,10 @@ English or Spanish. Test only against `kleidos-dev/cla-sandbox` or your own depl
 - The owner's setup script (`scripts/create-github-app.ts`).
 - The GitHub App's permissions and the deployment settings described in the README.
 
+## What the app's permissions reach
+
+The app asks for no more than it uses: `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write` and `actions: write` (no `statuses`, no contents write). Every installation token is narrowed to one repository and the permissions of the call. `actions: write` cannot be narrowed further by GitHub, and if the app's key leaked it would let the holder, on every repository the app is installed on, approve held runs, cancel or re-run workflows, dispatch any `workflow_dispatch` workflow and disable or enable workflows; on this repository that includes dispatching `record.yml` (which re-reads everything and records only a genuine acceptance) and disabling `record.yml` or `verify.yml`. So the installation stays on selected repositories only, no served repository may reach a self-hosted runner while its `auto_approve` is true, and `verify.yml` fails, and opens an issue, when either workflow is not enabled (a disabled `verify.yml` cannot report itself, so a missing weekly run is itself the signal).
+
 Out of scope: the legal content of the agreement (write to <mail@kleidos.dev> about it, in the open if you like), GitHub and Cloudflare themselves, and denial of service by volume.
 
 ## What happens next
