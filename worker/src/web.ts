@@ -429,24 +429,32 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   return r;
 }
 
-export function agreementPage(kind: "individual" | "entity", env: { BUILD_COMMIT: string; REGISTRY_REPO: string }): Promise<Response> {
+/** What every page says while the app's secrets are missing. */
+export const NOT_CONFIGURED_EN = "The CLA bot is not configured yet: signing opens once its GitHub App is set up. Come back later, or write to mail@kleidos.dev.";
+const NOT_CONFIGURED_ES = "El bot del CLA aún no está configurado: la firma se abrirá cuando su aplicación de GitHub esté instalada. Vuelve más tarde o escribe a mail@kleidos.dev.";
+
+function notConfiguredBox(configured: boolean, sentence: string): string {
+  return configured ? "" : `<div class="box" role="status"><p><strong>${escapeHtml(sentence)}</strong></p></div>\n`;
+}
+
+export function agreementPage(kind: "individual" | "entity", env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, configured: boolean): Promise<Response> {
   return (async () => {
     const entityNote =
       kind === "entity"
         ? `<div class="box"><p>The entity version is signed outside this site: as a PDF with an electronic signature, or by email from the entity's domain to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>, with the list of the GitHub account ids it authorizes. Accounts it covers sign nothing here.</p></div>`
         : `<p>For a company or other organization: <a href="/agreement/entity">the entity version</a>.</p>`;
     return page(
-      `<h1>Kleidos Contributor Agreement${kind === "entity" ? " (entity version)" : ""}</h1>\n${SUMMARY}\n${await versionLine(env)}\n${entityNote}\n<p>To sign, open a pull request in a Kleidos repository and follow the link the bot posts on it.</p>\n${agreementText(kind)}`,
+      `<h1>Kleidos Contributor Agreement${kind === "entity" ? " (entity version)" : ""}</h1>\n${notConfiguredBox(configured, NOT_CONFIGURED_EN)}${SUMMARY}\n${await versionLine(env)}\n${entityNote}\n<p>To sign, open a pull request in a Kleidos repository and follow the link the bot posts on it.</p>\n${agreementText(kind)}`,
       { title: `Kleidos Contributor Agreement${kind === "entity" ? " (entity version)" : ""}`, cache: "public" },
     );
   })();
 }
 
-export async function spanishPage(): Promise<Response> {
+export async function spanishPage(configured: boolean): Promise<Response> {
   const opts = { headingShift: 1 };
   return page(
     `<h1>Acuerdo de Contribución de Kleidos: textos en español</h1>
-<div class="box"><p>Estos textos son informativos. El acuerdo se celebra en inglés y solo el texto inglés obliga: <a href="/agreement" hreflang="en" lang="en">Kleidos Contributor Agreement</a>.</p></div>
+${notConfiguredBox(configured, NOT_CONFIGURED_ES)}<div class="box"><p>Estos textos son informativos. El acuerdo se celebra en inglés y solo el texto inglés obliga: <a href="/agreement" hreflang="en" lang="en">Kleidos Contributor Agreement</a>.</p></div>
 <section class="text">${renderMarkdown(FILES["summary.es.md"]!, opts)}</section>
 <section class="text">${renderMarkdown(FILES["addendum.es.md"]!, opts)}</section>`,
     { title: "Acuerdo de Contribución de Kleidos: textos en español", lang: "es", cache: "public" },

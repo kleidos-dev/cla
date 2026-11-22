@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOT_ID, commit } from "./fakegh";
 import type { User } from "./fakegh";
 import type { World } from "./helpers";
+import { handleFetch } from "../src/index";
 import { Browser, CONFIG, ORIGIN, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
 
 afterEach(() => {
@@ -313,5 +314,17 @@ describe("web signing", () => {
     expect((await a.get("/healthz")).status).toBe(200);
     expect((await a.get(`/sign/${SANDBOX}/1`)).status).toBe(503);
     expect((await a.get(`/auth/login?return=/sign/${SANDBOX}/1`)).status).toBe(503);
+    expect(await (await a.get("/agreement")).text()).toContain("The CLA bot is not configured yet");
+    expect(await (await a.get("/agreement/es")).text()).toContain("El bot del CLA aún no está configurado");
+    const hook = await handleFetch(new Request(`${ORIGIN}/webhook`, { method: "POST", headers: { "x-github-event": "ping", "x-github-delivery": "0123456789ab" }, body: "{}" }), w.env);
+    expect(hook.status).toBe(401);
+    expect(w.queue.sent).toHaveLength(0);
+  });
+
+  it("once configured the pages carry no not-configured notice", async () => {
+    const w = await world();
+    const a = new Browser(w, alice);
+    expect(await (await a.get("/agreement")).text()).not.toContain("not configured yet");
+    expect(await (await a.get("/agreement/es")).text()).not.toContain("aún no está configurado");
   });
 });

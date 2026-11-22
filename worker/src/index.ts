@@ -10,7 +10,7 @@ import { keysFor } from "./keys";
 import { log } from "./log";
 import type { QueueMessage } from "./messages";
 import { parseMessage } from "./messages";
-import { agree, agreementPage, callback, login, logout, privacyPage, setupPage, signPage, signingState, spanishPage } from "./web";
+import { NOT_CONFIGURED_EN, agree, agreementPage, callback, login, logout, privacyPage, setupPage, signPage, signingState, spanishPage } from "./web";
 import { handleWebhook } from "./webhook";
 
 const PUBLIC_ROUTES = new Set(["/agreement", "/agreement/entity", "/agreement/es", "/privacy", "/privacy/es", "/healthz", "/robots.txt", "/.well-known/security.txt", "/", "/setup"]);
@@ -51,11 +51,11 @@ async function publicRoute(path: string, env: Env): Promise<Response | null> {
     case "/":
       return redirect("/agreement", 302);
     case "/agreement":
-      return agreementPage("individual", env);
+      return agreementPage("individual", env, isConfigured(env));
     case "/agreement/entity":
-      return agreementPage("entity", env);
+      return agreementPage("entity", env, isConfigured(env));
     case "/agreement/es":
-      return spanishPage();
+      return spanishPage(isConfigured(env));
     case "/privacy":
       return privacyPage("en");
     case "/privacy/es":
@@ -96,7 +96,11 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
   if (!known) return notFound();
   const wants = path === "/webhook" || path === "/auth/logout" || path === "/agree" ? "POST" : "GET";
   if (method !== wants) return methodNotAllowed(wants);
-  if (!isConfigured(env)) return messagePage(503, "Not ready yet", "The signing service is being set up. Come back later, or write to mail@kleidos.dev.");
+  if (!isConfigured(env)) {
+    // Without the webhook secret no delivery can be verified, so every one is refused as unsigned.
+    if (path === "/webhook") return text("not configured: no delivery can be verified\n", 401);
+    return messagePage(503, "Not configured yet", NOT_CONFIGURED_EN);
+  }
 
   const bot = makeBot(env);
   if (path === "/webhook") return handleWebhook(req, env);
