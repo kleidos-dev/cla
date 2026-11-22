@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MIT
+//
+// The Kleidos CLA Worker. No secret lives here: the six secrets are set
+// by the owner's scripts/create-github-app.ts, straight into
+// `wrangler secret put`. Deploy with `npm run deploy` from a clean
+// checkout of a signed commit (README, "Deploying").
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "kleidos-cla",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "account_id": "2f9553317101da9ffc30c2df87ee808c",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "cla.kleidos.dev", "custom_domain": true }],
+  // The agreement, the notices and the stylesheet are bundled as text, so
+  // the deployed Worker serves the bytes of the commit it was built from.
+  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/SHA256SUMS", "**/*.css"], "fallthrough": true }],
+  "vars": {
+    "ALLOWED_ACCOUNT_IDS": "357318718",
+    "REGISTRY_REPO": "kleidos-dev/cla",
+    "PUBLIC_ORIGIN": "https://cla.kleidos.dev",
+    "BUILD_COMMIT": "unknown"
+  },
+  "queues": {
+    "producers": [{ "binding": "CLA_QUEUE", "queue": "kleidos-cla" }],
+    "consumers": [
+      { "queue": "kleidos-cla", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 5, "retry_delay": 30 }
+    ]
+  },
+  "triggers": { "crons": ["17 */6 * * *"] },
+  // Approximate, per Cloudflare location; the periods offered are 10 and 60 s.
+  "ratelimits": [
+    { "name": "RL_WEBHOOK", "namespace_id": "4201", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RL_AUTH", "namespace_id": "4202", "simple": { "limit": 20, "period": 60 } },
+    { "name": "RL_SIGN", "namespace_id": "4203", "simple": { "limit": 60, "period": 60 } },
+    { "name": "RL_AGREE_IP", "namespace_id": "4204", "simple": { "limit": 5, "period": 60 } },
+    { "name": "RL_AGREE_ACCOUNT", "namespace_id": "4205", "simple": { "limit": 3, "period": 60 } }
+  ],
+  // Invocation logs record the request URL, and /auth/callback carries the
+  // OAuth code in its query string: they stay off. The Worker's own log
+  // lines carry an allowlist of fields (src/log.ts).
+  "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }
+}

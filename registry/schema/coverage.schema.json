@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kleidos-dev/cla/blob/main/registry/schema/coverage.schema.json",
+  "title": "Kleidos CLA: the authors of one merged pull request (coverage/<owner>/<repo>/<pr>.json on branch signatures)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "repo", "pr", "merge_sha", "merged_at", "github_ids", "versions", "recorded_at", "recorder_run_id"],
+  "properties": {
+    "schema": { "const": 1 },
+    "kind": { "const": "coverage" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+    "pr": { "type": "integer", "minimum": 1 },
+    "merge_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "merged_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+    "github_ids": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+    "versions": {
+      "description": "The version each covered account had accepted when the pull request was merged, keyed by account id",
+      "type": "object",
+      "patternProperties": { "^[1-9][0-9]*$": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": false
+    },
+    "recorded_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+    "recorder_run_id": { "type": "integer", "minimum": 1 }
+  }
+}

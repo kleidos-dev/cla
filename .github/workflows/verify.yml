@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: MIT
+#
+# Checks the register after every recorder run and weekly: the signatures
+# branch is linear, every commit adds or changes exactly one record and is
+# the recorder's verified commit (or the owner's redact:/entity: commit),
+# every record matches registry/config.json, and every pull request merged
+# in a served repository has its coverage file. The last check is what
+# catches a check turned green without a signature. A failure opens an
+# issue.
+#
+# A push to signatures cannot start it: that branch holds no workflow, and
+# a push made with GITHUB_TOKEN starts nothing. So it runs on workflow_run
+# of Record (as main has this file) and on a schedule.
+name: Verify the register
+
+# Reviewed: workflow_run only starts this file as main has it; the job
+# reads the public register and runs no code from any pull request.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [Record]
+    types: [completed]
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: "🔍 Verify the register"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write # report what fails
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the signatures branch
+        run: git fetch --no-tags origin "+refs/heads/signatures:refs/remotes/origin/signatures"
+      - name: Verify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '-9 days' +%Y-%m-%d)
+          python3 -I registry/cla.py verify --ref origin/signatures --merged-since "$since"
+      - name: Report the problems
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "The register did not verify" \
+            --body "verify.yml found problems in the signatures branch or a merged pull request without coverage. Run: $RUN"

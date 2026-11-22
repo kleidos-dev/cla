@@ -1,0 +1,78 @@
+/* SPDX-License-Identifier: MIT */
+/* The one stylesheet of cla.kleidos.dev: system fonts, light and dark, print. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1b1d21;
+  --muted: #4a4f57;
+  --accent: #0b5cad;
+  --line: #c9ced6;
+  --box: #f3f5f8;
+  --ok: #1a6b32;
+  --warn: #8a4b00;
+  --focus: #b35c00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121417;
+    --fg: #e8eaee;
+    --muted: #b8bec8;
+    --accent: #8cc4ff;
+    --line: #3b4048;
+    --box: #1d2025;
+    --ok: #7fd99a;
+    --warn: #ffc27a;
+    --focus: #ffb35c;
+  }
+}
+* { box-sizing: border-box; }
+html { font-size: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+.skip { position: absolute; left: -999rem; }
+.skip:focus { left: 1rem; top: 1rem; background: var(--bg); padding: 0.5rem 0.75rem; }
+header, main, footer { max-width: 42rem; margin: 0 auto; padding: 0 1rem; }
+header { padding-top: 1.5rem; color: var(--muted); }
+footer { padding-bottom: 2rem; color: var(--muted); border-top: 1px solid var(--line); margin-top: 3rem; }
+h1 { font-size: 1.875rem; line-height: 1.25; }
+h2 { font-size: 1.5rem; margin-top: 2.5rem; }
+h3 { font-size: 1.25rem; margin-top: 2rem; }
+h4, h5, h6 { font-size: 1.0625rem; }
+a { color: var(--accent); text-underline-offset: 0.15em; }
+a, button, input, summary { min-height: 1.5rem; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; overflow-wrap: anywhere; word-break: break-all; }
+.box { background: var(--box); border: 1px solid var(--line); border-radius: 0.5rem; padding: 1rem 1.25rem; margin: 1.5rem 0; }
+.alert { border-color: var(--warn); }
+.ok { border-color: var(--ok); }
+.meta { color: var(--muted); }
+.text { border-left: 3px solid var(--line); padding-left: 1rem; }
+form p { margin: 0 0 1rem; }
+.accept { display: flex; gap: 0.75rem; align-items: flex-start; }
+.accept input { width: 1.5rem; height: 1.5rem; margin-top: 0.2rem; flex: none; }
+button, .button {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  color: #ffffff;
+  background: #0b5cad;
+  border: 0;
+  border-radius: 0.375rem;
+  padding: 0.6rem 1.1rem;
+  min-height: 2.75rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+.inline { display: inline; }
+.link { background: none; color: var(--accent); padding: 0; min-height: 1.5rem; font-weight: 400; text-decoration: underline; }
+@media print {
+  .skip, nav, form, footer { display: none; }
+  body { background: #fff; color: #000; }
+  a { color: #000; }
+}

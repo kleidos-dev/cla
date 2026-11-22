@@ -1,0 +1,26 @@
+version = 1
+SPDX-PackageName = "cla"
+SPDX-PackageSupplier = "José M. Requena Plens <jmrplens@kleidos.dev>"
+SPDX-PackageDownloadLocation = "https://github.com/kleidos-dev/cla"
+
+# Everything this project wrote is under the MIT License: the Worker, the
+# recorder and verifier, the owner's setup script, their tests and the CI;
+# the Kleidos Addendum and its Spanish translation, the Spanish summary,
+# the privacy notices, the configuration, the schemas and the prose. The
+# row below names what is not this project's.
+[[annotations]]
+path = ["**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens <jmrplens@kleidos.dev>"
+SPDX-License-Identifier = "MIT"
+
+# The two Contributor Agreements 1.2 texts, generated verbatim by the
+# contributoragreements.org chooser (individual and entity, non-exclusive,
+# Traditional patent licence, "no commitment" outbound) and never edited:
+# third-party material under CC BY-SA 4.0. The project's own terms are in
+# the separate addendum.md, not in these files.
+[[annotations]]
+path = ["agreements/v1/individual.md", "agreements/v1/entity.md"]
+precedence = "override"
+SPDX-FileCopyrightText = "Contributor Agreements, https://contributoragreements.org/"
+SPDX-License-Identifier = "CC-BY-SA-4.0"

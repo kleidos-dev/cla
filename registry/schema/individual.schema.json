@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kleidos-dev/cla/blob/main/registry/schema/individual.schema.json",
+  "title": "Kleidos CLA: one individual signature (signatures/individual/<github_id>.json on branch signatures)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "github_id", "login_at_signing", "agreement", "version", "set_sha256", "accepted_at", "method", "evidence", "recorded_at", "recorder_run_id"],
+  "properties": {
+    "schema": { "const": 1 },
+    "kind": { "const": "individual" },
+    "github_id": { "type": "integer", "minimum": 1 },
+    "login_at_signing": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$" },
+    "agreement": { "const": "kleidos-ca" },
+    "version": { "type": "integer", "minimum": 1 },
+    "set_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "accepted_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+    "method": { "enum": ["web", "comment"] },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr_url", "comment_url", "comment_id", "comment_body_sha256"],
+      "properties": {
+        "pr_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$" },
+        "comment_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*#issuecomment-[1-9][0-9]*$" },
+        "comment_id": { "type": "integer", "minimum": 1 },
+        "comment_body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "recorded_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
+    "recorder_run_id": { "type": "integer", "minimum": 1 }
+  }
+}

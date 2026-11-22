@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: MIT
+#
+# The repository's gate on every push and pull request, cheapest first (the
+# project's CI convention: a failure skips what depends on it):
+#
+#   🧹 Licenses, lint and digests ─┬─ 🔎 Typecheck
+#                                   ├─ 🧪 Worker tests
+#                                   ├─ 🐍 Register tests
+#                                   └─ 🔑 App setup script test
+#
+# No job here holds a secret or writes anything: pull requests from forks
+# run with the read-only token like everyone else's.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: "🧹 Licenses, lint and digests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+      - name: Install the pinned stack
+        run: pip install -r requirements.txt
+      - name: Licenses (REUSE)
+        run: reuse lint
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install the Worker's development tools
+        working-directory: worker
+        run: npm ci
+      - name: The agreement texts hash to SHA256SUMS and to registry/config.json
+        working-directory: worker
+        run: npm run check:agreement
+      - name: ESLint
+        working-directory: worker
+        run: npm run lint
+      - name: The register's tool compiles
+        run: python3 -I -m py_compile registry/cla.py
+
+  typecheck:
+    name: "🔎 Typecheck"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: tsc (the Worker, its tests and the setup script)
+        working-directory: worker
+        run: npm run typecheck
+
+  worker:
+    name: "🧪 Worker tests"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Vitest in the Workers runtime, GitHub mocked
+        working-directory: worker
+        run: npm test
+
+  register:
+    name: "🐍 Register tests"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: The recorder and the verifier
+        run: python3 -m unittest discover -s registry/tests -v
+
+  script:
+    name: "🔑 App setup script test"
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: create-github-app.ts end to end, against a mocked GitHub and a fake wrangler
+        run: node --test scripts/test/

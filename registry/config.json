@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "agreement": "kleidos-ca",
+  "current_version": 1,
+  "accepted_versions": [1],
+  "coverage_from": "2026-11-23",
+  "versions": {
+    "1": {
+      "path": "agreements/v1",
+      "set_sha256": "89c1d46b9b1048508d9acdba113620b08a45c57d7e067ee41dd2b816a839a61e",
+      "files": {
+        "individual.md": "2f891b84eb51b0a9e00df166381f7aaea44a10b55f7c742fd27f6ef2e7dac056",
+        "entity.md": "711d5a98426a6e63c2f4d0747c8f56815cf58540eddf6664f7751fa6363c2d35",
+        "addendum.md": "b9fc5218ce00d61e32f450ce955b27592c1b3ea9853578ad417bc0238a960467"
+      },
+      "sentence": "I have read and I accept the Kleidos Contributor Agreement, version 1 (SHA-256 89c1d46b9b10), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute."
+    }
+  },
+  "served_repositories": {
+    "kleidos-dev/cla": { "auto_approve": false },
+    "kleidos-dev/cla-sandbox": { "auto_approve": true }
+  },
+  "exempt": [
+    { "id": 28966312, "login": "jmrplens", "why": "the project owner" },
+    { "id": 49699333, "login": "dependabot[bot]", "why": "Kleidos automation" },
+    { "id": 41898282, "login": "github-actions[bot]", "why": "Kleidos automation" },
+    { "id": 136622811, "login": "coderabbitai[bot]", "why": "review bot, co-author of suggestions applied by a signer" },
+    { "id": 165735046, "login": "greptile-apps[bot]", "why": "review bot, co-author of suggestions applied by a signer" }
+  ]
+}

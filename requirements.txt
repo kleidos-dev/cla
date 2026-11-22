@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+#
+# What the checks run, pinned. The recorder and verifier (registry/cla.py)
+# need nothing but the standard library.
+reuse==6.3.0
+# reuse needs one module that detects a file's encoding
+charset-normalizer==3.5.2

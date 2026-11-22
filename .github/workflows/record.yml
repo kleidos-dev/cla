@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: MIT
+#
+# The register's only writer. The bot dispatches it with three identifiers
+# (kind, repository, pull request, and the comment for a signature); the
+# owner can dispatch it by hand. It runs this repository's own code from
+# main, never code from the pull request it reads, and trusts nothing it
+# is told: registry/cla.py re-reads the acceptance comment or the merged
+# pull request from GitHub and writes one file to the signatures branch
+# through createCommitOnBranch, so every record is a commit GitHub signs.
+# The inputs reach the script through the environment, never through the
+# shell line.
+name: Record
+run-name: "Record ${{ inputs.kind }} ${{ inputs.repo }}#${{ inputs.pr }} ${{ inputs.comment_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "sign or coverage"
+        type: choice
+        options: [sign, coverage]
+        required: true
+      repo:
+        description: "owner/name of the pull request's repository"
+        type: string
+        required: true
+      pr:
+        description: "pull request number"
+        type: string
+        required: true
+      comment_id:
+        description: "the acceptance comment's id (sign only)"
+        type: string
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: record
+  cancel-in-progress: false
+
+jobs:
+  record:
+    name: "📝 Record"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # the signatures branch
+      issues: write # report a merge without a signature
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record
+        id: record
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          KIND: ${{ inputs.kind }}
+          REPO: ${{ inputs.repo }}
+          PR: ${{ inputs.pr }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+        run: |
+          set -euo pipefail
+          [[ "$REPO" =~ ^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$ ]] || { echo "bad repository"; exit 2; }
+          [[ "$PR" =~ ^[1-9][0-9]{0,9}$ ]] || { echo "bad pull request number"; exit 2; }
+          args=(record --kind "$KIND" --repo "$REPO" --pr "$PR")
+          if [[ "$KIND" == sign ]]; then
+            [[ "$COMMENT_ID" =~ ^[1-9][0-9]{0,14}$ ]] || { echo "bad comment id"; exit 2; }
+            args+=(--comment-id "$COMMENT_ID")
+          fi
+          python3 -I registry/cla.py "${args[@]}"
+      - name: Report a merged pull request the register cannot cover
+        if: failure() && inputs.kind == 'coverage'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ inputs.repo }}
+          PR: ${{ inputs.pr }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Coverage refused for $REPO#$PR" \
+            --body "The recorder could not write the coverage record of $REPO#$PR: an author has no signature, or cannot be identified. Run: $RUN"

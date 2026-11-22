@@ -1,0 +1,24 @@
+# Aviso de privacidad: Acuerdo de Contribución de Kleidos
+
+[Privacy notice in English](PRIVACY.md)
+
+1. **Responsable.** José M. Requena Plens, persona física residente en España. Contacto: mail@kleidos.dev.
+2. **Qué datos tratamos.**
+   - De quien firma: el número de su cuenta de GitHub y el nombre de la cuenta en el momento de firmar; la versión del acuerdo y su SHA-256; la fecha y la hora de la aceptación que registra GitHub; la dirección del pull request y de tu comentario de aceptación, y un SHA-256 de su texto; y si firmaste en este sitio o escribiendo tú el comentario.
+   - Mientras firmas en cla.kleidos.dev: GitHub nos dice el número y el nombre de tu cuenta. Una cookie, estrictamente necesaria para la firma que has pedido, mantiene tu sesión abierta durante una hora como máximo. Guarda, cifrado, el token temporal que emite GitHub. Ese token solo lo usamos para dos cosas: leer el número y el nombre de tu cuenta, y publicar tu línea de aceptación en el pull request cuando pulsas «I agree». Lo revocamos en cuanto termina. En este sitio no hay analítica ni contenido de terceros.
+   - De las empresas, además: su nombre y, guardados fuera de línea, el nombre y el cargo de quien firma por ella.
+   - No recogemos tu correo, tu dirección postal ni tu nombre real, y no guardamos tu dirección IP. El correo de tus commits solo se lee para identificar tu cuenta de GitHub; no se guarda ni se muestra.
+3. **Finalidades y bases jurídicas.**
+   - (a) Registrar tu aceptación y comprobar que todos los autores de un pull request han aceptado: ejecución del acuerdo que celebras (art. 6.1.b del RGPD).
+   - (b) Conservar la prueba del acuerdo y de las aportaciones que cubre, en un registro público que cualquiera puede verificar, para defender las licencias concedidas sobre ellas: nuestro interés legítimo en poder acreditar quién licenció qué (art. 6.1.f).
+   - (c) Tratar los datos de los coautores de commits que aún no han aceptado y mostrar en el pull request quién ha aceptado: interés legítimo (art. 6.1.f).
+   - A los representantes de empresas se les aplica el art. 19 de la Ley Orgánica 3/2018.
+4. **Procedencia.** Los datos los facilitas tú, al iniciar sesión con GitHub y al aceptar. Los de los coautores proceden de los metadatos de los commits del pull request.
+5. **Destinatarios.**
+   - El registro es público: se guarda en el repositorio github.com/kleidos-dev/cla, y tu comentario de aceptación y nuestra confirmación son públicos, como todo lo que hay en un pull request público.
+   - GitHub, Inc. gestiona la plataforma en la que inicias sesión y comentas y aloja ese repositorio, como responsable independiente según su propia declaración de privacidad; está establecida en EE. UU. y declara ampararse en el Marco de Privacidad de Datos UE-EE. UU. y en cláusulas contractuales tipo.
+   - Cloudflare, Inc. sirve este sitio y ejecuta el programa que habla con GitHub, como encargado del tratamiento conforme a su acuerdo de tratamiento de datos. Para entregar las páginas y limitar los abusos trata tu dirección IP; nosotros no guardamos ningún registro de ella.
+   - Entregamos el registro a jueces y autoridades cuando la ley lo exige, y podemos mostrarlo a quien reciba una licencia para acreditar la cadena de derechos.
+6. **Plazo.** Mientras Kleidos distribuya, o licencie en cualquier condición, una aportación cubierta por tu aceptación, y cinco años más (art. 1964.2 del Código Civil y art. 140.3 de la Ley de Propiedad Intelectual). Después la entrada se retira del registro. Si inicias sesión y no aceptas, no se conserva nada cuando caduca la cookie.
+7. **Tus derechos.** Acceso, rectificación, supresión, limitación, oposición y portabilidad (arts. 15 a 22 del RGPD). Son gratuitos y se responden en un mes; escribe a la dirección de contacto. La supresión y la oposición pueden denegarse respecto de la parte del registro necesaria para formular, ejercer o defender reclamaciones (art. 17.3.e y art. 21.1); en ese caso solo conservamos esa parte, y fuera de la vista pública si lo pides y ninguna razón que prevalezca obliga a mantenerla pública. Un historial público de git no se puede retirar de las copias que otros hayan hecho; sí podemos quitar una entrada de los ficheros actuales y del historial de nuestro propio repositorio. Puedes retirar en cualquier momento la autorización de la aplicación en la configuración de tu cuenta de GitHub; eso no deshace una aceptación. Puedes reclamar ante la Agencia Española de Protección de Datos (www.aepd.es).
+8. **¿Es obligatorio?** Estos datos son condición para que se fusione tu aportación: sin la aceptación no se puede fusionar. No se toman decisiones automatizadas con efectos jurídicos o de importancia similar: el programa solo comprueba si existe una aceptación, y cada fusión la decide una persona.
