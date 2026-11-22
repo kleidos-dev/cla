@@ -113,7 +113,7 @@ The code:
 
 ## Setting it up (owner)
 
-Done already: this repository, its `signatures` branch, and the Queue `kleidos-cla` in the Cloudflare account "Kleidos". The rest needs the owner's own credentials:
+Done already: this repository, its `signatures` branch, the Queue `kleidos-cla` in the Cloudflare account "Kleidos", and the Worker, deployed from `main` with its custom domain (steps 1 and 2, repeated for every later deploy). The account has the workers.dev subdomain `kleidos`, which Cloudflare requires before a Worker can have a cron or a Queue consumer; this Worker is not served there (`workers_dev` and `preview_urls` are false). The rest needs the owner's own credentials:
 
 1. `cd worker && npm ci && npx wrangler login`.
 2. `npm run deploy` from a clean checkout of a signed commit of `main`: it checks the digests, that the tree is clean, that `HEAD` carries a good signature and is on `origin/main`, then deploys the Worker `kleidos-cla` with its custom domain `cla.kleidos.dev` (the DNS record and the certificate are made by Cloudflare), the Queue consumer and the cron. Until the secrets exist the Worker serves the texts (each page says the CLA bot is not configured yet) and `/healthz`, refuses every `/webhook` delivery with 401 (no signature can be verified), and answers 503 on everything else.
