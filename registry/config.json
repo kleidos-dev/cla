@@ -4,7 +4,7 @@
   "current_version": 1,
   "accepted_versions": [1],
   "coverage_from": "2026-11-23",
-  "app_id": null,
+  "app_id": 5879825,
   "versions": {
     "1": {
       "path": "agreements/v1",
@@ -26,6 +26,7 @@
     { "id": 49699333, "login": "dependabot[bot]", "why": "Kleidos automation" },
     { "id": 41898282, "login": "github-actions[bot]", "why": "Kleidos automation" },
     { "id": 136622811, "login": "coderabbitai[bot]", "why": "review bot, co-author of suggestions applied by a signer" },
-    { "id": 165735046, "login": "greptile-apps[bot]", "why": "review bot, co-author of suggestions applied by a signer" }
+    { "id": 165735046, "login": "greptile-apps[bot]", "why": "review bot, co-author of suggestions applied by a signer" },
+    { "id": 360015473, "login": "kleidos-cla[bot]", "why": "this CLA bot" }
   ]
 }
