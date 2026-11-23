@@ -1,8 +1,8 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "2.0.0",
-  "commit": "30f0dc69833e0917c7865eb93770237fedacff59",
+  "version": "2.3.0",
+  "commit": "f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d",
   "profiles": [
     "base",
     "python",
@@ -14,12 +14,17 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "e4c64a911e8aebcb9e2ea365e82e208d3210287fe1f2a4835eae8d6c2012986a"
+      "sha256": "e88d1eb4674418ce4268f2fc1a929b9b7612e2fc6b4b4ce48c106eb2722ced4d"
     },
     {
       "path": ".github/quality/md_nowrap.py",
       "source_path": "quality/md_nowrap.py",
       "sha256": "c08ec96af8015ba3649a4c9a88b96fde86b1b879d9e7151e35db1ff984639b77"
+    },
+    {
+      "path": ".github/quality/agent_docs.py",
+      "source_path": "quality/agent_docs.py",
+      "sha256": "bff2b42cd637dc5fda36a16e82e28d7661b8c9487dc9a27ff93b4c9cb017be39"
     },
     {
       "path": ".github/quality/spdx_headers.py",
@@ -39,7 +44,7 @@
     {
       "path": ".github/quality/ruff.toml",
       "source_path": "quality/ruff/ruff.toml",
-      "sha256": "1ca922f05fcf936c03aaf041168ff49c91fb958d47b9f35c08402e4983d7a942"
+      "sha256": "20d436dedf3d71b4674197a8e823741b2f06eb7166cebcae16d544ed93707613"
     },
     {
       "path": ".github/quality/mypy_groups.py",
@@ -67,7 +72,7 @@
       "id": "pre-commit-base",
       "path": ".pre-commit-config.yaml",
       "source_path": ".pre-commit-config.yaml",
-      "sha256": "5755138682485a917efff70250e50270f1506015fa351409cf3e6ec506513a3d"
+      "sha256": "e1d671745cb681fc4e502b2c38d110eee65a37ac4fa70e8f93301adc48fd7dba"
     },
     {
       "id": "pre-commit-python",
@@ -87,6 +92,12 @@
       "source_path": "quality/mypy/block.toml",
       "sha256": "362e99636640a9de07e0cdfa84630ad088b755c59119c641d4df2b8341c33bb4",
       "table": "tool.mypy"
+    },
+    {
+      "id": "organization-rules",
+      "path": "AGENTS.md",
+      "source_path": "quality/agents/block.md",
+      "sha256": "dded2efe884a45fa998e6e1b21292e0248197f3f5b1d09ad248102425da9bfcd"
     },
     {
       "id": "typos",
