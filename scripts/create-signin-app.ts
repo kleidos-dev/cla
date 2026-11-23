@@ -178,7 +178,7 @@ async function ensureEnvironment(): Promise<boolean> {
   if (list.code !== 0) return false;
   const names = list.out.trim().split(",").filter(Boolean);
   if (names.some((n) => n !== "main:branch")) {
-    console.error(`The environment ${ENVIRONMENT} of ${REGISTRY} allows other branches than main (${names.join(", ")}): remove them in its settings, then run this script again.`);
+    console.error(`The environment ${ENVIRONMENT} of ${REGISTRY} allows other branches than main (${printable(names.join(", "))}): remove them in its settings, then run this script again.`);
     return false;
   }
   if (names.length === 0) {

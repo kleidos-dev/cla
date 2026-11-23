@@ -326,6 +326,15 @@ describe("create-github-app.ts", () => {
     });
   });
 
+  it("what is shown of GitHub's answer is cut short", async () => {
+    for (const answer of [{ slug: "s".repeat(5000) }, { owner: { id: "s".repeat(5000) } }])
+      await answering(mock, answer, async () => {
+        const r = await runScript(mock);
+        assert.equal(r.code, 4, r.out);
+        assert.equal(/s{100,}/.exec(r.out)?.[0].length, 200, r.out);
+      });
+  });
+
   it("an answer that is not JSON is not quoted", async () => {
     await answering(mock, `{"client_secret": ${mock.secrets.client_secret}`, async () => {
       const r = await runScript(mock);

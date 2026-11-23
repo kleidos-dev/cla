@@ -250,6 +250,11 @@ describe("create-signin-app.ts", () => {
     assert.match(wider.out, /allows other branches than main/);
     assert.doesNotMatch(wider.out, /Open http/);
     assert.equal(mock.conversions, before);
+    const hostile = await runScript(mock, { policies: `main:branch,${FORGED}${"s".repeat(5000)}:branch` });
+    assert.equal(hostile.code, 2);
+    assert.match(hostile.out, /allows other branches than main \(main:branch, x/);
+    assertPlain(hostile.out);
+    assert.doesNotMatch(hostile.out, /s{200}/);
   });
 
   it("refuses before showing anything when gh cannot administer the register or wrangler cannot reach the Worker", async () => {
@@ -292,6 +297,15 @@ describe("create-signin-app.ts", () => {
       assert.match(r.out, /Warning: GitHub gave the app permissions or events/);
       assert.match(r.out, /app id 4343, http:\/\/127\.0\.0\.1:\d+\/apps\/kleidos-cla-sign-in\)/);
     });
+  });
+
+  it("what is shown of GitHub's answer is cut short", async () => {
+    for (const answer of [{ slug: "s".repeat(5000) }, { owner: { id: "s".repeat(5000) } }])
+      await answering(mock, answer, async () => {
+        const r = await runScript(mock);
+        assert.equal(r.code, 4, r.out);
+        assert.equal(/s{100,}/.exec(r.out)?.[0].length, 200, r.out);
+      });
   });
 
   it("an answer that is not JSON is not quoted", async () => {
