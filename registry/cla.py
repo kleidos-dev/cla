@@ -38,7 +38,7 @@ Usage::
 payload (``$GITHUB_EVENT_PATH``, ``inputs.signin_token``), never from the
 command line or the environment, and the sign-in app's client secret from
 ``SIGNIN_CLIENT_SECRET``.
-    python3 -I registry/cla.py verify [--since SHA] [--marker-out .verify/FILE] \
+    python3 -I registry/cla.py verify [--since SHA] [--marker-out .verify/next] \
         [--merged-since YYYY-MM-DD]
 """
 
@@ -1567,18 +1567,8 @@ REFS = {
     f"origin/{BRANCH}": f"refs/remotes/origin/{BRANCH}",
     BRANCH: f"refs/heads/{BRANCH}",
 }
-#: Where ``verify --marker-out`` may write.
-MARKER_DIR = ROOT / ".verify"
-
-
-def marker_path(value: str) -> Path:
-    """The file ``verify --marker-out`` names, which lies directly in .verify/.
-
-    Resolved first, so that neither ``..`` nor a symbolic link leads out."""
-    path = Path(value).resolve()
-    if path.parent != MARKER_DIR:
-        raise argparse.ArgumentTypeError(f"{value!r} is not a file of .verify/")
-    return path
+#: What ``verify --marker-out`` may name, and the file it writes.
+MARKERS = {".verify/next": ROOT / ".verify" / "next"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1599,8 +1589,8 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--ref", choices=tuple(REFS), default=f"origin/{BRANCH}")
     v.add_argument(
         "--marker-out",
-        type=marker_path,
-        help="a file of .verify/ to write the last commit whose records were cross-checked to, "
+        choices=tuple(MARKERS),
+        help="where to write the last commit whose records were cross-checked, "
         "for the next run's --since",
     )
     args = ap.parse_args(argv)
@@ -1657,6 +1647,9 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         return 0
 
+    marker = MARKERS[args.marker_out] if args.marker_out else None
+    if marker and marker.resolve() != marker:
+        ap.error(f"{args.marker_out} is reached through a symbolic link")
     facts = commit_facts(gh, registry, BRANCH)
     verified = verify_history(
         ROOT, config, REFS[args.ref], args.since, facts.get, GitHubWitness(gh, registry), registry
@@ -1667,8 +1660,8 @@ def main(argv: list[str] | None = None) -> int:
         findings += verify_coverage(
             gh, config, registry, max(args.merged_since, config.get("coverage_from", ""))
         )
-    if args.marker_out and verified.checked_through and not findings:
-        args.marker_out.write_text(verified.checked_through + "\n", "utf-8")
+    if marker and verified.checked_through and not findings:
+        marker.write_text(verified.checked_through + "\n", "utf-8")
     for f in findings:
         print(f"problem: {f}")
     print(

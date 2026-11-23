@@ -1415,7 +1415,7 @@ class Verify(unittest.TestCase):
         out = io.StringIO()
         with (
             mock.patch.object(cla, "ROOT", self.root.resolve()),
-            mock.patch.object(cla, "MARKER_DIR", self.marker.parent),
+            mock.patch.object(cla, "MARKERS", {".verify/next": self.marker}),
             mock.patch.object(cla, "load_config", lambda: CONFIG),
             mock.patch.object(cla, "commit_facts", lambda *_: self.facts),
             mock.patch.object(cla, "GitHubWitness", lambda *_: self.witness),
@@ -1430,14 +1430,14 @@ class Verify(unittest.TestCase):
 
     def test_a_clean_register_leaves_its_marker(self) -> None:
         head = self.sign(1)
-        code, out = self.run_main("--ref", "signatures", "--marker-out", str(self.marker))
+        code, out = self.run_main("--ref", "signatures", "--marker-out", ".verify/next")
         self.assertEqual((code, self.marker.read_text("utf-8")), (0, f"{head}\n"), out)
         self.git("update-ref", "refs/remotes/origin/signatures", head)
         self.assertEqual(self.run_main()[0], 0)
 
     def test_a_problem_leaves_no_marker(self) -> None:
         self.commit_as(OWNER, "tidy up", {"x.txt": "x"})
-        code, out = self.run_main("--ref", "signatures", "--marker-out", str(self.marker))
+        code, out = self.run_main("--ref", "signatures", "--marker-out", ".verify/next")
         self.assertEqual(code, 1, out)
         self.assertFalse(self.marker.exists())
 
@@ -1465,24 +1465,24 @@ class Verify(unittest.TestCase):
             cla.verify_history(self.root, CONFIG, f"--output={written}", None, self.facts.get)
         self.assertFalse(written.exists())
 
-    def test_the_marker_is_a_file_of_the_verify_folder_and_nothing_else(self) -> None:
+    def test_the_marker_is_one_file_and_never_a_link_to_another(self) -> None:
         self.sign(1)
         outside = self.root.resolve() / "outside"
         outside.mkdir()
-        (self.marker.parent / "link").symlink_to(outside / "x")
-        (self.marker.parent / "folder").symlink_to(outside)
-        for path in (
-            outside / "x",
-            self.marker.parent / ".." / "outside" / "x",
-            self.marker.parent / "link",
-            self.marker.parent / "folder" / "x",
-            self.marker.parent,
-            "relative",
-        ):
+        for path in (str(outside / "x"), ".verify/../outside/x", ".verify/other", ".verify", ""):
             with self.subTest(path):
-                code, out = self.run_main("--ref", "signatures", "--marker-out", str(path))
+                code, out = self.run_main("--ref", "signatures", "--marker-out", path)
                 self.assertEqual(code, 2, out)
-                self.assertIn("is not a file of .verify/", out)
+                self.assertIn("invalid choice", out)
+        self.marker.symlink_to(outside / "x")
+        linked = [self.run_main("--ref", "signatures", "--marker-out", ".verify/next")]
+        self.marker.unlink()
+        self.marker.parent.rmdir()
+        self.marker.parent.symlink_to(outside)
+        linked.append(self.run_main("--ref", "signatures", "--marker-out", ".verify/next"))
+        for code, out in linked:
+            self.assertEqual(code, 2, out)
+            self.assertIn("is reached through a symbolic link", out)
         self.assertEqual(list(outside.iterdir()), [])
 
 
