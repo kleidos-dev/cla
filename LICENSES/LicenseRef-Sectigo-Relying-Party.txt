@@ -1,0 +1,9 @@
+Sectigo (Europe) SL publishes the certificates of its qualified
+time-stamping service, and the time-stamp tokens that service issues, for
+relying parties to verify them. They are copied here unchanged, only to
+verify time-stamp tokens, under Sectigo's policies and practices:
+
+  https://sectigo.com/eIDASCPS
+  https://sectigo.com/legal
+
+No other right in them is granted by this repository.

@@ -1,32 +1,212 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/kleidos-dev/cla/blob/main/registry/schema/individual.schema.json",
-  "title": "Kleidos CLA: one individual signature (signatures/individual/<github_id>.json on branch signatures)",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema", "kind", "github_id", "login_at_signing", "agreement", "version", "set_sha256", "accepted_at", "method", "evidence", "recorded_at", "recorder_run_id"],
-  "properties": {
-    "schema": { "const": 1 },
-    "kind": { "const": "individual" },
-    "github_id": { "type": "integer", "minimum": 1 },
-    "login_at_signing": { "type": "string", "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$" },
-    "agreement": { "const": "kleidos-ca" },
-    "version": { "type": "integer", "minimum": 1 },
-    "set_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "accepted_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
-    "method": { "enum": ["web", "comment"] },
-    "evidence": {
+  "title": "Kleidos CLA: one individual signature (signatures/individual/<github_id>.json on branch signatures); its RFC 3161 time-stamp token over the file's SHA-256, when there is one, is <github_id>.tsr beside it",
+  "oneOf": [
+    {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pr_url", "comment_url", "comment_id", "comment_body_sha256"],
+      "required": [
+        "schema",
+        "kind",
+        "github_id",
+        "login_at_signing",
+        "agreement",
+        "version",
+        "set_sha256",
+        "accepted_at",
+        "method",
+        "evidence",
+        "recorded_at",
+        "recorder_run_id"
+      ],
       "properties": {
-        "pr_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$" },
-        "comment_url": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*#issuecomment-[1-9][0-9]*$" },
-        "comment_id": { "type": "integer", "minimum": 1 },
-        "comment_body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
-      }
+        "schema": {
+          "const": 1
+        },
+        "kind": {
+          "const": "individual"
+        },
+        "github_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "login_at_signing": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
+        },
+        "agreement": {
+          "const": "kleidos-ca"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "set_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accepted_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "method": {
+          "enum": [
+            "web",
+            "comment"
+          ]
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pr_url",
+            "comment_url",
+            "comment_id",
+            "comment_body_sha256"
+          ],
+          "properties": {
+            "pr_url": {
+              "type": "string",
+              "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$"
+            },
+            "comment_url": {
+              "type": "string",
+              "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*#issuecomment-[1-9][0-9]*$"
+            },
+            "comment_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "comment_body_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "recorded_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "recorder_run_id": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "title": "Schema 1: an acceptance comment on a pull request (posted through the app, method web, or typed, method comment)"
     },
-    "recorded_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$" },
-    "recorder_run_id": { "type": "integer", "minimum": 1 }
-  }
+    {
+      "title": "Schema 2: an acceptance made by signing in at cla.kleidos.dev and checked by the recorder with GitHub",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "github_id",
+        "login_at_signing",
+        "agreement",
+        "version",
+        "set_sha256",
+        "sentence_sha256",
+        "accepted_at",
+        "method",
+        "evidence",
+        "recorded_at",
+        "recorder_run_id",
+        "recorder_commit"
+      ],
+      "properties": {
+        "schema": {
+          "const": 2
+        },
+        "kind": {
+          "const": "individual"
+        },
+        "github_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "login_at_signing": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
+        },
+        "agreement": {
+          "const": "kleidos-ca"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "set_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sentence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the acceptance sentence of that version, the text beside the box the signer ticked"
+        },
+        "accepted_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "description": "The Date of GitHub's answer to the recorder's check of the sign-in token"
+        },
+        "method": {
+          "const": "signin"
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authorized_at",
+            "signin_client_id",
+            "context_pr_url",
+            "site_commit",
+            "lang"
+          ],
+          "properties": {
+            "authorized_at": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+              "description": "GitHub's created_at of the sign-in token: when the signer authorized the sign-in app"
+            },
+            "signin_client_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9.]{16,40}$"
+            },
+            "context_pr_url": {
+              "type": "string",
+              "pattern": "^https://github\\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[1-9][0-9]*$",
+              "description": "The pull request the signer came from: context, not the signature"
+            },
+            "site_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$",
+              "description": "The commit of this repository the sign page was built from"
+            },
+            "lang": {
+              "enum": [
+                "en",
+                "es"
+              ],
+              "description": "The language of the sign page"
+            }
+          }
+        },
+        "recorded_at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+        },
+        "recorder_run_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recorder_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "The commit of main the Record run executed"
+        }
+      }
+    }
+  ]
 }

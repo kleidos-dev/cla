@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: MIT
 #
 # Checks the register after every recorder run and weekly: the signatures
-# branch is linear, every commit adds or changes exactly one record and is
-# the recorder's GitHub-signed commit (or the owner's redact:/entity:
-# commit), every record has the schema's shape and a published version,
-# the records added since the last run cite a genuine unedited acceptance
-# comment and the successful Record run that wrote them, record.yml and
-# this file are enabled, and every pull request merged in a served
-# repository has its coverage file. The last check is what catches a check
-# turned green without a signature. A failure opens an issue.
+# branch is linear, every commit adds or changes exactly one record (with
+# its time-stamp token) and is the recorder's GitHub-signed commit (or the
+# owner's redact:/entity: commit), every record has the schema's shape and
+# a published version, every time-stamp token verifies (openssl ts) over
+# the SHA-256 of its record against the roots pinned in registry/tsa/, the
+# records added since the last run cite a genuine unedited acceptance
+# comment, or for a sign-in the successful Record run on the commit of
+# main the record names, and the successful Record run that wrote them,
+# record.yml and this file are enabled, and every pull request merged in a
+# served repository has its coverage file. The last check is what catches
+# a check turned green without a signature. A failure opens an issue.
 #
 # The commit facts come from GitHub in one GraphQL query per 100 commits;
 # the cross-checks (two or three calls per record) run only on the records

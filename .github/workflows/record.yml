@@ -1,54 +1,94 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# The register's only writer. The bot dispatches it with three identifiers
-# (kind, repository, pull request, and the comment for a signature); the
-# owner can dispatch it by hand. It runs this repository's own code from
-# main, never code from the pull request it reads, and trusts nothing it
-# is told: registry/cla.py re-reads the acceptance comment or the merged
-# pull request from GitHub and writes one file to the signatures branch
-# through createCommitOnBranch, so every record is a commit GitHub signs.
+# The register's only writer. The bot dispatches it with identifiers only
+# (kind, repository, pull request, and the comment for a signature typed
+# or posted as a comment), or, for a signature made by signing in at
+# cla.kleidos.dev, with the account id it reports and the signer's
+# sign-in token; the owner can dispatch it by hand, and a daily schedule
+# adds the time-stamp tokens a signature was written without. It runs this
+# repository's own code from main, never code from the pull request it
+# reads, and trusts nothing it is told: registry/cla.py re-reads the
+# acceptance comment or the merged pull request from GitHub, or asks
+# GitHub whose token it was handed ("Check a token", with the sign-in
+# app's own secret, which only the signin environment holds, on main)
+# and then deletes that grant; it writes to the signatures branch through
+# createCommitOnBranch, so every record is a commit GitHub signs.
+#
 # The inputs reach the script through the environment, never through the
-# shell line.
+# shell line. The sign-in token reaches it through nothing visible: it is
+# in no env:, run-name, concurrency group or expression (all of which a
+# public run shows), and cla.py reads it from the event payload file and
+# masks it before anything else.
 name: Record
-run-name: "Record ${{ inputs.kind }} ${{ inputs.repo }}#${{ inputs.pr }} ${{ inputs.comment_id }}"
+run-name: "${{ (github.event_name == 'schedule' || inputs.kind == 'stamp') && 'Record stamp' || format('Record {0} {1}#{2} {3}{4}', inputs.kind, inputs.repo, inputs.pr, inputs.comment_id, inputs.github_id) }}"
 
 on:
   workflow_dispatch:
     inputs:
       kind:
-        description: "sign or coverage"
+        description: "sign, coverage, signin or stamp"
         type: choice
-        options: [sign, coverage]
+        options: [sign, coverage, signin, stamp]
         required: true
       repo:
-        description: "owner/name of the pull request's repository"
+        description: "owner/name of the pull request's repository (not for stamp)"
         type: string
-        required: true
+        required: false
+        default: ""
       pr:
-        description: "pull request number"
+        description: "pull request number (not for stamp)"
         type: string
-        required: true
+        required: false
+        default: ""
       comment_id:
         description: "the acceptance comment's id (sign only)"
         type: string
         required: false
         default: ""
+      github_id:
+        description: "the account id the sign page reports (signin only)"
+        type: string
+        required: false
+        default: ""
+      version:
+        description: "the version accepted (signin only)"
+        type: string
+        required: false
+        default: ""
+      lang:
+        description: "the sign page's language, en or es (signin only)"
+        type: string
+        required: false
+        default: ""
+      site_commit:
+        description: "the commit the sign page was built from (signin only)"
+        type: string
+        required: false
+        default: ""
+      signin_token:
+        description: "the signer's sign-in token (signin only): read by registry/cla.py from the event payload, never shown"
+        type: string
+        required: false
+        default: ""
+  schedule:
+    - cron: "23 4 * * *"
 
 permissions: {}
 
 # One group per target, not one for the whole register: a group holds one
 # running and one pending run and cancels any older pending one, so a
 # shared group dropped recordings under a burst. Runs for different targets
-# race only on the signatures branch, and commit_file retries when the
+# race only on the signatures branch, and commit_files retries when the
 # branch moved under it. Two dispatches for the same target keep the newer.
 concurrency:
-  group: record-${{ inputs.kind }}-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.comment_id }}
+  group: record-${{ inputs.kind || 'stamp' }}-${{ inputs.repo }}-${{ inputs.pr }}-${{ inputs.comment_id }}${{ inputs.github_id }}
   cancel-in-progress: false
 
 jobs:
   record:
     name: "📝 Record"
+    if: github.event_name == 'workflow_dispatch' && (inputs.kind == 'sign' || inputs.kind == 'coverage')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -93,3 +133,57 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Coverage refused for $REPO#$PR" \
             --body "The recorder could not write the coverage record of $REPO#$PR: an author has no signature, or cannot be identified. Run: $RUN"
+
+  signin:
+    name: "📝 Record a sign-in"
+    if: github.event_name == 'workflow_dispatch' && inputs.kind == 'signin'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The sign-in app's client secret is a secret of this environment,
+    # whose deployment branch policy is main only.
+    environment: signin
+    permissions:
+      contents: write # the signatures branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SIGNIN_CLIENT_SECRET: ${{ secrets.SIGNIN_CLIENT_SECRET }}
+          REPO: ${{ inputs.repo }}
+          PR: ${{ inputs.pr }}
+          GITHUB_ID: ${{ inputs.github_id }}
+          AGREEMENT_VERSION: ${{ inputs.version }}
+          UI_LANG: ${{ inputs.lang }}
+          SITE_COMMIT: ${{ inputs.site_commit }}
+        run: |
+          set -euo pipefail
+          [[ "$REPO" =~ ^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$ ]] || { echo "bad repository"; exit 2; }
+          [[ "$PR" =~ ^[1-9][0-9]{0,9}$ ]] || { echo "bad pull request number"; exit 2; }
+          [[ "$GITHUB_ID" =~ ^[1-9][0-9]{0,14}$ ]] || { echo "bad account id"; exit 2; }
+          [[ "$AGREEMENT_VERSION" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "bad version"; exit 2; }
+          [[ "$UI_LANG" =~ ^(en|es)$ ]] || { echo "bad language"; exit 2; }
+          [[ "$SITE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "bad site commit"; exit 2; }
+          # The token is not here: cla.py reads it from $GITHUB_EVENT_PATH and masks it.
+          python3 -I registry/cla.py record --kind signin --repo "$REPO" --pr "$PR" --github-id "$GITHUB_ID" \
+            --version "$AGREEMENT_VERSION" --lang "$UI_LANG" --site-commit "$SITE_COMMIT"
+
+  stamp:
+    name: "🕰️ Time-stamp the signatures that have no token"
+    if: github.event_name == 'schedule' || inputs.kind == 'stamp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # the signatures branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Stamp
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I registry/cla.py record --kind stamp

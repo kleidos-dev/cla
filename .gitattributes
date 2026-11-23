@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Hashed or signed bytes: never touched by end-of-line conversion.
+registry/tests/fixtures/* binary
+*.tsr binary
+agreements/** -text

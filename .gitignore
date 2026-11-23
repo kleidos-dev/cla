@@ -10,3 +10,5 @@ __pycache__/
 .venv/
 .DS_Store
 coverage/
+# Public CA certificates pinned to verify time-stamp tokens (a global *.pem rule must not hide them)
+!registry/tsa/*.pem

@@ -11,6 +11,18 @@
     "current_version": { "type": "integer", "minimum": 1 },
     "coverage_from": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Pull requests merged before this date predate the register and need no coverage record" },
     "app_id": { "type": ["integer", "null"], "minimum": 1, "description": "The numeric id of the GitHub App kleidos-cla, once it exists: an acceptance posted through it is recorded with method web, any other with method comment" },
+    "signin_client_id": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9.]{16,40}$", "description": "The client id of the identity-only sign-in app (a GitHub App with no permission at all), once it exists. A version whose flow is signin is signed through it, and the recorder accepts only a token of this app" },
+    "timestamping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "qualified", "roots"],
+      "description": "The RFC 3161 time-stamping service the recorder asks for a token over every signature, and the roots its tokens must chain to",
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://" },
+        "qualified": { "type": "boolean", "description": "Whether the service is a qualified trust service (eIDAS art. 42): its tokens must then carry ETSI's best-practices policy and the qualified statement" },
+        "roots": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^registry/tsa/[a-z0-9.-]+\\.pem$" } }
+      }
+    },
     "accepted_versions": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "uniqueItems": true },
     "versions": {
       "type": "object",
