@@ -10,6 +10,10 @@ __pycache__/
 .venv/
 .DS_Store
 coverage/
+.coverage
+/coverage.xml
+/lcov.info
+.scannerwork/
 # Public CA certificates pinned to verify time-stamp tokens (a global *.pem rule must not hide them)
 !registry/tsa/*.pem
 # One person's agent preferences for this clone (AGENTS.md holds the rules)

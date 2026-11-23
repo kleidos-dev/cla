@@ -37,8 +37,8 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
-  # pyproject.toml holds only tool settings today (the register's tool
-  # runs on the standard library): watched for the day it gains a pin.
+  # requirements.txt: coverage.py, for the CI alone (the register's tool
+  # runs on the standard library).
   - package-ecosystem: pip
     directory: /
     schedule:
