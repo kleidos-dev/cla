@@ -23,6 +23,7 @@ force-exclude = true
 # kleidos-dev/.github) and the commit-message checker copied from
 # kleidos-dev/agents. Any other Python file is linted wherever it is.
 extend-exclude = [
+  "./agent_docs.py",
   "./check_quality.py",
   "./md_nowrap.py",
   "./spdx_headers.py",

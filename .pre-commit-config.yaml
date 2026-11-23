@@ -37,6 +37,16 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+      # AGENTS.md and CLAUDE.md keep the organization's standard
+      # (kleidos-dev/.github docs/agent-docs.md): the import, sizes, paths,
+      # links, the organization-rules block.
+      - id: kleidos-agent-docs
+        name: agent instruction files (AGENTS.md, CLAUDE.md)
+        entry: python3 .github/quality/agent_docs.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
   - repo: https://github.com/crate-ci/typos
     rev: 276087d9a4f06398b3e04825487805e2d7375888  # frozen: v1.52.2
     hooks:

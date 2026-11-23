@@ -18,9 +18,13 @@ commit. This script checks, from the repository's root:
                (ruff, mypy, gitleaks, OSV, Dependabot, CI conventions,
                markdownlint, tsconfig, ESLint, clang-tidy, inline
                suppressions) unless .github/quality/waivers.toml records why
-  pins         every Python target, kit-known action and kit-known hook rev
-               is at the latest stable release this kit knows, unless a
-               "below-latest:" comment beside it and a waiver say why
+  pins         every Python target, kit-known action, kit-known hook rev and
+               kit-known container image is at the latest stable release
+               this kit knows (an image by that release's digest), and
+               every requirements file a submodule supplies (-r, -c) pins
+               what the submodule's branch tip pins (with the kit only: it
+               fetches), unless a "below-latest:" comment beside it and a
+               waiver say why
   waivers      every waiver has a reason, matches a weakening, and is live
 
 Usage:
@@ -45,6 +49,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -54,7 +59,7 @@ import tokenize
 import tomllib
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -84,6 +89,7 @@ AGENTS_COPY_MARK = "Vendored from kleidos-dev/agents"
 KIT_COPIES = {
     ".github/quality/check_quality.py": "quality/check_quality.py",
     ".github/quality/md_nowrap.py": "quality/md_nowrap.py",
+    ".github/quality/agent_docs.py": "quality/agent_docs.py",
     ".github/quality/spdx_headers.py": "quality/spdx_headers.py",
     ".github/quality/markdownlint.jsonc": "quality/markdownlint/base.jsonc",
     ".gitleaks-mac.toml": "quality/gitleaks/mac.toml",
@@ -172,6 +178,20 @@ LATEST_HOOKS = {
     "https://github.com/zizmorcore/zizmor-pre-commit": "v1.33.1",
     "https://github.com/shellcheck-py/shellcheck-py": "v0.11.0.1",
 }
+# The newest stable tag of each container image a workflow runs in, and the
+# digest that tag names on its registry (Docker Hub), as this kit release
+# knows them. No kit workflow runs in a container, so these are not the kit's
+# own pins: the weekly job compares them with the registry directly. A
+# job's container (its image: or the shorthand) or a service's image: of one
+# of them is pinned by digest with its tag in a comment beside it (name@sha256:<digest> # <tag>):
+# a tag alone, a digest with no tag and the latest tag with another digest
+# are findings no waiver clears; an older tag is held like any other pin.
+LATEST_IMAGES = {
+    "kicad/kicad": (
+        "10.0.8",
+        "sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34",
+    ),
+}
 BELOW_LATEST = re.compile(r"#.*\bbelow-latest:\s*\S")
 VERSION_NUMBER = re.compile(r"\bv?(\d+(?:\.\d+)*)\b")
 PY_DOTTED = re.compile(r"(?<![\d.])(\d+)\.(\d+)(?:\.\d+)?(?![\d.])")
@@ -186,14 +206,45 @@ LOWER_BOUND = re.compile(r"(?:>=|~=|===?|>)\s*(\d+\.\d+(?:\.\d+)?)")
 BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*$")
 HOOK_REPO = re.compile(r"^\s*-\s+repo:\s*(['\"]?)(?P<url>[^\s'\"#]+)\1")
 HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
+# A requirements file that includes (-r) or constrains by (-c) a file of a
+# git submodule inherits that file's pins at the commit the submodule is
+# recorded at, so that commit is a pin as well: the included files must pin
+# what they pin at the tip of the submodule's branch.
+REQ_INCLUDE = re.compile(
+    r"^\s*(?:-r|-c|--requirement|--constraint)(?:\s*=\s*|\s*)"
+    r"(?:\"(?P<dq>[^\"]+)\"|'(?P<sq>[^']+)'|(?P<bare>[^\s#]+))"
+)
+# The tokens of an environment marker: quoted values, names, operators, parentheses.
+MARKER_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|[A-Za-z_][\w.]*|[<>=!~]=?=?|[()]")
+# An option of a requirement line (--hash=sha256:...), which says nothing of the pin.
+REQ_OPTION = re.compile(r"\s+--[\w-]+(?:=\S+)?")
+REQ_PIN = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
+    r"[^;#]*(?:;(?P<marker>[^#\\]*))?"
+)
+GIT_TIMEOUT = 180
+# .gitmodules is the checked repository's text: a branch it names reaches
+# git fetch only when it is a plain branch name (never an option).
+SAFE_BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]*$")
 
-MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
-MARK_END = re.compile(r"^[ \t]*# <<< kleidos-quality (?P<id>[a-z0-9-]+)[ \t]*$")
+# The markers of a managed block: `# ...` lines in YAML and TOML, an HTML
+# comment in Markdown (which Claude Code strips before an agent reads the file).
+MARK_START = re.compile(
+    r"^(?P<indent>[ \t]*)(?:# |<!-- )>>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$"
+)
+MARK_END = re.compile(r"^[ \t]*(?:# |<!-- )<<< kleidos-quality (?P<id>[a-z0-9-]+)(?: -->)?[ \t]*$")
+# The block kinds whose kit text is a region of the same id in the source file
+# (the kit's canonical hook list); any other kind's source is the whole text.
+REGION_KINDS = ("pre-commit",)
 KIT_USES = re.compile(
     r"kleidos-dev/\.github/\.github/workflows/(?P<file>[\w.-]+\.ya?ml)@(?P<ref>[^\s#'\"]+)"
 )
 USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(['\"]?)(?P<ref>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 PINNED_REF = re.compile(r"^[\w.-]+/[\w.-]+(?:/[^@\s]+)?@[0-9a-f]{40}$")
+IMAGE_REF = re.compile(
+    r"^(?:docker://)?(?:(?:docker\.io|index\.docker\.io|registry-1\.docker\.io)/)?"
+    r"(?P<name>[a-z0-9][\w./-]*?)(?::(?P<tag>[\w][\w.-]*))?(?:@(?P<digest>sha256:[0-9a-f]{64}))?$"
+)
 
 PY_SUFFIXES = (".py", ".pyi")
 SHELL_SUFFIXES = (".sh", ".bash")
@@ -301,6 +352,9 @@ class Report:
     waived: list[tuple[Weakening, dict[str, Any]]] = field(default_factory=list)
     suppressions: Counter[str] = field(default_factory=Counter)
     notes: list[str] = field(default_factory=list)
+    # Waiver "what" prefixes this run could not judge (offline): their
+    # waivers are not reported unused.
+    unjudged: set[str] = field(default_factory=set)
 
     def add(self, rule: str, where: str, message: str) -> None:
         self.problems.append(Finding(rule, where, message))
@@ -383,13 +437,14 @@ def find_block(text: str, block_id: str) -> tuple[int, int, str] | None:
     return start, end, "".join(lines[start + 1 : end])
 
 
-def block_markers(block_id: str, source: str, indent: str = "") -> tuple[str, str]:
-    """The two marker lines sync.py writes around a block."""
-    return (
-        f"{indent}# >>> kleidos-quality {block_id}"
-        f" (synced from {KIT_REPO} {source}; do not edit)\n",
-        f"{indent}# <<< kleidos-quality {block_id}\n",
-    )
+def block_markers(
+    block_id: str, source: str, indent: str = "", kind: str | None = None
+) -> tuple[str, str]:
+    """The two marker lines sync.py writes around a block (HTML comments in Markdown)."""
+    note = f"kleidos-quality {block_id} (synced from {KIT_REPO} {source}; do not edit)"
+    if kind == "markdown":
+        return f"<!-- >>> {note} -->\n", f"<!-- <<< kleidos-quality {block_id} -->\n"
+    return f"{indent}# >>> {note}\n", f"{indent}# <<< kleidos-quality {block_id}\n"
 
 
 def toml_table_of_line(lines: list[str], index: int) -> str | None:
@@ -487,7 +542,7 @@ class GitKit(Kit):
 def canonical_block(kit: Kit, entry: dict[str, Any]) -> str:
     """The text a managed block holds, from the kit."""
     text = kit.read(str(entry["source"])).decode("utf-8")
-    if entry.get("kind") == "pre-commit":
+    if entry.get("kind") in REGION_KINDS:
         found = find_block(text, str(entry["id"]))
         if found is None:
             raise SetupError(f"the kit's {entry['source']} has no block {entry['id']}")
@@ -2204,10 +2259,468 @@ def check_hook_pins(repo: Repo, report: Report) -> None:
         pin_below(report, rel, num, f"hook:{url}@{shown}", latest, reasoned)
 
 
-def check_pins(repo: Repo, report: Report) -> None:
+def mapping_value(node: Any, key: str) -> Any:
+    """The value node of a key in a YAML mapping node, or None."""
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    for k, v in node.value:
+        if isinstance(k, yaml.ScalarNode) and k.value == key:
+            return v
+    return None
+
+
+def workflow_images(text: str) -> list[tuple[str, int, str]]:
+    """Each image a workflow's jobs run in (job container, service image): value, line, comment.
+
+    Read from the composed YAML, so a value's line is its own: a flow mapping
+    ({image: ...}) is read, script text is not, and an alias (container: *kicad)
+    is the node its anchor wrote, listed once. The comment is what follows the
+    value on its line.
+    """
+    lines = text.splitlines()
+    found: list[tuple[str, int, str]] = []
+    seen: set[int] = set()
+    jobs = mapping_value(yaml.compose(text), "jobs")
+    for _, job in jobs.value if isinstance(jobs, yaml.MappingNode) else ():
+        containers = [mapping_value(job, "container")]
+        services = mapping_value(job, "services")
+        if isinstance(services, yaml.MappingNode):
+            containers += [v for _, v in services.value]
+        for container in containers:
+            image = mapping_value(container, "image") or container
+            if not isinstance(image, yaml.ScalarNode) or id(image) in seen:
+                continue
+            seen.add(id(image))
+            value = str(image.value).strip()
+            if not value:
+                continue
+            end = image.end_mark
+            after = lines[end.line][end.column :] if end.line < len(lines) else ""
+            comment = after[after.index("#") :] if "#" in after else ""
+            found.append((value, image.start_mark.line, comment))
+    return found
+
+
+def check_image_pins(repo: Repo, report: Report) -> None:
+    """Every container image the kit knows, at its latest tag and pinned by that tag's digest."""
+    for rel in workflow_files(repo):
+        if rel in repo.foreign:
+            continue
+        text = repo.text(rel)
+        try:
+            images = workflow_images(text)
+        except yaml.YAMLError:
+            continue
+        lines = text.splitlines()
+        for image, index, comment in images:
+            ref = IMAGE_REF.match(image)
+            if not ref:
+                continue
+            name = ref.group("name").lower().removeprefix("library/")
+            if name not in LATEST_IMAGES:
+                continue
+            latest, digest = LATEST_IMAGES[name]
+            num = index + 1
+            where = f"{rel}:{num}"
+            if not ref.group("digest"):
+                report.add(
+                    "pins",
+                    where,
+                    f"image:{name} is pinned by tag only: pin it by digest,"
+                    f" its tag in a comment ({name}@{digest} # {latest})",
+                )
+                continue
+            tag = ref.group("tag") or comment.strip("# ").split(" ")[0]
+            have, want = version_tuple(tag), version_tuple(latest)
+            if not tag or have is None or want is None:
+                report.add(
+                    "pins",
+                    where,
+                    f"image:{name} pins a digest and names no tag: add it in a comment"
+                    f" (# {latest}), so it can be held to {latest}",
+                )
+                continue
+            if is_below(have, want):
+                reasoned = reason_beside(lines, index)
+                pin_below(report, rel, num, f"image:{name}:{tag}", latest, reasoned)
+                continue
+            if have == want and ref.group("digest") != digest:
+                report.add(
+                    "pins",
+                    where,
+                    f"image:{name}:{tag} pins {ref.group('digest')}, not the digest the tag"
+                    f" names ({digest}): pin that one",
+                )
+
+
+@dataclass(frozen=True)
+class Submodule:
+    """One submodule as .gitmodules names it and the index records it."""
+
+    path: str
+    url: str
+    branch: str  # "" for the remote's default branch
+    commit: str
+
+
+class SubmoduleFetchError(Exception):
+    """A submodule's upstream could not be reached or lacks a commit."""
+
+
+def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=GIT_TIMEOUT,
+    )
+
+
+def resolve_submodule_url(repo: Repo, url: str) -> str:
+    """A .gitmodules URL; a relative one (../brand.git) against the origin's URL."""
+    if not url.startswith(("./", "../")):
+        return url
+    origin = _git("-C", str(repo.root), "remote", "get-url", "origin").stdout.strip()
+    if not origin:
+        return url
+    # Keep what names the host (https://host, ssh://host, or scp-like
+    # user@host:) and resolve the relative URL against the path after it.
+    m = re.match(r"^(?P<host>[a-z][a-z0-9+.-]*://[^/]*|[^/:]+:(?!//))(?P<path>.*)$", origin)
+    host, path = (m["host"], m["path"]) if m else ("", origin)
+    base = [part for part in path.rstrip("/").split("/") if part]
+    rooted = path.startswith("/")
+    for part in url.split("/"):
+        if part == "..":
+            if base:
+                base.pop()
+        elif part not in ("", "."):
+            base.append(part)
+    joined = "/".join(base)
+    if host.endswith(":"):
+        return host + joined
+    return host + ("/" if host or rooted else "") + joined
+
+
+def submodules(repo: Repo) -> list[Submodule]:
+    """The submodules .gitmodules names that the index records a commit for."""
+    if not (repo.root / ".gitmodules").is_file():
+        return []
+    listed = _git(
+        "-C",
+        str(repo.root),
+        "config",
+        "-f",
+        ".gitmodules",
+        "--null",
+        "--get-regexp",
+        r"^submodule\..*\.(path|url|branch)$",
+    )
+    entries: dict[str, dict[str, str]] = {}
+    for item in listed.stdout.split("\0"):
+        key, _, value = item.partition("\n")
+        if not key.startswith("submodule."):
+            continue
+        name, _, attr = key[len("submodule.") :].rpartition(".")
+        entries.setdefault(name, {})[attr] = value
+    staged = _git("-C", str(repo.root), "ls-files", "-s", "-z").stdout
+    gitlinks = {}
+    for item in staged.split("\0"):
+        meta, _, path = item.partition("\t")
+        fields = meta.split()
+        if len(fields) == 3 and fields[0] == "160000":
+            gitlinks[path] = fields[1]
+    out = []
+    for attrs in entries.values():
+        path = attrs.get("path", "").strip("/")
+        if path in gitlinks and attrs.get("url"):
+            url = resolve_submodule_url(repo, attrs["url"])
+            branch = attrs.get("branch", "")
+            if branch == ".":
+                branch = parent_branch(repo)
+            out.append(Submodule(path, url, branch, gitlinks[path]))
+    return out
+
+
+def parent_branch(repo: Repo) -> str:
+    """The branch "branch = ." follows: the checked repository's current one.
+
+    A CI checkout is detached, so GitHub's names for it stand in; with none,
+    a name no branch can have, which the fetch refuses as a finding.
+    """
+    current = _git("-C", str(repo.root), "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    for name in (current, os.environ.get("GITHUB_HEAD_REF"), os.environ.get("GITHUB_REF_NAME")):
+        if name:
+            return name
+    return "(. on a detached HEAD)"
+
+
+class SubmoduleUpstream:
+    """A scratch bare repository that fetches commits of one submodule's upstream."""
+
+    def __init__(self, url: str, scratch: Path) -> None:
+        self.url, self.git_dir = url, scratch
+        made = _git("init", "-q", "--bare", str(scratch))
+        if made.returncode != 0:
+            raise SubmoduleFetchError(made.stderr.strip() or "git init failed")
+
+    def _fetch(self, ref: str) -> None:
+        got = _git(
+            f"--git-dir={self.git_dir}",
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "--",
+            self.url,
+            ref,
+        )
+        if got.returncode != 0:
+            said = got.stderr.strip().splitlines()
+            raise SubmoduleFetchError(said[-1] if said else f"git fetch {ref} failed")
+
+    def tip(self, branch: str) -> str:
+        """The commit at the tip of a branch (the remote's default one when empty)."""
+        if branch and not SAFE_BRANCH.match(branch):
+            raise SubmoduleFetchError(f"branch {branch!r} is not a plain branch name")
+        self._fetch(branch or "HEAD")
+        return _git(f"--git-dir={self.git_dir}", "rev-parse", "FETCH_HEAD").stdout.strip()
+
+    def ensure(self, commit: str) -> None:
+        if not SHA40.match(commit):
+            raise SubmoduleFetchError(f"recorded commit {commit!r} is not a full SHA")
+        present = _git(f"--git-dir={self.git_dir}", "cat-file", "-e", f"{commit}^{{commit}}")
+        if present.returncode != 0:
+            self._fetch(commit)
+
+    def read(self, commit: str, path: str) -> str | None:
+        """A file's text at a commit; None when the commit has no such file."""
+        listed = _git(f"--git-dir={self.git_dir}", "ls-tree", "--name-only", commit, "--", path)
+        if listed.returncode != 0:
+            raise SubmoduleFetchError(listed.stderr.strip() or f"ls-tree {commit[:7]} failed")
+        if not listed.stdout.strip():
+            return None
+        # The scratch clone has no blobs: git fetches this one on demand.
+        shown = _git(f"--git-dir={self.git_dir}", "show", f"{commit}:{path}")
+        if shown.returncode != 0:
+            said = shown.stderr.strip().splitlines()
+            raise SubmoduleFetchError(said[-1] if said else f"{path} at {commit[:7]} unreadable")
+        return shown.stdout
+
+    def reader(self, commit: str) -> Callable[[str], str | None]:
+        """read() bound to one commit."""
+        return lambda path: self.read(commit, path)
+
+
+def is_requirements_file(rel: str) -> bool:
+    """A pip requirements or constraints file: any *.in, or a *.txt by its name or folder."""
+    pure = PurePosixPath(rel)
+    if pure.suffix == ".in":
+        return True
+    if pure.suffix != ".txt":
+        return False
+    return any(word in pure.name for word in ("requirements", "constraints")) or (
+        "requirements" in pure.parts[:-1]
+    )
+
+
+def include_path(m: re.Match[str]) -> str:
+    """The path of a REQ_INCLUDE match, without the quotes pip allows around it."""
+    return m["dq"] or m["sq"] or m["bare"]
+
+
+def logical_lines(text: str) -> list[tuple[int, str]]:
+    """pip's lines: a line ending in a backslash goes on with the next one.
+
+    Each comes with the number of its first physical line.
+    """
+    out: list[tuple[int, str]] = []
+    start, parts = 0, list[str]()
+    for num, line in enumerate(text.splitlines(), 1):
+        if not parts:
+            start = num
+        if line.rstrip().endswith("\\"):
+            parts.append(line.rstrip()[:-1])
+            continue
+        parts.append(line)
+        out.append((start, " ".join(parts)))
+        parts = []
+    if parts:
+        out.append((start, " ".join(parts)))
+    return out
+
+
+def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str, str] | None:
+    """name -> version of the == pins of a requirements file and the files it includes.
+
+    A pin under an environment marker is keyed "name ; marker", so the same
+    package pinned per platform keeps one entry per platform.
+
+    `read(path)` gives a file's text, None when it is absent; includes are
+    followed while they stay inside the same tree. None when `start` is absent.
+    """
+    pins: dict[str, str] = {}
+    seen: set[str] = set()
+    todo = [start]
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        text = read(path)
+        if text is None:
+            if path == start:
+                return None
+            continue
+        for _, joined in logical_lines(text):
+            m = REQ_INCLUDE.match(joined)
+            if m:
+                # Only a path inside the same tree: no URL, no absolute path, no "..".
+                raw = include_path(m)
+                nested = posixpath.normpath(posixpath.join(posixpath.dirname(path), raw))
+                if "://" not in raw and nested != ".." and not nested.startswith(("../", "/")):
+                    todo.append(nested)
+                continue
+            # A requirement's options (--hash=...) follow it; they pin nothing.
+            m = REQ_PIN.match(REQ_OPTION.sub("", joined))
+            if m:
+                # One package may be pinned once per environment marker, keyed
+                # by its tokens (marker_key), so respelling it changes no pin.
+                key = re.sub(r"[-_.]+", "-", m["name"]).lower()
+                marker = marker_key(m["marker"] or "")
+                pins[f"{key} ; {marker}" if marker else key] = m["version"]
+    return pins
+
+
+def marker_key(marker: str) -> str:
+    """An environment marker as its tokens, one space apart, values quoted with ".
+
+    Respacing or requoting it gives the same key; spaces inside a quoted value
+    are kept ('build 1' and 'build1' differ).
+    """
+    tokens = MARKER_TOKEN.findall(marker)
+    return " ".join(f'"{t[1:-1]}"' if t[:1] in "'\"" else t for t in tokens)
+
+
+def pin_changes(have: dict[str, str], want: dict[str, str]) -> list[str]:
+    """What the tip pins differently: name==tip (here: recorded), in name order."""
+
+    def shown(key: str, version: str) -> str:
+        name, _, marker = key.partition(" ; ")
+        return f"{name}=={version}" + (f" ; {marker}" if marker else "")
+
+    out = []
+    for key in sorted(have.keys() | want.keys()):
+        if have.get(key) == want.get(key):
+            continue
+        if key not in want:
+            out.append(f"no {key.partition(' ; ')[0]} (here {shown(key, have[key])})")
+        elif key not in have:
+            out.append(f"{shown(key, want[key])} (here none)")
+        else:
+            out.append(f"{shown(key, want[key])} (here {have[key]})")
+    return out
+
+
+def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
+    """Every requirements file a submodule supplies pins what its branch tip pins."""
+    subs = submodules(repo)
+    if not subs:
+        return
+    # (submodule, file with the include, its lines, line number, included path inside it).
+    # The repository's own includes are followed too, whatever the included
+    # file is named, so a chain (requirements.txt -> deps/base.txt -> brand/...)
+    # reaches the submodule as well.
+    found: list[tuple[Submodule, str, list[str], int, str]] = []
+    tracked = set(repo.files)
+    todo = [rel for rel in repo.files if rel not in repo.foreign and is_requirements_file(rel)]
+    seen: set[str] = set()
+    while todo:
+        rel = todo.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            lines = repo.text(rel).splitlines()
+        except OSError, UnicodeDecodeError:
+            continue
+        for num, line in logical_lines("\n".join(lines)):
+            m = REQ_INCLUDE.match(line)
+            if not m:
+                continue
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), include_path(m)))
+            inside = [sub for sub in subs if target.startswith(sub.path + "/")]
+            found.extend((sub, rel, lines, num, target[len(sub.path) + 1 :]) for sub in inside)
+            if not inside and target in tracked:
+                todo.append(target)
+    if not found:
+        return
+    if not online:
+        report.notes.append("offline: the pins a submodule supplies are not compared")
+        report.unjudged.add("submodule:")
+        return
+    with tempfile.TemporaryDirectory(prefix="kleidos-quality-") as tmp:
+        for index, sub in enumerate(subs):
+            uses = [f for f in found if f[0] == sub]
+            if not uses:
+                continue
+            branch = sub.branch or "default branch"
+            try:
+                upstream = SubmoduleUpstream(sub.url, Path(tmp) / str(index))
+                tip = upstream.tip(sub.branch)
+                if tip == sub.commit:
+                    continue
+                upstream.ensure(sub.commit)
+                compared = [
+                    (
+                        rel,
+                        lines,
+                        num,
+                        inner,
+                        requirement_pins(upstream.reader(sub.commit), inner),
+                        requirement_pins(upstream.reader(tip), inner),
+                    )
+                    for _, rel, lines, num, inner in uses
+                ]
+            except (SubmoduleFetchError, subprocess.TimeoutExpired) as exc:
+                for _, rel, _, num, _ in uses:
+                    report.add(
+                        "pins",
+                        f"{rel}:{num}",
+                        f"submodule {sub.path} ({sub.url}) could not be fetched to compare"
+                        f" the pins it supplies with its {branch}: {exc}",
+                    )
+                continue
+            for rel, lines, num, inner, have, want in compared:
+                if have is None:
+                    continue  # pip itself fails on a missing include
+                changes = pin_changes(have, want) if want is not None else [f"no {inner} any more"]
+                if not changes:
+                    continue
+                what = f"submodule:{sub.path}@{sub.commit[:7]}"
+                if reason_beside(lines, num - 1):
+                    report.weaken("pins", what, rel)
+                    continue
+                report.add(
+                    "pins",
+                    f"{rel}:{num}",
+                    f"{what} supplies {sub.path}/{inner}, but the tip of its {branch}"
+                    f" ({tip[:7]}) pins {', '.join(changes)}: move the submodule to"
+                    f" {tip[:7]}, or write why beside the include (# below-latest: <why>)"
+                    ' and waive it (tool = "pins")',
+                )
+
+
+def check_pins(repo: Repo, report: Report, online: bool = False) -> None:
     check_python_pins(repo, report)
     check_action_pins(repo, report)
     check_hook_pins(repo, report)
+    check_image_pins(repo, report)
+    check_submodule_pins(repo, report, online)
 
 
 # --------------------------------------------------------------------------
@@ -2260,7 +2773,8 @@ def apply_waivers(repo: Repo, report: Report, today: dt.date) -> None:
             used[match] = True
             report.waived.append((weak, waivers[match]))
     for i, w in enumerate(waivers):
-        if not used[i] and w.get("tool") in WAIVABLE_TOOLS:
+        unjudged = any(str(w.get("what", "")).startswith(p) for p in report.unjudged)
+        if not used[i] and w.get("tool") in WAIVABLE_TOOLS and not unjudged:
             report.add(
                 "waivers",
                 f"{WAIVERS} waiver[{i}] {w.get('tool')}:{w.get('what')}",
@@ -2390,7 +2904,7 @@ def run(
     check_markdownlint(repo, kit, report)
     check_reuse(repo, report)
     check_typos(repo, report)
-    check_pins(repo, report)
+    check_pins(repo, report, online=kit is not None)
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (sync.py --write seeds an empty one)")
     if "python" in profiles:
