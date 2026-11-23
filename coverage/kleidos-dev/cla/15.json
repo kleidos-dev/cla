@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "kind": "coverage",
+  "repo": "kleidos-dev/cla",
+  "pr": 15,
+  "merge_sha": "3af49362e4f14076b0ba04a14cd0cc4f9927c6bf",
+  "merged_at": "2026-11-23T13:29:20Z",
+  "github_ids": [],
+  "versions": {},
+  "recorded_at": "2026-11-23T13:29:54Z",
+  "recorder_run_id": 45184443312
+}
