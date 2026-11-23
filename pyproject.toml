@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The Python analysis tools' configuration (the register's tool is no
+# package: registry/cla.py runs on the standard library alone). Each tool
+# starts from the Kleidos quality kit (kleidos-dev/.github docs/quality.md);
+# what follows the kit's part is this repository's own.
+
+[tool.ruff]
+extend = ".github/quality/ruff.toml"
+target-version = "py315"
+
+[tool.mypy]
+# >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
+strict = true
+# An ignore names the error it silences, so it cannot hide a second one.
+enable_error_code = ["ignore-without-code"]
+# <<< kleidos-quality mypy
+python_version = "3.15"
+# The recorder and verifier and their tests (the tests import cla.py from
+# beside it).
+files = ["registry"]
+mypy_path = ["registry"]

@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Commits that only reformat; git blame skips them with
+# git config blame.ignoreRevsFile .git-blame-ignore-revs (GitHub reads
+# this file by itself).
+
+# Format the register's Python with ruff
+3658f184b4980245fdf29d7c6e9d74bf7af75b0a

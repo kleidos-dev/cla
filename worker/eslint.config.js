@@ -1,37 +1,35 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
+//
+// The Kleidos quality kit's TypeScript base (strictTypeChecked, no-deprecated,
+// switch-exhaustiveness-check: .github/quality/eslint.base.mjs, a copy) over
+// the Worker, its tests and its config, plus ESLint's recommended rules over
+// the plain JavaScript helpers. A kit rule turned off or down here needs a
+// waiver in .github/quality/waivers.toml.
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import { kleidosTypeScript } from "../.github/quality/eslint.base.mjs";
 
-export default tseslint.config(
-  { ignores: ["node_modules/", ".wrangler/", "dist/"] },
-  js.configs.recommended,
-  ...tseslint.configs.strictTypeChecked,
+export default [
+  { ignores: ["node_modules/**", ".wrangler/**", "dist/**", "coverage/**"] },
+  ...kleidosTypeScript({ js, tseslint, tsconfigRootDir: import.meta.dirname }),
   {
-    languageOptions: {
-      parserOptions: { projectService: { allowDefaultProject: ["eslint.config.js", "scripts/*.mjs"] }, tsconfigRootDir: import.meta.dirname },
-    },
+    files: ["**/*.ts"],
     rules: {
+      // Numbers read the same in a template as through String(); every other
+      // type (nullish, objects, booleans) still has to be converted on purpose.
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
-      "@typescript-eslint/no-non-null-assertion": "off",
-      "@typescript-eslint/no-unnecessary-condition": "off",
-      "@typescript-eslint/no-confusing-void-expression": "off",
-      // JSON answers are typed at the call site: request<T>() is the one place that says what GitHub returns.
-      "@typescript-eslint/no-unnecessary-type-parameters": "off",
     },
   },
   {
     files: ["test/**/*.ts"],
     rules: {
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-member-access": "off",
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/require-await": "off",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
   },
   {
-    files: ["eslint.config.js", "scripts/*.mjs"],
-    ...tseslint.configs.disableTypeChecked,
+    ...js.configs.recommended,
+    files: ["**/*.js", "**/*.mjs"],
     languageOptions: { globals: { console: "readonly", process: "readonly" } },
   },
-);
+];

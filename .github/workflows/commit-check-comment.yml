@@ -1,20 +1,18 @@
-# Posts, updates or removes the one commit-check comment on a pull request.
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
 #
-# Vendored from kleidos-dev/agents
-# (plugins/kleidos-common/skills/git-commits/templates/commit-check-comment.yml).
-# Change it there and copy it here with sync_commit_check.py.
-#
-# A pull_request job from a fork gets a read-only token and cannot comment,
-# so the comment is written here, on workflow_run, which runs this file as
-# the default branch has it, with a token that may write. It checks out only
-# the default branch's .github/commit-check/, reads the check's result
-# artifact as data (validated, every string escaped), and acts only when
-# that pull request's head is still the commit the check ran on. It never
-# checks out or runs code from the pull request.
+# Posts, updates or removes the one commit-check comment on a pull request:
+# the Kleidos quality kit's reusable-commit-check-comment.yml (kleidos-dev/.github,
+# docs/quality.md), at the kit commit .github/quality/SOURCE.json records. A
+# pull_request job from a fork gets a read-only token and cannot comment, so
+# the comment is written on workflow_run, which runs this file as the
+# default branch has it, with a token that may write; the called job reads
+# the check's artifact as data only and never runs code from the pull
+# request.
 name: Commit check comment
 
 # Reviewed: workflow_run is what lets a fork's pull request get a comment,
-# and this job treats the artifact as data only (see above).
+# and the called job treats the artifact as data only (see above).
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: [Commit check]
@@ -28,34 +26,9 @@ concurrency:
 
 jobs:
   comment:
-    name: "🙋 Post the commit-check comment"
-    if: github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: "🙋 Commit-check comment"
+    uses: kleidos-dev/.github/.github/workflows/reusable-commit-check-comment.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
     permissions:
-      actions: read # download the check's artifact
-      contents: read # check out this repository's default branch
-      pull-requests: write # create, edit or delete the one comment
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: .github/commit-check
-      - name: Fetch the check's result
-        id: download
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: commit-check
-          path: ${{ runner.temp }}/commit-check
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-      - name: Post, update or remove the comment
-        if: steps.download.outcome == 'success'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          python3 .github/commit-check/check_commit_msg.py \
-            --comment "$RUNNER_TEMP/commit-check/result.json" \
-            --repo "$GITHUB_REPOSITORY" --head-sha "$HEAD_SHA"
+      actions: read
+      contents: read
+      pull-requests: write

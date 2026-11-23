@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
+// SPDX-License-Identifier: MIT
+//
+// The Kleidos quality kit's TypeScript base (kleidos-dev/.github
+// quality/tsconfig/base.json), copied to .github/quality/tsconfig.base.json
+// and extended by the repository's tsconfig ("extends"). Only checking
+// flags: target, module, lib, types and include are the repository's. A flag
+// below set to false locally is a weakening and needs a waiver; baseUrl is
+// refused (TS5101, removed in TypeScript 7).
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

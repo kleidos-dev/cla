@@ -1,4 +1,5 @@
 {
+  "extends": ".github/quality/markdownlint.jsonc",
   "MD013": false,
   "MD060": false,
   "MD024": { "siblings_only": true },

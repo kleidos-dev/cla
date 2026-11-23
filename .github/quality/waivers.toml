@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Every weakening of a Kleidos quality kit rule in this repository, with its
+# reason (kleidos-dev/.github docs/quality.md, "Overrides"). Adding a rule is
+# free; turning one off, down, or away from a path needs an entry here, and
+# check_quality.py fails on a weakening with no entry, on an entry with no
+# reason, on an entry that matches nothing any more, and on an expired one.
+#
+# [[waiver]]
+# tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot
+# what = "ignore:E501"                # the exact weakening, as check_quality.py names it
+# where = "pyproject.toml"            # optional: the file it is in, when the same weakening is in two
+# reason = "Why the rule is wrong for this code, with the sites read"
+# decided = "owner 2026-11-22"        # or "agent, reviewed in PR #<n>"
+# expires = 2027-05-22                # optional
+
+[[waiver]]
+tool = "pre-commit"
+what = 'exclude:^agreements/v1/addendum(\.es)?\.md$'
+where = ".pre-commit-config.yaml"
+reason = "agreements/v1/addendum.md is a binding text, hashed into agreements/v1/SHA256SUMS, registry/config.json and the acceptance sentence every signer posts, and addendum.es.md is its served translation; neither may change in place (CONTRIBUTING.md: a typo fix is a new version). Their clause lines 5.1 (a) to (e) are separate lines on purpose (the Worker renders soft breaks as line breaks), which md_nowrap reads as hard wraps. The repository's agreement-digests hook (always run, so in every commit and in CI's lint job) proves the bytes never change, and gitleaks' history scan and reuse lint in CI still read both files."
+decided = "agent, reviewed in the kit sync pull request"

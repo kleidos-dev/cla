@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The Kleidos quality kit's zizmor settings (kleidos-dev/.github
+# quality/zizmor/zizmor.yml), copied to .github/zizmor.yml. Every action and
+# reusable workflow is pinned by a full commit SHA, GitHub's own included
+# (zizmor's default lets actions/* ride a tag). There is no ignore list: a
+# finding that is reviewed and accepted takes an inline
+# `# zizmor: ignore[<rule>]` with the reason on the line above.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # GitHub's `uses: $/...` self-repository syntax (2026-07-30) is what this
+  # audit asks for, but actionlint 1.7.12, the kit's other workflow linter,
+  # rejects it as a malformed reusable-workflow call. Off until actionlint
+  # accepts it; then the kit switches the ./ calls and drops this.
+  self-repository:
+    disable: true

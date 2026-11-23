@@ -1,18 +1,26 @@
 {
+  "extends": "../.github/quality/tsconfig.base.json",
   "compilerOptions": {
     "target": "es2024",
-    "lib": ["es2024"],
+    "lib": [
+      "es2024"
+    ],
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "types": ["node"],
-    "typeRoots": ["../worker/node_modules/@types"],
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "../worker/node_modules/@types"
+    ],
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["*.ts", "test/*.ts"]
+  "include": [
+    "*.ts",
+    "test/*.ts"
+  ]
 }

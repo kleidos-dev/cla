@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The shape of a repository's own .gitleaks.toml under the Kleidos quality
+# kit (kleidos-dev/.github quality/gitleaks/default.example.toml). It is not
+# copied: sync.py writes it once when the repository has none, and the file
+# is the repository's from then on, held to these rules by check_quality.py:
+#
+#   - [extend] useDefault = true, with no disabledRules: every default rule
+#     (cloud keys, private keys, tokens, generic high-entropy assignments).
+#   - No global [allowlist]: every [[allowlists]] entry has a description and
+#     a non-empty targetRules, so it can never reach the MAC rules and a new
+#     finding of another rule still fails.
+#   - Every fingerprint in .gitleaksignore has a comment line above it.
+#
+# The MAC rules are not here: a config that extends the default set inherits
+# its global allowlist, which skips images, documents, fonts and lockfiles
+# for every rule, so they live in .gitleaks-mac.toml (a kit copy), which
+# extends nothing. Every scan runs with --ignore-gitleaks-allow.
+
+title = "Kleidos gitleaks config"
+
+[extend]
+useDefault = true
+
+# An allowlist, when one is needed, looks like this:
+#
+# [[allowlists]]
+# description = "Why these matches are not secrets, with the sites read"
+# targetRules = ["generic-api-key"]
+# paths = ['''^tests/fixtures/fake-token\.txt$''']

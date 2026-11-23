@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# typos: the Kleidos quality kit's block (US English) first, then what is
+# this repository's own: the words below are right where they stand.
+
+[default]
+# >>> kleidos-quality typos (synced from kleidos-dev/.github quality/typos/block.toml; do not edit)
+locale = "en-us"
+# <<< kleidos-quality typos
+
+[default.extend-words]
+# The binding agreement texts spell the noun "licence" and the verb
+# "authorise" the British way (agreements/v1/addendum.md is frozen and
+# hashed into the acceptance sentence, which itself says "licences"); the
+# site, the README and the code quote and name that wording as it is.
+licence = "licence"
+licences = "licences"
+authorise = "authorise"
+authorised = "authorised"
+favour = "favour"
+# The Addendum names a Spanish law: Real Decreto Legislativo 1/1996.
+legislativo = "legislativo"
+# Spanish words in the Spanish strings of worker/src/i18n.ts, the tests
+# that check them, and the README's description of the Spanish texts.
+autor = "autor"
+contribuye = "contribuye"
+frase = "frase"
+hace = "hace"
+individuales = "individuales"
+informativo = "informativo"
+mis = "mis"
+momento = "momento"
+responde = "responde"
+
+[files]
+# The Spanish texts (the translations of the agreement and its summary,
+# the Spanish privacy notice) are not English.
+extend-exclude = ["*.es.md"]

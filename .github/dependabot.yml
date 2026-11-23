@@ -1,19 +1,44 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
+#
+# Every manifest directory with its ecosystem, each update held a week
+# (cooldown) so a compromised or yanked release has time to be noticed.
+# The quality kit's workflow references are moved by its sync, never here;
+# its tools (pre-commit hooks, PyPI pins) are bumped in kleidos-dev/.github.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "kleidos-dev/.github*"
   - package-ecosystem: npm
     directory: /worker
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     ignore:
       # typescript-eslint 8 supports TypeScript below 6.1; lift this when it supports 7.
       - dependency-name: typescript
         versions: [">=7"]
+  # The setup script's package.json declares no dependency today (it runs
+  # on Node's own modules and the Worker's typescript): covered so that a
+  # first one is watched from the day it lands.
+  - package-ecosystem: npm
+    directory: /scripts
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  # pyproject.toml holds only tool settings today (the register's tool
+  # runs on the standard library): watched for the day it gains a pin.
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7

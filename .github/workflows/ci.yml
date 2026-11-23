@@ -1,12 +1,22 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
 # The repository's gate on every push and pull request, cheapest first (the
 # project's CI convention: a failure skips what depends on it):
 #
-#   🧹 Licenses, lint and digests ─┬─ 🔎 Typecheck
-#                                   ├─ 🧪 Worker tests
-#                                   ├─ 🐍 Register tests
-#                                   └─ 🔑 App setup script test
+#   🧹 Lint ───────┬─ 🔎 Types (mypy)
+#   ⚖️ Licensing ──┼─ 🔎 ESLint and tsc
+#                  ├─ 🐍 Register tests
+#                  ├─ 🧪 Worker tests
+#                  ├─ 🔑 App setup script test
+#                  ├─ 🛡️ Dependency vulnerabilities (OSV)
+#                  └─ 🔐 Secrets and MAC scan (gitleaks)
+#
+# Every check is a job of the Kleidos quality kit (kleidos-dev/.github,
+# docs/quality.md), called at the kit commit .github/quality/SOURCE.json
+# records; the kit's sync.py keeps those references. The lint job runs
+# every pre-commit hook, the agreement digests among them. The Worker's
+# vitest run and the setup script's test are this repository's own.
 #
 # No job here holds a secret or writes anything: pull requests from forks
 # run with the read-only token like everyone else's.
@@ -16,6 +26,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  schedule:
+    # Monday 06:00 Europe/Madrid in winter: OSV catches new advisories
+    # against unchanged code.
+    - cron: "0 5 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -27,61 +42,64 @@ concurrency:
 
 jobs:
   lint:
-    name: "🧹 Licenses, lint and digests"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .python-version
-          cache: pip
-      - name: Install the pinned stack
-        run: pip install --require-hashes -r requirements.txt
-      - name: Licenses (REUSE)
-        run: reuse lint
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - name: Install the Worker's development tools
-        working-directory: worker
-        run: npm ci
-      - name: The agreement texts hash to SHA256SUMS and to registry/config.json
-        working-directory: worker
-        run: npm run check:agreement
-      - name: ESLint
-        working-directory: worker
-        run: npm run lint
-      - name: The register's tool compiles
-        run: python3 -I -m py_compile registry/cla.py
+    name: "🧹 Lint (quality kit)"
+    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    permissions:
+      contents: read
 
-  typecheck:
-    name: "🔎 Typecheck"
-    needs: lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - working-directory: worker
-        run: npm ci
-      - name: tsc (the Worker, its tests and the setup script)
-        working-directory: worker
-        run: npm run typecheck
+  reuse:
+    name: "⚖️ Licensing (REUSE)"
+    uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    permissions:
+      contents: read
+
+  types:
+    name: "🔎 Types (mypy)"
+    needs: [lint, reuse]
+    # The register's tool and its tests use the standard library only.
+    uses: kleidos-dev/.github/.github/workflows/reusable-mypy.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    permissions:
+      contents: read
+
+  eslint:
+    name: "🔎 ESLint and tsc"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    with:
+      working-directory: worker
+      projects: tsconfig.json ../scripts/tsconfig.json
+      node-version: "26"
+    permissions:
+      contents: read
+
+  register:
+    name: "🐍 Register tests"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    with:
+      install: ""
+      run: python -m unittest discover -s registry/tests -v
+      coverage-report: ""
+    permissions:
+      contents: read
+
+  osv:
+    name: "🛡️ Dependency vulnerabilities (OSV)"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-osv.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    permissions:
+      contents: read
+
+  secrets:
+    name: "🔐 Secrets and MAC scan (gitleaks)"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-secrets.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    permissions:
+      contents: read
 
   worker:
     name: "🧪 Worker tests"
-    needs: lint
+    needs: [lint, reuse]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -99,24 +117,9 @@ jobs:
         working-directory: worker
         run: npm test
 
-  register:
-    name: "🐍 Register tests"
-    needs: lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .python-version
-      - name: The recorder and the verifier
-        run: python3 -m unittest discover -s registry/tests -v
-
   script:
     name: "🔑 App setup script test"
-    needs: lint
+    needs: [lint, reuse]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
