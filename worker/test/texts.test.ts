@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { FILES, NOTICES, checkIntegrity } from "../src/agreement";
+import { AGREEMENTS, NOTICES, checkIntegrity, filesOf } from "../src/agreement";
 import { coAuthorEmails, commitAuthors, parseNoreply } from "../src/authors";
 import { CSP } from "../src/html";
 import { log } from "../src/log";
@@ -42,19 +42,25 @@ function sourceWords(md: string): string[] {
 }
 
 describe("agreement texts", () => {
-  it("the bundled bytes hash to SHA256SUMS and the set digest is the registry's", async () => {
-    const i = await checkIntegrity();
-    expect(i.ok).toBe(true);
-    expect(i.setSha256).toBe(CONFIG.versions["1"].set_sha256);
-    expect(i.files).toEqual(CONFIG.versions["1"].files);
+  it("every version bundled is every version published, its bytes hashing to SHA256SUMS and its set digest the registry's", async () => {
+    expect(Object.keys(AGREEMENTS).sort()).toEqual(Object.keys(CONFIG.versions).sort());
+    for (const v of Object.keys(CONFIG.versions) as (keyof typeof CONFIG.versions)[]) {
+      const i = await checkIntegrity(Number(v));
+      expect(i.ok, `v${v}`).toBe(true);
+      expect(i.setSha256).toBe(CONFIG.versions[v].set_sha256);
+      expect(i.files).toEqual(CONFIG.versions[v].files);
+    }
+    expect((await checkIntegrity(99)).ok).toBe(false);
   });
 
   it("the acceptance sentence is built from the digest and is the registry's", () => {
-    expect(sentenceFor(1, CONFIG.versions["1"].set_sha256)).toBe(CONFIG.versions["1"].sentence);
+    for (const v of Object.keys(CONFIG.versions) as (keyof typeof CONFIG.versions)[]) expect(sentenceFor(Number(v), CONFIG.versions[v].set_sha256)).toBe(CONFIG.versions[v].sentence);
   });
 
   it("the rendering keeps every word of every text, in order", () => {
-    for (const [name, src] of Object.entries({ ...FILES, "PRIVACY.md": NOTICES.privacy, "PRIVACY.es.md": NOTICES.privacyEs })) {
+    const texts: [string, string][] = [["PRIVACY.md", NOTICES.privacy], ["PRIVACY.es.md", NOTICES.privacyEs]];
+    for (const [v, files] of Object.entries(AGREEMENTS)) for (const [name, src] of Object.entries(files)) texts.push([`v${v}/${name}`, src]);
+    for (const [name, src] of texts) {
       if (!name.endsWith(".md")) continue;
       expect(htmlWords(renderMarkdown(src)), name).toEqual(sourceWords(src));
     }
@@ -166,8 +172,9 @@ describe("pages and hygiene", () => {
     const b = new Browser(w, { id: 1, login: "x", type: "User" });
     const dl = await b.get("/agreement/v1/individual.md");
     expect(dl.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
-    expect(await dl.text()).toBe(FILES["individual.md"]);
-    expect((await b.get("/agreement/v2/individual.md")).status).toBe(404);
+    expect(await dl.text()).toBe(filesOf(1)["individual.md"]);
+    expect(await (await b.get("/agreement/v2/addendum.md")).text()).toBe(filesOf(2)["addendum.md"]);
+    expect((await b.get("/agreement/v3/individual.md")).status).toBe(404);
     expect((await b.get("/agreement/v1/../../wrangler.jsonc")).status).toBe(404);
     expect((await b.get("/nope")).status).toBe(404);
     expect((await b.post("/agreement", {})).status).toBe(405);

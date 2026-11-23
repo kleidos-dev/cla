@@ -9,6 +9,8 @@ export interface VersionInfo {
   path: string;
   set_sha256: string;
   files: Record<string, string>;
+  /** How the site takes the acceptance: kleidos-cla posts the sentence as the signer ("comment", version 1) or the signer signs in with the identity-only app and nothing is posted ("signin"). */
+  flow?: "comment" | "signin";
   sentence: string;
 }
 
@@ -22,6 +24,8 @@ export interface Config {
   exempt: { id: number; login: string; why: string }[];
   coverage_from?: string;
   app_id?: number | null;
+  /** The client id of the identity-only sign-in app, once it exists. */
+  signin_client_id?: string | null;
 }
 
 export interface Entity {
@@ -33,8 +37,7 @@ export interface Entity {
   covered: { github_id: number; from: string; until?: string | null }[];
 }
 
-export interface SignatureRecord {
-  schema: 1;
+interface RecordBase {
   kind: "individual";
   github_id: number;
   login_at_signing: string;
@@ -42,11 +45,27 @@ export interface SignatureRecord {
   version: number;
   set_sha256: string;
   accepted_at: string;
-  method: "web" | "comment";
-  evidence: { pr_url: string; comment_url: string; comment_id: number; comment_body_sha256: string };
   recorded_at: string;
   recorder_run_id: number;
 }
+
+/** Schema 1: an acceptance comment, posted through kleidos-cla ("web") or typed ("comment"). */
+export interface CommentRecord extends RecordBase {
+  schema: 1;
+  method: "web" | "comment";
+  evidence: { pr_url: string; comment_url: string; comment_id: number; comment_body_sha256: string };
+}
+
+/** Schema 2: an acceptance made by signing in, checked by the recorder with GitHub. */
+export interface SigninRecord extends RecordBase {
+  schema: 2;
+  method: "signin";
+  sentence_sha256: string;
+  evidence: { authorized_at: string; signin_client_id: string; context_pr_url: string; site_commit: string; lang: "en" | "es" };
+  recorder_commit: string;
+}
+
+export type SignatureRecord = CommentRecord | SigninRecord;
 
 export const CONFIG_PATH = "registry/config.json";
 export const ENTITIES_PATH = "registry/entities.json";
@@ -68,6 +87,10 @@ const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const PR_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/pull\/[1-9][0-9]{0,9}$/;
 const RECORD_KEYS = ["schema", "kind", "github_id", "login_at_signing", "agreement", "version", "set_sha256", "accepted_at", "method", "evidence", "recorded_at", "recorder_run_id"];
 const EVIDENCE_KEYS = ["pr_url", "comment_url", "comment_id", "comment_body_sha256"];
+const SIGNIN_KEYS = [...RECORD_KEYS, "sentence_sha256", "recorder_commit"];
+const SIGNIN_EVIDENCE_KEYS = ["authorized_at", "signin_client_id", "context_pr_url", "site_commit", "lang"];
+const HEX40 = /^[0-9a-f]{40}$/;
+const CLIENT_ID = /^[A-Za-z0-9.]{16,40}$/;
 
 function posInt(v: unknown): v is number {
   return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
@@ -78,14 +101,8 @@ function sameKeys(o: object, keys: string[]): boolean {
   return k.length === keys.length && keys.every((x) => Object.hasOwn(o, x));
 }
 
-/** registry/schema/individual.schema.json, checked field by field; registry/cla.py check_record does the same. */
-export function isSignatureRecord(v: unknown, id: number): v is SignatureRecord {
-  if (typeof v !== "object" || v === null || !sameKeys(v, RECORD_KEYS)) return false;
-  const r = v as Record<string, unknown>;
-  const e = r.evidence as Record<string, unknown> | null;
-  if (typeof e !== "object" || e === null || !sameKeys(e, EVIDENCE_KEYS)) return false;
+function commonFields(r: Record<string, unknown>, id: number): boolean {
   return (
-    r.schema === 1 &&
     r.kind === "individual" &&
     r.github_id === id &&
     typeof r.login_at_signing === "string" &&
@@ -96,16 +113,53 @@ export function isSignatureRecord(v: unknown, id: number): v is SignatureRecord 
     HEX64.test(r.set_sha256) &&
     typeof r.accepted_at === "string" &&
     TIME.test(r.accepted_at) &&
+    typeof r.recorded_at === "string" &&
+    TIME.test(r.recorded_at) &&
+    posInt(r.recorder_run_id)
+  );
+}
+
+function isSigninRecord(r: Record<string, unknown>, id: number): boolean {
+  if (!sameKeys(r, SIGNIN_KEYS)) return false;
+  const e = r.evidence as Record<string, unknown> | null;
+  if (typeof e !== "object" || e === null || !sameKeys(e, SIGNIN_EVIDENCE_KEYS)) return false;
+  return (
+    commonFields(r, id) &&
+    r.method === "signin" &&
+    typeof r.sentence_sha256 === "string" &&
+    HEX64.test(r.sentence_sha256) &&
+    typeof r.recorder_commit === "string" &&
+    HEX40.test(r.recorder_commit) &&
+    typeof e.authorized_at === "string" &&
+    TIME.test(e.authorized_at) &&
+    typeof e.signin_client_id === "string" &&
+    CLIENT_ID.test(e.signin_client_id) &&
+    typeof e.context_pr_url === "string" &&
+    PR_URL.test(e.context_pr_url) &&
+    typeof e.site_commit === "string" &&
+    HEX40.test(e.site_commit) &&
+    (e.lang === "en" || e.lang === "es")
+  );
+}
+
+/** registry/schema/individual.schema.json (schema 1 or 2), checked field by field; registry/cla.py check_record does the same. */
+export function isSignatureRecord(v: unknown, id: number): v is SignatureRecord {
+  if (typeof v !== "object" || v === null) return false;
+  if ((v as { schema?: unknown }).schema === 2) return isSigninRecord(v as Record<string, unknown>, id);
+  if (!sameKeys(v, RECORD_KEYS)) return false;
+  const r = v as Record<string, unknown>;
+  const e = r.evidence as Record<string, unknown> | null;
+  if (typeof e !== "object" || e === null || !sameKeys(e, EVIDENCE_KEYS)) return false;
+  return (
+    r.schema === 1 &&
+    commonFields(r, id) &&
     (r.method === "web" || r.method === "comment") &&
     typeof e.pr_url === "string" &&
     PR_URL.test(e.pr_url) &&
     posInt(e.comment_id) &&
     e.comment_url === `${e.pr_url}#issuecomment-${e.comment_id}` &&
     typeof e.comment_body_sha256 === "string" &&
-    HEX64.test(e.comment_body_sha256) &&
-    typeof r.recorded_at === "string" &&
-    TIME.test(r.recorded_at) &&
-    posInt(r.recorder_run_id)
+    HEX64.test(e.comment_body_sha256)
   );
 }
 
@@ -250,6 +304,56 @@ export class Registry {
       inputs: { kind: inputs.kind, repo: inputs.repo, pr: String(inputs.pr), comment_id: inputs.comment_id ? String(inputs.comment_id) : "" },
     });
   }
+
+  /**
+   * Hands a sign-in to the recorder: the account the Worker says signed and
+   * the signer's own token, which the recorder checks with GitHub before it
+   * records anything, then revokes. The token is an input no log, run name
+   * or concurrency group of record.yml shows.
+   */
+  async dispatchSignin(inputs: { repo: string; pr: number; github_id: number; version: number; lang: "en" | "es"; site_commit: string; signin_token: string }): Promise<void> {
+    const token = await this.gh.token([this.repo], { actions: "write" });
+    await this.gh.request("POST", `/repos/${this.repo}/actions/workflows/${RECORD_WORKFLOW}/dispatches`, { token }, {
+      ref: "main",
+      inputs: {
+        kind: "signin",
+        repo: inputs.repo,
+        pr: String(inputs.pr),
+        github_id: String(inputs.github_id),
+        version: String(inputs.version),
+        lang: inputs.lang,
+        site_commit: inputs.site_commit,
+        signin_token: inputs.signin_token,
+      },
+    });
+  }
+
+  /**
+   * How the recorder run for one sign-in ended, read from its run name
+   * ("Record signin <repo>#<pr> <id>"): "failed" once a run started at or
+   * after `since` completed without success, "running" while one has not
+   * finished, null when none is listed yet.
+   */
+  async signinRun(repo: string, pr: number, id: number, since: string): Promise<"running" | "failed" | "succeeded" | null> {
+    const token = await this.gh.token([this.repo], { actions: "read" });
+    const r = await this.gh.request<{ workflow_runs?: { display_title?: string; created_at?: string; status?: string; conclusion?: string | null; head_branch?: string }[] }>(
+      "GET",
+      `/repos/${this.repo}/actions/workflows/${RECORD_WORKFLOW}/runs?event=workflow_dispatch&branch=main&per_page=30`,
+      { token },
+    );
+    const title = `Record signin ${repo}#${pr} ${id}`;
+    const from = Date.parse(since) - 60_000;
+    const runs = (r.data.workflow_runs ?? []).filter((x) => (x.display_title ?? "").split(/\s+/).join(" ") === title && Date.parse(x.created_at ?? "") >= from);
+    if (runs.length === 0) return null;
+    if (runs.some((x) => x.status === "completed" && x.conclusion === "success")) return "succeeded";
+    if (runs.some((x) => x.status !== "completed")) return "running";
+    return "failed";
+  }
+}
+
+/** The flow of a version: "comment" unless the register says "signin". */
+export function flowOf(config: Config, version: number): "comment" | "signin" {
+  return config.versions[String(version)]?.flow === "signin" ? "signin" : "comment";
 }
 
 /** A record counts when its version is accepted and its digest is that version's. */

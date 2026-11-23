@@ -62,7 +62,10 @@ export interface Strings {
     note: string;
     links: readonly Pair[];
     ghSummary: string;
+    /** What GitHub shows for kleidos-cla, the sign-in of a "comment" version (version 1). */
     ghBody: string;
+    /** What GitHub shows for the identity-only sign-in app, the sign-in of a "signin" version. */
+    ghBodySignin: string;
     whoSummary: string;
     whoBody: string;
   };
@@ -77,16 +80,19 @@ export interface Strings {
     summary: readonly Pair[];
     button: string;
     note: (login: string, pr: string) => string;
-    translation: { summary: string; body: (short: string) => string } | null;
+    noteSignin: (login: string, pr: string) => string;
+    translation: { summary: string; body: (short: string, version: number) => string } | null;
     error: string;
     foldTitle: string;
-    foldSub: string;
+    foldSub: (version: number) => string;
     binding: string | null;
     backbar: string;
     backLink: string;
     beforeTitle: string;
     before: readonly string[];
+    beforeSignin: readonly string[];
     data: string;
+    dataSignin: string;
   };
   done: {
     titleRecording: string;
@@ -122,11 +128,12 @@ export interface Strings {
     notUser: (login: string) => string;
     paused: string;
     edited: string;
+    recordFailed: string;
   };
   agreement: {
     title: string;
     entityTitle: string;
-    eyebrow: string;
+    eyebrow: (version: number) => string;
     h1: string;
     entityH1: string;
     lede: string;
@@ -177,6 +184,8 @@ const EN: Strings = {
     ghSummary: "What GitHub will show you",
     ghBody:
       "GitHub asks you to authorize <strong>kleidos-cla</strong>, by kleidos-dev, and lists “Verify your GitHub identity”, “Know which resources you can access” and “Act on your behalf”. GitHub writes those lines for every GitHub App, and adds how recently the app was created and how many people use it. kleidos-cla reads your account id and login, and posts one comment on this pull request only when you click “I agree and sign”. Its permission is withdrawn as soon as that is done.",
+    ghBodySignin:
+      "GitHub asks you to authorize <strong>Kleidos CLA sign-in</strong>, by kleidos-dev: a separate app with no permission at all, used only to tell us which account you are. It gets no access to your account or your repositories beyond what is public anyway, it cannot post or act for you, and nothing is posted in your name. When you click “I agree and sign”, the register checks with GitHub that this sign-in is yours, records your acceptance and removes the app’s authorization from your account.",
     whoSummary: "Signing for your employer, or under 18?",
     whoBody: 'Do not sign here. An employer signs the entity version, and a parent or guardian signs for a minor: see <a href="https://github.com/kleidos-dev/cla#who-signs">who signs</a>.',
   },
@@ -195,10 +204,11 @@ const EN: Strings = {
     ],
     button: "I agree and sign",
     note: (login, pr) => `The button posts the sentence above as a comment by @${login} on ${pr}. That comment is your signature, and the public register records it.`,
+    noteSignin: (login, pr) => `The button records in the public register that @${login} accepts the sentence above. That confirmation is your signature; nothing is posted on ${pr} or anywhere else.`,
     translation: null,
     error: "Tick the box to accept. Nothing was signed.",
     foldTitle: "Read the full agreement",
-    foldSub: "Contributor Agreement 1.2 and the Kleidos Addendum, version 1",
+    foldSub: (version) => `Contributor Agreement 1.2 and the Kleidos Addendum, version ${version}`,
     binding: null,
     backbar: "Read it all? Tick the box and sign.",
     backLink: "Back to the acceptance",
@@ -209,7 +219,15 @@ const EN: Strings = {
       "The agreement can only be concluded in English. The Spanish texts are for information.",
       'If you are signing for your employer or another organization, or you are under 18, do not sign here: see <a href="https://github.com/kleidos-dev/cla#who-signs">who signs</a>.',
     ],
+    beforeSignin: [
+      'When you click “I agree and sign”, that confirmation is your signature. The public register at <a href="https://github.com/kleidos-dev/cla">kleidos-dev/cla</a> first checks with GitHub that you signed in with this account, then records your acceptance with the date and time GitHub gives and a qualified electronic time stamp.',
+      'Nothing is recorded until you click, and nothing is posted in your name. If you make a mistake afterwards, or an entry names you and you did not accept, write to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.',
+      "The agreement can only be concluded in English. The Spanish texts are for information.",
+      'If you are signing for your employer or another organization, or you are under 18, do not sign here: see <a href="https://github.com/kleidos-dev/cla#who-signs">who signs</a>.',
+    ],
     data: '<strong>Your data.</strong> José M. Requena Plens records your GitHub account id and login, the version you accepted, the time and a link to your acceptance comment. The record is public. No email, real name or IP address is stored. One cookie keeps you signed in for up to an hour. <a href="/privacy">Privacy notice</a>.',
+    dataSignin:
+      '<strong>Your data.</strong> José M. Requena Plens records your GitHub account id and login, the version you accepted, the date and time GitHub gives and the pull request you came from. The record is public; the time-stamping service receives only a hash of it. No email, real name or IP address is stored. One cookie keeps you signed in for up to an hour, and the sign-in is removed from your GitHub account as soon as your acceptance is recorded. <a href="/privacy">Privacy notice</a>.',
   },
   done: {
     titleRecording: "Signed: being recorded",
@@ -245,11 +263,12 @@ const EN: Strings = {
     notUser: (login) => `Only a personal account can sign. @${login} is not one.`,
     paused: 'The agreement is being updated, so signing is paused for a moment. The checks keep working. Come back later, or write to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.',
     edited: "Your acceptance comment on this pull request was edited or deleted, so it cannot be recorded. Nothing is kept from it. To accept, sign in again below.",
+    recordFailed: "Your acceptance could not be recorded: GitHub did not confirm the sign-in, or it had expired. Nothing was recorded. To accept, sign in again below.",
   },
   agreement: {
     title: "Kleidos Contributor Agreement",
     entityTitle: "Kleidos Contributor Agreement (entity version)",
-    eyebrow: "The text you sign · version 1",
+    eyebrow: (version) => `The text you sign · version ${version}`,
     h1: "Kleidos Contributor Agreement",
     entityH1: "Kleidos Contributor Agreement (entity version)",
     lede: "Every contributor accepts it once. It is made of two texts accepted together: the Contributor Agreement 1.2 and the Kleidos Addendum, which prevails where they differ.",
@@ -301,6 +320,8 @@ const ES: Strings = {
     ghSummary: "Qué te enseñará GitHub",
     ghBody:
       "GitHub te pide autorizar <strong>kleidos-cla</strong>, de kleidos-dev, y enumera «Verify your GitHub identity», «Know which resources you can access» y «Act on your behalf». GitHub escribe esas líneas para toda aplicación de GitHub, y añade cuándo se creó la aplicación y cuántas personas la usan. kleidos-cla lee el número y el nombre de tu cuenta, y publica un comentario en este pull request solo cuando pulsas «Acepto y firmo». Su permiso se retira en cuanto lo ha hecho.",
+    ghBodySignin:
+      "GitHub te pide autorizar <strong>Kleidos CLA sign-in</strong>, de kleidos-dev: una aplicación aparte, sin ningún permiso, que solo sirve para saber qué cuenta eres. No recibe acceso a tu cuenta ni a tus repositorios más allá de lo que ya es público, no puede publicar ni actuar en tu nombre, y no se publica nada con tu cuenta. Al pulsar «Acepto y firmo», el registro comprueba con GitHub que esa sesión es tuya, anota tu aceptación y retira la autorización de la aplicación de tu cuenta.",
     whoSummary: "¿Firmas por tu empresa o eres menor de edad?",
     whoBody: 'No firmes aquí. Una empresa firma la versión para entidades, y por un menor firma su padre, madre o tutor: consulta <a href="https://github.com/kleidos-dev/cla#who-signs">quién firma</a>.',
   },
@@ -319,14 +340,15 @@ const ES: Strings = {
     ],
     button: "Acepto y firmo",
     note: (login, pr) => `El botón publica la frase de arriba como comentario de @${login} en ${pr}. Ese comentario es tu firma, y el registro público lo anota.`,
+    noteSignin: (login, pr) => `El botón anota en el registro público que @${login} acepta la frase de arriba. Esa confirmación es tu firma; no se publica nada en ${pr} ni en ningún otro sitio.`,
     translation: {
       summary: "Qué dice esta frase (traducción informativa)",
-      body: (short) =>
-        `«He leído y acepto el Acuerdo de Contribución de Kleidos, versión 1 (SHA-256 ${short}), formado por el texto del acuerdo y su Anexo. Entiendo que permite a José M. Requena Plens licenciar mis aportaciones también en otras condiciones, incluidas licencias comerciales de pago. Soy mayor de edad y estoy facultado para licenciar lo que aporto». Se publica en inglés, que es el texto que obliga.`,
+      body: (short, version) =>
+        `«He leído y acepto el Acuerdo de Contribución de Kleidos, versión ${version} (SHA-256 ${short}), formado por el texto del acuerdo y su Anexo. Entiendo que permite a José M. Requena Plens licenciar mis aportaciones también en otras condiciones, incluidas licencias comerciales de pago. Soy mayor de edad y estoy facultado para licenciar lo que aporto». Se publica en inglés, que es el texto que obliga.`,
     },
     error: "Marca la casilla para aceptar. No se ha firmado nada.",
     foldTitle: "Leer el acuerdo completo",
-    foldSub: "Traducción informativa del Acuerdo y del Anexo, versión 1",
+    foldSub: (version) => `Traducción informativa del Acuerdo y del Anexo, versión ${version}`,
     binding: 'Solo el texto inglés obliga: <a href="/agreement?lang=en" hreflang="en" lang="en">Kleidos Contributor Agreement</a>. Lo que sigue es una traducción informativa.',
     backbar: "¿Ya lo has leído? Marca la casilla y firma.",
     backLink: "Volver a la aceptación",
@@ -337,7 +359,15 @@ const ES: Strings = {
       "El acuerdo solo se celebra en inglés. Los textos en español son informativos.",
       'Si firmas por tu empresa u otra organización, o eres menor de edad, no firmes aquí: consulta <a href="https://github.com/kleidos-dev/cla#who-signs">quién firma</a>.',
     ],
+    beforeSignin: [
+      'Al pulsar «Acepto y firmo», esa confirmación es tu firma. El registro público <a href="https://github.com/kleidos-dev/cla">kleidos-dev/cla</a> comprueba primero con GitHub que entraste con esta cuenta y después anota tu aceptación con la fecha y la hora que da GitHub y un sello de tiempo electrónico cualificado.',
+      'No se anota nada hasta que pulsas, y no se publica nada en tu nombre. Si te equivocas después, o una entrada te nombra y no aceptaste, escribe a <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.',
+      "El acuerdo solo se celebra en inglés. Los textos en español son informativos.",
+      'Si firmas por tu empresa u otra organización, o eres menor de edad, no firmes aquí: consulta <a href="https://github.com/kleidos-dev/cla#who-signs">quién firma</a>.',
+    ],
     data: '<strong>Tus datos.</strong> José M. Requena Plens anota el número y el nombre de tu cuenta de GitHub, la versión aceptada, la hora y el enlace a tu comentario de aceptación. El registro es público. No se guarda tu correo, tu nombre real ni tu dirección IP. Una cookie mantiene tu sesión abierta hasta una hora. <a href="/privacy">Aviso de privacidad</a>.',
+    dataSignin:
+      '<strong>Tus datos.</strong> José M. Requena Plens anota el número y el nombre de tu cuenta de GitHub, la versión aceptada, la fecha y la hora que da GitHub y el pull request del que vienes. El registro es público; al servicio de sellado de tiempo solo llega un resumen (hash) de la entrada. No se guarda tu correo, tu nombre real ni tu dirección IP. Una cookie mantiene tu sesión abierta hasta una hora, y la autorización se retira de tu cuenta de GitHub en cuanto se anota tu aceptación. <a href="/privacy">Aviso de privacidad</a>.',
   },
   done: {
     titleRecording: "Firmado: anotándose",
@@ -373,11 +403,12 @@ const ES: Strings = {
     notUser: (login) => `Solo puede firmar una cuenta personal, y @${login} no lo es.`,
     paused: 'El acuerdo se está actualizando, así que la firma está en pausa un momento. Las comprobaciones siguen funcionando. Vuelve más tarde o escribe a <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.',
     edited: "Tu comentario de aceptación en este pull request se editó o se borró, así que no se puede anotar. No se guarda nada de él. Para aceptar, vuelve a entrar abajo.",
+    recordFailed: "No se pudo anotar tu aceptación: GitHub no confirmó la sesión, o había caducado. No se ha anotado nada. Para aceptar, vuelve a entrar abajo.",
   },
   agreement: {
     title: "Acuerdo de Contribución de Kleidos (traducción informativa)",
     entityTitle: "Acuerdo de Contribución de Kleidos (versión para entidades, en inglés)",
-    eyebrow: "Traducción informativa · versión 1",
+    eyebrow: (version) => `Traducción informativa · versión ${version}`,
     h1: "Acuerdo de Contribución de Kleidos",
     entityH1: "Acuerdo de Contribución de Kleidos (versión para entidades)",
     lede: "Lo acepta una vez cada persona que contribuye. Lo forman dos textos que se aceptan juntos: el Contributor Agreement 1.2 y el Anexo de Kleidos, que prevalece si difieren.",
@@ -466,6 +497,10 @@ export const MESSAGES = {
   postedSigned: { en: ["Nothing posted", "You have already accepted this agreement. Nothing was posted."], es: ["No se ha publicado nada", "Ya has aceptado este acuerdo. No se ha publicado nada."] },
   postedNotNeeded: { en: ["Nothing posted", "This account does not need to sign on this pull request, so nothing was posted."], es: ["No se ha publicado nada", "Esta cuenta no tiene que firmar en este pull request, así que no se ha publicado nada."] },
   notConfigured: { en: ["Not configured yet", EN.notConfigured], es: ["Aún no configurado", ES.notConfigured] },
+  recorderUnreachable: {
+    en: ["Not recorded", "The register could not be asked to record your acceptance, so nothing was recorded. Sign in again in a minute."],
+    es: ["No anotado", "No se pudo pedir al registro que anotara tu aceptación, así que no se ha anotado nada. Vuelve a entrar dentro de un minuto."],
+  },
 } satisfies Record<string, Record<Lang, Pair>>;
 
 export type MessageKey = keyof typeof MESSAGES;

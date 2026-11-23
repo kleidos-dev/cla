@@ -307,9 +307,13 @@ describe("web signing", () => {
     const { pr, path } = await setup(w);
     expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     const a = new Browser(w, alice);
-    const { html } = await signedInPage(a, path);
-    expect(html).toContain("signing is paused");
-    expect(html).not.toContain('action="/agree"');
+    const start = await (await a.get(path)).text();
+    expect(start).toContain("signing is paused");
+    expect(start).not.toContain("/auth/login");
+    // No sign-in starts while signing is paused: GitHub is never asked to authorize anything.
+    const login = await a.get(`/auth/login?return=${encodeURIComponent(path)}`);
+    expect(login.status).toBe(503);
+    expect(await login.text()).toContain("signing is paused");
   });
 
   it("logout needs the CSRF token and revokes the grant", async () => {

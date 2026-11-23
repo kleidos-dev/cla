@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { AGREEMENT_VERSION, FILES, checkIntegrity } from "./agreement";
+import { FALLBACK_VERSION, checkIntegrity, filesOf, isBundled } from "./agreement";
 import type { Bot } from "./bot";
 import { cron, handleMessage, makeBot } from "./bot";
 import type { ConfiguredEnv, Env } from "./env";
@@ -30,17 +30,43 @@ function methodNotAllowed(allow: string): Response {
   return r;
 }
 
-async function healthz(env: Env): Promise<Response> {
-  const integrity = await checkIntegrity();
-  let signing: { on: boolean; reason?: string } = { on: false, reason: "not configured" };
+/** The last current_version read in this isolate: what the public pages show while the register cannot be read. */
+let lastCurrent = FALLBACK_VERSION;
+
+/** The version the public pages show: the register's current one when it is bundled here. */
+async function shownVersion(env: Env): Promise<number> {
   if (isConfigured(env)) {
     try {
-      signing = await signingState(await makeBot(env).registry.config());
+      const v = (await makeBot(env).registry.config()).current_version;
+      if (isBundled(v)) lastCurrent = v;
     } catch {
-      signing = { on: false, reason: "registry not read" };
+      // The register cannot be read: keep the last version seen.
     }
   }
-  const body = { ok: integrity.ok, commit: env.BUILD_COMMIT, version: AGREEMENT_VERSION, set_sha256: integrity.setSha256, configured: isConfigured(env), signing: signing.on, ...(signing.reason ? { reason: signing.reason } : {}) };
+  return lastCurrent;
+}
+
+async function healthz(env: Env): Promise<Response> {
+  let signing: { on: boolean; reason?: string; version: number; flow?: string } = { on: false, reason: "not configured", version: lastCurrent };
+  if (isConfigured(env)) {
+    try {
+      signing = await signingState(await makeBot(env).registry.config(), env);
+    } catch {
+      signing = { on: false, reason: "registry not read", version: lastCurrent };
+    }
+  }
+  const integrity = await checkIntegrity(signing.version);
+  const body = {
+    ok: integrity.ok,
+    commit: env.BUILD_COMMIT,
+    version: signing.version,
+    set_sha256: integrity.setSha256,
+    configured: isConfigured(env),
+    signing: signing.on,
+    ...(signing.flow ? { flow: signing.flow } : {}),
+    signin_app: Boolean(env.SIGNIN_CLIENT_ID && env.SIGNIN_CLIENT_SECRET),
+    ...(signing.reason ? { reason: signing.reason } : {}),
+  };
   return text(JSON.stringify(body) + "\n", 200, "application/json; charset=utf-8");
 }
 
@@ -56,9 +82,9 @@ async function publicRoute(path: string, env: Env, lang: Lang): Promise<Response
     case "/":
       return redirect("/agreement", 302);
     case "/agreement":
-      return agreementPage("individual", lang, env, isConfigured(env));
+      return agreementPage("individual", lang, env, isConfigured(env), await shownVersion(env));
     case "/agreement/entity":
-      return agreementPage("entity", lang, env, isConfigured(env));
+      return agreementPage("entity", lang, env, isConfigured(env), await shownVersion(env));
     // The old Spanish addresses: every page now exists in both languages at one path.
     case "/agreement/es":
       return redirect("/agreement?lang=es", 301);
@@ -76,10 +102,10 @@ async function publicRoute(path: string, env: Env, lang: Lang): Promise<Response
       return securityTxt(env);
   }
   const file = /^\/agreement\/v(\d+)\/([A-Za-z0-9.]+)$/.exec(path);
-  if (file && Number(file[1]) === AGREEMENT_VERSION && Object.hasOwn(FILES, must(file[2]))) {
+  if (file && isBundled(Number(file[1])) && Object.hasOwn(filesOf(Number(file[1])), must(file[2]))) {
     const name = must(file[2]);
     const h = securityHeaders(new Headers({ "content-type": name.endsWith(".md") ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${name}"` }), "public");
-    return new Response(FILES[name], { headers: h });
+    return new Response(filesOf(Number(file[1]))[name], { headers: h });
   }
   if (path.startsWith("/assets/") && path === (await stylesheetPath())) {
     return new Response(STYLESHEET, { headers: securityHeaders(new Headers({ "content-type": "text/css; charset=utf-8" }), "immutable") });

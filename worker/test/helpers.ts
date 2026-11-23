@@ -8,13 +8,21 @@ import type { QueueMessage } from "../src/messages";
 import { resetRegistryCache } from "../src/registry";
 import { b64urlEncode, hex, must, utf8 } from "../src/util";
 import type { FakePr, User } from "./fakegh";
-import { APP_ID, CLIENT_ID, CLIENT_SECRET, FakeGitHub, ORG_ID, REGISTRY, commit, sha } from "./fakegh";
+import { APP_ID, CLIENT_ID, CLIENT_SECRET, FakeGitHub, ORG_ID, REGISTRY, SIGNIN_CLIENT_ID, SIGNIN_CLIENT_SECRET, commit, sha } from "./fakegh";
 import configJson from "../../registry/config.json";
 
 export const ORIGIN = "https://cla.kleidos.dev";
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const SANDBOX = "kleidos-dev/cla-sandbox";
-export const CONFIG = configJson;
+/**
+ * The register's configuration as the tests use it: registry/config.json,
+ * with the owner on the exemption list whatever its state (his exemption
+ * is lifted for an end-to-end test now and then; the flows tested here do
+ * not depend on that).
+ */
+export const CONFIG: typeof configJson = configJson.exempt.some((e) => e.id === 28966312)
+  ? configJson
+  : { ...configJson, exempt: [{ id: 28966312, login: "jmrplens", why: "the project owner" }, ...configJson.exempt] };
 
 export interface Sent {
   body: QueueMessage;
@@ -61,13 +69,25 @@ export interface World {
   logs: string[];
 }
 
-export async function world(opts: { configure?: boolean } = {}): Promise<World> {
+/**
+ * The register switched to version 2: current, accepted with version 1,
+ * and the sign-in app named. What the one-line switch of registry/config.json
+ * makes, once the owner approves the text.
+ */
+export const CONFIG_V2: typeof CONFIG = { ...CONFIG, current_version: 2, accepted_versions: [1, 2], signin_client_id: SIGNIN_CLIENT_ID as unknown as null };
+
+/**
+ * `signinSecrets` puts the sign-in app's two secrets in the Worker (what
+ * scripts/create-signin-app.ts does); `config` replaces the register's
+ * configuration.
+ */
+export async function world(opts: { configure?: boolean; signinSecrets?: boolean; config?: unknown } = {}): Promise<World> {
   resetGitHubCaches();
   resetRegistryCache();
   const { pem, publicKey } = await appKey();
   const gh = new FakeGitHub();
   await gh.init(publicKey);
-  gh.setFile("main", "registry/config.json", JSON.stringify(configJson));
+  gh.setFile("main", "registry/config.json", JSON.stringify(opts.config ?? CONFIG));
   gh.setFile("main", "registry/entities.json", JSON.stringify({ schema: 1, entities: [] }));
   const queue = new FakeQueue();
   const limiters = { RL_WEBHOOK: new FakeLimiter(), RL_AUTH: new FakeLimiter(), RL_SIGN: new FakeLimiter(), RL_AGREE_IP: new FakeLimiter(), RL_AGREE_ACCOUNT: new FakeLimiter() };
@@ -81,6 +101,7 @@ export async function world(opts: { configure?: boolean } = {}): Promise<World> 
     ...(opts.configure === false
       ? {}
       : { APP_ID: String(APP_ID), APP_PRIVATE_KEY: pem, CLIENT_ID, CLIENT_SECRET, WEBHOOK_SECRET, SESSION_KEY: b64urlEncode(crypto.getRandomValues(new Uint8Array(32))) }),
+    ...(opts.signinSecrets ? { SIGNIN_CLIENT_ID, SIGNIN_CLIENT_SECRET } : {}),
   };
   const logs: string[] = [];
   vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
@@ -190,7 +211,7 @@ export class Browser {
     const login = await this.get(`/auth/login?return=${encodeURIComponent(signPath)}`);
     if (login.status !== 302) throw new Error(`login answered ${login.status}`);
     const authorize = new URL(must(login.headers.get("location")));
-    const code = this.w.gh.issueCode(this.user, must(authorize.searchParams.get("code_challenge")));
+    const code = this.w.gh.issueCode(this.user, must(authorize.searchParams.get("code_challenge")), must(authorize.searchParams.get("client_id")));
     const callbackUrl = `/auth/callback?code=${code}&state=${authorize.searchParams.get("state")}`;
     const callback = await this.get(callbackUrl);
     return { authorize, callback, callbackUrl };

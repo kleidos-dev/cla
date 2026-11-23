@@ -12,12 +12,28 @@ export const OAUTH_COOKIE = "__Host-cla-oauth";
 export const SESSION_TTL = 3600;
 export const OAUTH_TTL = 600;
 
-export interface Pending {
+/** An acceptance posted as a comment through kleidos-cla (a "comment" version), waiting for its record. */
+export interface PendingComment {
   repo: string;
   pr: number;
   comment_id: number;
   comment_url: string;
   at: string;
+}
+
+/** An acceptance handed to the recorder with the sign-in token (a "signin" version), waiting for its record. */
+export interface PendingSignin {
+  signin: true;
+  repo: string;
+  pr: number;
+  version: number;
+  at: string;
+}
+
+export type Pending = PendingComment | PendingSignin;
+
+export function isPendingSignin(p: Pending): p is PendingSignin {
+  return "signin" in p && p.signin;
 }
 
 export interface Session {
@@ -27,6 +43,8 @@ export interface Session {
   login: string;
   type: string;
   token?: string;
+  /** The app the token is of: kleidos-cla ("bot", absent in older cookies) or the sign-in app. */
+  app?: "bot" | "signin";
   /** The pull request the token was issued for: it is used there only. */
   for?: string;
   pending?: Pending;
@@ -40,6 +58,8 @@ export interface OAuthTransaction {
   return: string;
   /** The language of the page the sign-in started from, to come back to it. */
   lang?: Lang;
+  /** Which app the authorization is asked of; absent in older cookies, which mean kleidos-cla. */
+  app?: "bot" | "signin";
   exp: number;
 }
 
@@ -79,6 +99,7 @@ export async function readTransaction(req: Request, keys: Keys): Promise<OAuthTr
   if (!raw) return null;
   const v = (await open(keys.oauth, OAUTH_COOKIE, raw)) as Unchecked<OAuthTransaction> | null;
   if (!v || v.v !== 1 || typeof v.state !== "string" || typeof v.verifier !== "string" || typeof v.return !== "string" || typeof v.exp !== "number" || (v.lang !== undefined && !isLang(v.lang))) return null;
+  if (v.app !== undefined && v.app !== "bot" && v.app !== "signin") return null;
   if (v.exp <= nowSeconds()) return null;
   return v as OAuthTransaction;
 }

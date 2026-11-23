@@ -16,6 +16,9 @@ export const APP_ID = 1234567;
 export const BOT_ID = 99999999;
 export const CLIENT_ID = "Iv23liTESTCLIENT";
 export const CLIENT_SECRET = "test-client-secret-value";
+/** The identity-only sign-in app: no permission at all, so its tokens reach nothing but /user. */
+export const SIGNIN_CLIENT_ID = "Iv23liSIGNINTEST0001";
+export const SIGNIN_CLIENT_SECRET = "test-signin-secret-value";
 export const REGISTRY = "kleidos-dev/cla";
 
 export interface User {
@@ -56,6 +59,8 @@ export interface FakeComment {
 
 interface Token {
   kind: "installation" | "user";
+  /** For a user token: the app it was issued by. */
+  app?: "bot" | "signin";
   installation?: number;
   repos?: string[];
   permissions?: Record<string, string>;
@@ -89,13 +94,15 @@ export class FakeGitHub {
   onRequest: ((method: string, path: string) => void) | null = null;
   /** GitHub's cap on the commits it lists for one pull request. */
   commitCap = 250;
-  dispatches: { kind: string; repo: string; pr: string; comment_id: string }[] = [];
+  dispatches: { kind: string; repo: string; pr: string; comment_id?: string; github_id?: string; version?: string; lang?: string; site_commit?: string; signin_token?: string }[] = [];
+  /** record.yml's runs as the Actions API lists them, newest first. */
+  recordRuns: { display_title: string; created_at: string; status: string; conclusion: string | null; head_branch: string }[] = [];
   deletedInstallations: number[] = [];
   revokedGrants: string[] = [];
   deliveries: { id: number; guid: string; status_code: number; delivered_at: string; redelivery: boolean }[] = [];
   redelivered: number[] = [];
   tokens = new Map<string, Token>();
-  codes = new Map<string, { user: User; challenge: string; used: boolean }>();
+  codes = new Map<string, { user: User; challenge: string; used: boolean; clientId: string }>();
   requests: { method: string; url: string }[] = [];
   failNext: { match: RegExp; status: number; headers?: Record<string, string> } | null = null;
   private seq = 1000;
@@ -160,10 +167,38 @@ export class FakeGitHub {
     this.comments = this.comments.filter((x) => x.id !== c.id);
   }
 
-  issueCode(user: User, challenge: string): string {
+  issueCode(user: User, challenge: string, clientId = CLIENT_ID): string {
     const code = b64urlEncode(crypto.getRandomValues(new Uint8Array(15)));
-    this.codes.set(code, { user, challenge, used: false });
+    this.codes.set(code, { user, challenge, used: false, clientId });
     return code;
+  }
+
+  /** What record.yml does for a sign-in once GitHub vouched for its token: a schema 2 record (and the grant gone). */
+  async recordSignin(user: User, version = 2): Promise<SignatureRecord> {
+    const config = JSON.parse(must(this.files.get("main:registry/config.json"))) as { versions: Record<string, { set_sha256: string; sentence: string }> };
+    const rec: SignatureRecord = {
+      schema: 2,
+      kind: "individual",
+      github_id: user.id,
+      login_at_signing: user.login,
+      agreement: "kleidos-ca",
+      version,
+      set_sha256: must(config.versions[String(version)]).set_sha256,
+      sentence_sha256: await sha256Hex(must(config.versions[String(version)]).sentence),
+      accepted_at: "2026-11-23T10:00:05Z",
+      method: "signin",
+      evidence: { authorized_at: "2026-11-23T10:00:00Z", signin_client_id: SIGNIN_CLIENT_ID, context_pr_url: "https://github.com/kleidos-dev/cla-sandbox/pull/1", site_commit: "0123456789abcdef0123456789abcdef01234567", lang: "en" },
+      recorded_at: "2026-11-23T10:00:09Z",
+      recorder_run_id: this.next(),
+      recorder_commit: "c".repeat(40),
+    };
+    this.setFile("signatures", `signatures/individual/${user.id}.json`, JSON.stringify(rec));
+    this.recordCommits.set(user.id, (await sha256Hex(`record-${user.id}`)).slice(0, 40));
+    for (const [k, v] of this.tokens) if (v.kind === "user" && v.app === "signin" && v.user?.id === user.id) {
+      v.revoked = true;
+      this.revokedGrants.push(k);
+    }
+    return rec;
   }
 
   private async verifyJwt(auth: string | null): Promise<boolean> {
@@ -186,7 +221,7 @@ export class FakeGitHub {
 
   private can(t: Token | null, repo: string, perm: string, level: "read" | "write"): boolean {
     if (!t) return false;
-    if (t.kind === "user") return this.repos.get(repo)?.id === t.repositoryId && perm === "pull_requests";
+    if (t.kind === "user") return t.app !== "signin" && this.repos.get(repo)?.id === t.repositoryId && perm === "pull_requests";
     return Boolean(t.repos?.includes(must(repo.split("/")[1])) && (LEVEL[t.permissions?.[perm] ?? ""] ?? 0) >= must(LEVEL[level]));
   }
 
@@ -234,13 +269,16 @@ export class FakeGitHub {
     if (url.host === "github.com") {
       if (req.method === "POST" && url.pathname === "/login/oauth/access_token") {
         const entry = this.codes.get(String(data.code));
-        if (!entry || entry.used || data.client_id !== CLIENT_ID || data.client_secret !== CLIENT_SECRET) return json({ error: "bad_verification_code" });
+        const secret = entry?.clientId === SIGNIN_CLIENT_ID ? SIGNIN_CLIENT_SECRET : CLIENT_SECRET;
+        // A code is issued to one app and exchanged only with that app's own id and secret.
+        if (!entry || entry.used || data.client_id !== entry.clientId || data.client_secret !== secret) return json({ error: "bad_verification_code" });
         entry.used = true;
         const challenge = b64urlEncode(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(String(data.code_verifier)))));
         if (challenge !== entry.challenge) return json({ error: "bad_verification_code" });
         const token = `ghu_${b64urlEncode(crypto.getRandomValues(new Uint8Array(18)))}`;
-        this.tokens.set(token, { kind: "user", user: entry.user, repositoryId: Number(data.repository_id) });
-        return json({ access_token: token, token_type: "bearer", scope: "", expires_in: 28800 });
+        const app = entry.clientId === SIGNIN_CLIENT_ID ? "signin" : "bot";
+        this.tokens.set(token, { kind: "user", app, user: entry.user, ...(app === "bot" ? { repositoryId: Number(data.repository_id) } : {}) });
+        return json({ access_token: token, token_type: "bearer", scope: "", expires_in: 28800, refresh_token: `ghr_${b64urlEncode(crypto.getRandomValues(new Uint8Array(18)))}`, refresh_token_expires_in: 15897600 });
       }
       return json({ message: "Not Found" }, 404);
     }
@@ -286,10 +324,12 @@ export class FakeGitHub {
       return json({}, 202);
     }
     if ((m = /^\/applications\/([^/]+)\/grant$/.exec(p)) && req.method === "DELETE") {
-      if (auth !== `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}` || m[1] !== CLIENT_ID) return json({ message: "Bad credentials" }, 401);
+      const app = m[1] === SIGNIN_CLIENT_ID ? "signin" : "bot";
+      const basic = app === "signin" ? `Basic ${btoa(`${SIGNIN_CLIENT_ID}:${SIGNIN_CLIENT_SECRET}`)}` : `Basic ${btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)}`;
+      if (auth !== basic || (m[1] !== CLIENT_ID && m[1] !== SIGNIN_CLIENT_ID)) return json({ message: "Bad credentials" }, 401);
       const t = this.tokens.get(String(data.access_token));
-      if (!t || t.kind !== "user") return json({ message: "Not Found" }, 404);
-      for (const [k, v] of this.tokens) if (v.kind === "user" && v.user?.id === t.user?.id) {
+      if (!t || t.kind !== "user" || (t.app ?? "bot") !== app) return json({ message: "Not Found" }, 404);
+      for (const [k, v] of this.tokens) if (v.kind === "user" && (v.app ?? "bot") === app && v.user?.id === t.user?.id) {
         v.revoked = true;
         this.revokedGrants.push(k);
       }
@@ -344,6 +384,10 @@ export class FakeGitHub {
       const sha = this.recordCommits.get(id);
       const forged = this.forgedRecords.has(id);
       return json(sha ? [{ sha, author: { id: forged ? 666666 : 41898282 }, committer: { login: forged ? "mallory" : "web-flow" }, commit: { verification: { verified: true, reason: "valid" } } }] : []);
+    }
+    if (rest.startsWith("/actions/workflows/record.yml/runs") && req.method === "GET") {
+      if (!this.can(t, repo, "actions", "read")) return json({ message: "Forbidden" }, 403);
+      return json({ total_count: this.recordRuns.length, workflow_runs: this.recordRuns });
     }
     if ((m = /^\/actions\/workflows\/([^/]+)\/dispatches$/.exec(rest))) {
       if (!this.can(t, repo, "actions", "write")) return json({ message: "Forbidden" }, 403);

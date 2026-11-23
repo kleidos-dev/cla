@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { AGREEMENT_VERSION, FILES, NOTICES, checkIntegrity } from "./agreement";
+import { FALLBACK_VERSION, NOTICES, checkIntegrity, filesOf, isBundled } from "./agreement";
 import type { Assessment } from "./assess";
 import { HeadMovedError, acceptedSentences, allClear, assess } from "./assess";
 import type { Bot } from "./bot";
-import type { ConfiguredEnv } from "./env";
+import type { ConfiguredEnv, OAuthApp } from "./env";
+import { botApp, signinApp } from "./env";
 import { GitHubError, NotAllowedError, WEB } from "./github";
 import { escapeHtml, messagePage, page, redirect } from "./html";
 import type { Lang, Strings } from "./i18n";
@@ -15,9 +16,9 @@ import { log } from "./log";
 import type { Heading } from "./markdown";
 import { addHeadingIds, renderMarkdown } from "./markdown";
 import type { Config, SignatureRecord } from "./registry";
-import { recordValid } from "./registry";
+import { flowOf, recordValid } from "./registry";
 import type { Session } from "./session";
-import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, SESSION_TTL, clearCookie, readSession, readTransaction, sessionCookie, transactionCookie } from "./session";
+import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, SESSION_TTL, clearCookie, isPendingSignin, readSession, readTransaction, sessionCookie, transactionCookie } from "./session";
 import { b64urlEncode, clientIp, isLogin, must, normalizeSentence, nowSeconds, randomB64url, readCapped, safeEqual, utf8 } from "./util";
 
 export const MAX_FORM_BYTES = 4096;
@@ -42,16 +43,53 @@ export function sentenceFor(version: number, setSha256: string): string {
   return `I have read and I accept the Kleidos Contributor Agreement, version ${version} (SHA-256 ${setSha256.slice(0, 12)}), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.`;
 }
 
-/** Signing is on only when the registry's current version, digest and sentence are the ones bundled here. */
-export async function signingState(config: Config | null): Promise<{ on: boolean; reason?: string; setSha256: string }> {
-  const integrity = await checkIntegrity();
-  if (!integrity.ok) return { on: false, reason: "bundled texts do not match SHA256SUMS", setSha256: integrity.setSha256 };
-  if (!config) return { on: false, reason: "registry not read", setSha256: integrity.setSha256 };
-  const v = config.versions[String(config.current_version)];
-  if (config.current_version !== AGREEMENT_VERSION || !v || v.set_sha256 !== integrity.setSha256 || v.sentence !== sentenceFor(AGREEMENT_VERSION, integrity.setSha256)) {
-    return { on: false, reason: "version skew between the registry and this deployment", setSha256: integrity.setSha256 };
+export interface Signing {
+  on: boolean;
+  reason?: string;
+  /** The version offered: the registry's current_version. */
+  version: number;
+  setSha256: string;
+  /** How it is accepted: kleidos-cla posts the sentence ("comment") or the signer signs in with the identity-only app ("signin"). */
+  flow: "comment" | "signin";
+  /** The app the signer signs in with; null when signing is off. */
+  app: OAuthApp | null;
+}
+
+const COMMIT = /^[0-9a-f]{40}$/;
+
+/**
+ * Signing is on only when the registry's current version is bundled here
+ * with the same digest and sentence, and the app its flow signs in with
+ * is configured: kleidos-cla for "comment", the identity-only app (both
+ * secrets, and the client id the registry names) for "signin". Making
+ * version 2 current is therefore the one switch: until the registry says
+ * so, the site keeps the version 1 flow, and a "signin" version with no
+ * sign-in app is paused rather than signed any other way.
+ */
+export async function signingState(config: Config | null, env: ConfiguredEnv): Promise<Signing> {
+  const version = config?.current_version ?? FALLBACK_VERSION;
+  const integrity = await checkIntegrity(version);
+  const off = (reason: string): Signing => ({ on: false, reason, version, setSha256: integrity.setSha256, flow: config ? flowOf(config, version) : "comment", app: null });
+  if (!config) return off("registry not read");
+  if (!isBundled(version)) return off("version skew between the registry and this deployment");
+  if (!integrity.ok) return off("bundled texts do not match SHA256SUMS");
+  const v = config.versions[String(version)];
+  if (!v || v.set_sha256 !== integrity.setSha256 || v.sentence !== sentenceFor(version, integrity.setSha256)) return off("version skew between the registry and this deployment");
+  const flow = flowOf(config, version);
+  if (flow === "signin") {
+    const app = signinApp(env, config.signin_client_id);
+    if (!app) return off("the sign-in app is not configured");
+    // The recorder names the commit the sign page was built from; a build without it cannot take a signature.
+    if (!COMMIT.test(env.BUILD_COMMIT)) return off("build commit unknown");
+    return { on: true, version, setSha256: integrity.setSha256, flow, app };
   }
-  return { on: true, setSha256: integrity.setSha256 };
+  return { on: true, version, setSha256: integrity.setSha256, flow, app: botApp(env) };
+}
+
+/** The credentials to revoke a token of a session with: its own app, whether or not that app still signs. */
+function sessionApp(env: ConfiguredEnv, kind: "bot" | "signin" | undefined): OAuthApp | null {
+  if (kind !== "signin") return botApp(env);
+  return env.SIGNIN_CLIENT_ID && env.SIGNIN_CLIENT_SECRET ? { kind: "signin", clientId: env.SIGNIN_CLIENT_ID, clientSecret: env.SIGNIN_CLIENT_SECRET } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,16 +121,16 @@ function loginHref(t: Target, lang: Lang, sw = false): string {
   return `/auth/login?return=${encodeURIComponent(t.path)}${sw ? "&amp;switch=1" : ""}&amp;lang=${lang}`;
 }
 
-function filesUrl(env: { BUILD_COMMIT: string; REGISTRY_REPO: string }): string {
-  const ref = /^[0-9a-f]{40}$/.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT : "main";
-  return `https://github.com/${env.REGISTRY_REPO}/tree/${ref}/agreements/v${AGREEMENT_VERSION}`;
+function filesUrl(env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, version: number): string {
+  const ref = COMMIT.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT : "main";
+  return `https://github.com/${env.REGISTRY_REPO}/tree/${ref}/agreements/v${version}`;
 }
 
-async function metaLine(lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, kind: "individual" | "entity" = "individual"): Promise<string> {
-  const { setSha256 } = await checkIntegrity();
-  const commit = /^[0-9a-f]{40}$/.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT.slice(0, 12) : "main";
-  const v = AGREEMENT_VERSION;
-  return `<p class="meta"><span>${S[lang].meta(v, setSha256)}</span><span><a href="${filesUrl(env)}">${escapeHtml(env.REGISTRY_REPO)}@<code>${escapeHtml(commit)}</code></a></span><span>${S[lang].downloads}: <a href="/agreement/v${v}/${kind}.md" download>${kind}.md</a>, <a href="/agreement/v${v}/addendum.md" download>addendum.md</a>, <a href="/agreement/v${v}/SHA256SUMS" download>SHA256SUMS</a></span></p>`;
+async function metaLine(lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, version: number, kind: "individual" | "entity" = "individual"): Promise<string> {
+  const { setSha256 } = await checkIntegrity(version);
+  const commit = COMMIT.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT.slice(0, 12) : "main";
+  const v = version;
+  return `<p class="meta"><span>${S[lang].meta(v, setSha256)}</span><span><a href="${filesUrl(env, version)}">${escapeHtml(env.REGISTRY_REPO)}@<code>${escapeHtml(commit)}</code></a></span><span>${S[lang].downloads}: <a href="/agreement/v${v}/${kind}.md" download>${kind}.md</a>, <a href="/agreement/v${v}/addendum.md" download>addendum.md</a>, <a href="/agreement/v${v}/SHA256SUMS" download>SHA256SUMS</a></span></p>`;
 }
 
 function summaryList(lang: Lang): string {
@@ -110,10 +148,11 @@ function rendered(src: string, prefix: string): { html: string; headings: Headin
  * of the Contributor Agreement and of the Addendum (the entity version has
  * none, so it stays in English, marked as such).
  */
-function agreementTexts(lang: Lang, kind: "individual" | "entity", prefix: string): { html: string; parts: [Heading[], Heading[]] } {
+function agreementTexts(lang: Lang, kind: "individual" | "entity", prefix: string, version: number): { html: string; parts: [Heading[], Heading[]] } {
   const spanish = lang === "es";
-  const ca = rendered(spanish && kind === "individual" ? must(FILES["individual.es.md"]) : must(FILES[`${kind}.md`]), `${prefix}ca`);
-  const ad = rendered(spanish ? must(FILES["addendum.es.md"]) : must(FILES["addendum.md"]), `${prefix}ad`);
+  const files = filesOf(version);
+  const ca = rendered(spanish && kind === "individual" ? must(files["individual.es.md"]) : must(files[`${kind}.md`]), `${prefix}ca`);
+  const ad = rendered(spanish ? must(files["addendum.es.md"]) : must(files["addendum.md"]), `${prefix}ad`);
   const caLang = spanish && kind === "individual" ? "es" : "en";
   const label = spanish ? ["Acuerdo", "Anexo"] : ["Contributor Agreement", "Addendum"];
   return {
@@ -142,8 +181,9 @@ function alertCard(html: string): string {
 }
 
 /** Step 1: what this is and who still signs, and one button. No legal text: that comes once signed in. */
-function startBody(lang: Lang, t: Target, a: Assessment | null, signingOn: boolean, extra: { again?: boolean; notice?: string; who?: string } = {}): string {
+function startBody(lang: Lang, t: Target, a: Assessment | null, signing: Signing, extra: { again?: boolean; notice?: string; who?: string } = {}): string {
   const s = S[lang].start;
+  const signingOn = signing.on;
   const still = a ? (a.missing.length ? a.missing.map((m) => `@${escapeHtml(m.login)}`).join(", ") : allClear(a) ? s.nobody : "—") : "";
   const action = signingOn
     ? `<a class="btn btn-primary btn-block" href="${loginHref(t, lang)}">${extra.again ? s.buttonAgain : s.button}</a>\n<p class="note">${s.note}</p>`
@@ -160,21 +200,23 @@ ${a ? `<p class="card-row"><span class="eyebrow">${s.stillLabel}</span><span>${s
 ${action}
 ${extra.who ?? ""}
 <ul class="links">${s.links.map(([l, h]) => `<li><a href="${h}">${l}</a></li>`).join("")}</ul>
-<details class="fold"><summary>${s.ghSummary}</summary><div class="fold-body"><p class="note">${s.ghBody}</p></div></details>
+<details class="fold"><summary>${s.ghSummary}</summary><div class="fold-body"><p class="note">${signing.flow === "signin" ? s.ghBodySignin : s.ghBody}</p></div></details>
 <details class="fold"><summary>${s.whoSummary}</summary><div class="fold-body"><p class="note">${s.whoBody}</p></div></details>`;
 }
 
 /** Step 2: the summary, the box and the button above the fold, the full text in a fold below. */
-async function acceptBody(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, setSha256: string, error: boolean): Promise<string> {
+async function acceptBody(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, signing: Signing, error: boolean): Promise<string> {
   const a = S[lang].accept;
-  const csrf = await csrfToken(keys.csrf, [s.sid, "agree", `${t.repo}#${t.pr}`, String(AGREEMENT_VERSION)]);
+  const { version, setSha256 } = signing;
+  const signin = signing.flow === "signin";
+  const csrf = await csrfToken(keys.csrf, [s.sid, "agree", `${t.repo}#${t.pr}`, String(version)]);
   const logoutCsrf = await csrfToken(keys.csrf, [s.sid, "logout"]);
   const [owner, repo] = t.repo.split("/") as [string, string];
-  const sentence = sentenceFor(AGREEMENT_VERSION, setSha256);
-  const translation = a.translation ? `<details class="translation"><summary>${a.translation.summary}</summary><p lang="es">${a.translation.body(setSha256.slice(0, 12))}</p></details>` : "";
+  const sentence = sentenceFor(version, setSha256);
+  const translation = a.translation ? `<details class="translation"><summary>${a.translation.summary}</summary><p lang="es">${a.translation.body(setSha256.slice(0, 12), version)}</p></details>` : "";
   const errorBox = error ? `<p class="error" id="accept-error" role="alert"><span class="error-mark" aria-hidden="true">!</span><span>${a.error}</span></p>` : "";
   const box = error ? ' aria-invalid="true" aria-describedby="accept-error post-note" autofocus' : ' aria-describedby="post-note"';
-  const texts = agreementTexts(lang, "individual", "f-");
+  const texts = agreementTexts(lang, "individual", "f-", version);
   return `${progress(lang, 2)}
 <h1 class="h-task">${a.h1}</h1>
 ${where(a.where)}
@@ -182,30 +224,32 @@ ${summaryList(lang)}
 <form class="accept${error ? " is-error" : ""}" id="accept" method="post" action="/agree#accept" novalidate>
 <input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="owner" value="${escapeHtml(owner)}"><input type="hidden" name="repo" value="${escapeHtml(repo)}">
-<input type="hidden" name="pr" value="${t.pr}"><input type="hidden" name="version" value="${AGREEMENT_VERSION}">
+<input type="hidden" name="pr" value="${t.pr}"><input type="hidden" name="version" value="${version}">
 <input type="hidden" name="set_sha256" value="${setSha256}"><input type="hidden" name="lang" value="${lang}">
 ${errorBox}
 <div class="check"><input type="checkbox" id="accept-box" name="accept" value="yes"${box}><label for="accept-box" lang="en">${escapeHtml(sentence)}</label></div>
 <div class="actionbar"><button class="btn btn-primary btn-block" type="submit">${a.button}</button></div>
-<p class="note" id="post-note">${a.note(escapeHtml(s.login), prName(t))}</p>
+<p class="note" id="post-note">${(signin ? a.noteSignin : a.note)(escapeHtml(s.login), prName(t))}</p>
 ${translation}
 </form>
 ${whoRow(lang, s, t, logoutCsrf)}
-<details class="fold" id="text"><summary><span>${a.foldTitle}<small>${a.foldSub}</small></span></summary><div class="fold-body">
+<details class="fold" id="text"><summary><span>${a.foldTitle}<small>${a.foldSub(version)}</small></span></summary><div class="fold-body">
 ${a.binding ? `<p class="banner">${a.binding}</p>` : ""}
-${await metaLine(lang, env)}
+${await metaLine(lang, env, version)}
 ${texts.html}
 <p class="backbar"><span>${a.backbar}</span><a href="#accept">${a.backLink}</a></p>
 </div></details>
-<section class="prose" aria-labelledby="before"><h2 id="before" class="h-sub">${a.beforeTitle}</h2><ul>${a.before.map((x) => `<li>${x}</li>`).join("")}</ul><p class="note">${a.data}</p></section>`;
+<section class="prose" aria-labelledby="before"><h2 id="before" class="h-sub">${a.beforeTitle}</h2><ul>${(signin ? a.beforeSignin : a.before).map((x) => `<li>${x}</li>`).join("")}</ul><p class="note">${signin ? a.dataSignin : a.data}</p></section>`;
 }
 
 interface DoneFacts {
   login: string;
   id: number;
+  version: number;
   setSha256: string;
   at: string;
-  commentUrl: string;
+  /** The acceptance comment, for a "comment" version; null for a sign-in, which posts nothing. */
+  commentUrl: string | null;
   entryUrl: string | null;
 }
 
@@ -223,9 +267,9 @@ ${where(recorded ? d.whereRecorded : d.whereRecording)}
 <p>${d.lede(prLink(t))}</p>
 <dl class="facts">
 <div><dt class="eyebrow">${d.account}</dt><dd>${d.accountValue(escapeHtml(f.login), f.id)}</dd></div>
-<div><dt class="eyebrow">${d.version}</dt><dd>${AGREEMENT_VERSION} · SHA-256 <code>${f.setSha256}</code></dd></div>
+<div><dt class="eyebrow">${d.version}</dt><dd>${f.version} · SHA-256 <code>${f.setSha256}</code></dd></div>
 <div><dt class="eyebrow">${d.accepted}</dt><dd>${escapeHtml(f.at)}</dd></div>
-<div><dt class="eyebrow">${d.comment}</dt><dd><a href="${escapeHtml(f.commentUrl)}">${prName(t)}</a></dd></div>
+${f.commentUrl ? `<div><dt class="eyebrow">${d.comment}</dt><dd><a href="${escapeHtml(f.commentUrl)}">${prName(t)}</a></dd></div>` : `<div><dt class="eyebrow">${S[lang].prLabel}</dt><dd>${prLink(t)}</dd></div>`}
 <div><dt class="eyebrow">${d.entry}</dt><dd>${entry}</dd></div>
 </dl>
 </div>
@@ -296,8 +340,17 @@ function signTitle(lang: Lang, t: Target, step: "start" | "accept"): string {
 }
 
 /** Step 2 for a signed-in signer whose token is for this pull request; `error` when the box was not ticked. */
-async function acceptPage(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, setSha256: string, error: boolean): Promise<Response> {
-  return page(await acceptBody(lang, env, s, t, keys, setSha256, error), { title: signTitle(lang, t, "accept"), lang, path: t.path, status: error ? 400 : 200 });
+async function acceptPage(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, signing: Signing, error: boolean): Promise<Response> {
+  return page(await acceptBody(lang, env, s, t, keys, signing, error), { title: signTitle(lang, t, "accept"), lang, path: t.path, status: error ? 400 : 200 });
+}
+
+/** Whether a session's token can take the acceptance now: issued for this pull request, by the app the current version signs in with. */
+function tokenFor(session: Session, t: Target, signing: Signing): boolean {
+  return Boolean(session.token) && session.for === `${t.repo}#${t.pr}` && signing.app !== null && (session.app ?? "bot") === signing.app.kind;
+}
+
+function entryUrl(env: ConfiguredEnv, id: number, commit: string | null): string {
+  return `https://github.com/${env.REGISTRY_REPO}/blob/${commit ?? "signatures"}/signatures/individual/${id}.json`;
 }
 
 export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys, path: string): Promise<Response> {
@@ -311,37 +364,49 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
     if (!st) return messagePage(lang, 404, "noTarget");
     const { t, config } = st;
     const session = await readSession(req, keys);
-    const signing = await signingState(config);
+    const signing = await signingState(config, env);
     const back = { href: prUrl(t), label: BACK.pr[lang] };
     if (!session) {
       const a = await assessTarget(bot, config, t);
       if (a.pr.base.repo.private) return messagePage(lang, 404, "noTarget");
       if (a.pr.state !== "open") return messagePage(lang, 409, "closed", back);
       if (a.pr.locked) return messagePage(lang, 409, "locked", back);
-      return page(startBody(lang, t, a, signing.on), { title: signTitle(lang, t, "start"), lang, path: t.path });
+      return page(startBody(lang, t, a, signing), { title: signTitle(lang, t, "start"), lang, path: t.path });
     }
     const logoutCsrf = await csrfToken(keys.csrf, [session.sid, "logout"]);
     let notice = "";
-    if (session.pending && session.pending.repo === t.repo && session.pending.pr === t.pr) {
+    const pending = session.pending;
+    if (pending && pending.repo === t.repo && pending.pr === t.pr) {
       const rec = await bot.registry.signature(session.id);
       const recorded = recordValid(config, rec);
-      if (recorded || (await acceptanceStands(bot, config, t, session.id, session.pending.comment_id))) {
-        const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;
-        const facts: DoneFacts = {
-          login: session.login,
-          id: session.id,
-          setSha256: signing.setSha256,
-          at: recorded ? rec.accepted_at : session.pending.at,
-          commentUrl: session.pending.comment_url,
-          entryUrl: recorded ? `https://github.com/${env.REGISTRY_REPO}/blob/${commit ?? "signatures"}/signatures/individual/${session.id}.json` : null,
-        };
-        return page(doneBody(lang, t, facts), { title: recorded ? S[lang].done.titleRecorded : S[lang].done.titleRecording, lang, path: t.path });
+      const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;
+      const done = (facts: DoneFacts) => page(doneBody(lang, t, facts), { title: facts.entryUrl ? S[lang].done.titleRecorded : S[lang].done.titleRecording, lang, path: t.path });
+      if (isPendingSignin(pending)) {
+        // A sign-in leaves nothing on the pull request: the record, or the recorder run that is checking it, is what there is to show.
+        const run = recorded ? "succeeded" : await bot.registry.signinRun(t.repo, t.pr, session.id, pending.at).catch(() => null);
+        if (recorded || run !== "failed") {
+          const set = recorded ? rec.set_sha256 : (config.versions[String(pending.version)]?.set_sha256 ?? signing.setSha256);
+          return done({ login: session.login, id: session.id, version: recorded ? rec.version : pending.version, setSha256: set, at: recorded ? rec.accepted_at : pending.at, commentUrl: null, entryUrl: recorded ? entryUrl(env, session.id, commit) : null });
+        }
+        notice = alertCard(st0.recordFailed);
+      } else {
+        if (recorded || (await acceptanceStands(bot, config, t, session.id, pending.comment_id))) {
+          return done({
+            login: session.login,
+            id: session.id,
+            version: recorded ? rec.version : signing.version,
+            setSha256: recorded ? rec.set_sha256 : signing.setSha256,
+            at: recorded ? rec.accepted_at : pending.at,
+            commentUrl: pending.comment_url,
+            entryUrl: recorded ? entryUrl(env, session.id, commit) : null,
+          });
+        }
+        // The acceptance comment was edited or deleted, so the recorder will refuse it: say so and let the signer sign again.
+        notice = alertCard(st0.edited);
       }
-      // The acceptance comment was edited or deleted, so the recorder will refuse it: say so and let the signer sign again.
       const rest: Session = { ...session };
       delete rest.pending;
       replaced.push(await sessionCookie(keys, rest));
-      notice = alertCard(st0.edited);
     }
     const s = await signerStatus(bot, config, t, session);
     const who = whoRow(lang, session, t, logoutCsrf);
@@ -367,11 +432,11 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       case "not_author":
         return page(statusBody(lang, t, st0.nothingTitle, st0.notAuthor(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "must_sign": {
-        if (signing.on && session.token && session.for === `${t.repo}#${t.pr}`) {
-          const body = await acceptBody(lang, env, session, t, keys, signing.setSha256, false);
+        if (signing.on && tokenFor(session, t, signing)) {
+          const body = await acceptBody(lang, env, session, t, keys, signing, false);
           return page(notice ? body.replace(`${where(S[lang].accept.where)}\n`, `${where(S[lang].accept.where)}\n${notice}\n`) : body, { title: signTitle(lang, t, "accept"), lang, path: t.path });
         }
-        return page(startBody(lang, t, s.a, signing.on, { again: true, notice, who }), { title: signTitle(lang, t, "start"), lang, path: t.path });
+        return page(startBody(lang, t, s.a, signing, { again: true, notice, who }), { title: signTitle(lang, t, "start"), lang, path: t.path });
       }
     }
   });
@@ -405,22 +470,26 @@ export async function login(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   const st = await guard(lang, () => servedTarget(bot, ret));
   if (st instanceof Response) return st;
   if (!st || st.t.path !== ret) return messagePage(lang, 400, "badLink");
+  // The app asked is the one the current version signs in with: kleidos-cla for version 1, the identity-only app for a sign-in version.
+  const signing = await signingState(st.config, env);
+  if (!signing.on || !signing.app) return messagePage(lang, 503, "paused", { href: `${st.t.path}?lang=${lang}`, label: BACK.sign[lang] });
   const t: { state: string; verifier: string } = { state: randomB64url(32), verifier: randomB64url(32) };
   const authorize = new URL(`${WEB}/login/oauth/authorize`);
-  authorize.searchParams.set("client_id", env.CLIENT_ID);
+  authorize.searchParams.set("client_id", signing.app.clientId);
   authorize.searchParams.set("redirect_uri", `${env.PUBLIC_ORIGIN}/auth/callback`);
   authorize.searchParams.set("state", t.state);
   authorize.searchParams.set("code_challenge", await pkceChallenge(t.verifier));
   authorize.searchParams.set("code_challenge_method", "S256");
   authorize.searchParams.set("allow_signup", "false");
   if (url.searchParams.get("switch") === "1") authorize.searchParams.set("prompt", "select_account");
-  const cookie = await transactionCookie(keys, { v: 1, state: t.state, verifier: t.verifier, return: st.t.path, lang, exp: nowSeconds() + OAUTH_TTL });
+  const cookie = await transactionCookie(keys, { v: 1, state: t.state, verifier: t.verifier, return: st.t.path, lang, app: signing.app.kind, exp: nowSeconds() + OAUTH_TTL });
   return redirect(authorize.toString(), 302, [cookie]);
 }
 
-async function revokeGrant(env: ConfiguredEnv, bot: Bot, token: string): Promise<void> {
+async function revokeGrant(bot: Bot, app: OAuthApp | null, token: string): Promise<void> {
+  if (!app) return;
   try {
-    await bot.gh.request("DELETE", `/applications/${env.CLIENT_ID}/grant`, { basic: [env.CLIENT_ID, env.CLIENT_SECRET] }, { access_token: token });
+    await bot.gh.request("DELETE", `/applications/${app.clientId}/grant`, { basic: [app.clientId, app.clientSecret] }, { access_token: token });
   } catch (e) {
     log("grant revocation failed", { status: e instanceof GitHubError ? e.status : 0 });
   }
@@ -447,14 +516,20 @@ export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys:
   const r = await guard(lang, async () => {
     const st = await servedTarget(bot, tx.return);
     if (!st) return messagePage(lang, 400, "badLink", undefined, [clear]);
+    // The code was issued to the app the transaction names, and is exchanged with that app's own secret.
+    const app = (tx.app ?? "bot") === "signin" ? signinApp(env, st.config.signin_client_id) : botApp(env);
+    if (!app) return messagePage(lang, 503, "paused", back, [clear]);
     const repoToken = await bot.gh.token([st.t.repo], { pull_requests: "read", contents: "read" });
     const repo = (await bot.gh.request<{ id: number; private: boolean }>("GET", `/repos/${st.t.repo}`, { token: repoToken })).data;
     if (repo.private) return messagePage(lang, 404, "noTarget", undefined, [clear]);
+    // kleidos-cla's token is narrowed to the one repository it may comment on; the sign-in app has no permission to narrow.
+    const exchangeBody = { client_id: app.clientId, client_secret: app.clientSecret, code, redirect_uri: `${env.PUBLIC_ORIGIN}/auth/callback`, code_verifier: tx.verifier, ...(app.kind === "bot" ? { repository_id: repo.id } : {}) };
     const exchange = await fetch(`${WEB}/login/oauth/access_token`, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "user-agent": "kleidos-cla" },
-      body: JSON.stringify({ client_id: env.CLIENT_ID, client_secret: env.CLIENT_SECRET, code, redirect_uri: `${env.PUBLIC_ORIGIN}/auth/callback`, code_verifier: tx.verifier, repository_id: repo.id }),
+      body: JSON.stringify(exchangeBody),
     });
+    // The refresh token a GitHub App returns is never read or kept: the access token lives at most as long as the session.
     const body = (await exchange.json().catch(() => ({}))) as { access_token?: string; error?: string };
     if (!exchange.ok || !body.access_token || body.error) {
       log("oauth exchange refused", { status: exchange.status, reason: typeof body.error === "string" ? body.error.slice(0, 40) : "none" });
@@ -463,13 +538,13 @@ export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys:
     const token = body.access_token;
     const user = (await bot.gh.request<{ id: number; login: string; type: string }>("GET", "/user", { token })).data;
     if (!isLogin(user.login) || typeof user.id !== "number") {
-      await revokeGrant(env, bot, token);
+      await revokeGrant(bot, app, token);
       return messagePage(lang, 400, "oauthUser", undefined, [clear]);
     }
     const s = await signerStatus(bot, st.config, st.t, user);
     const keep = s.status === "must_sign";
-    if (!keep) await revokeGrant(env, bot, token);
-    const session: Session = { v: 1, sid: randomB64url(16), id: user.id, login: user.login, type: user.type, exp: nowSeconds() + SESSION_TTL, ...(keep ? { token, for: `${st.t.repo}#${st.t.pr}` } : {}) };
+    if (!keep) await revokeGrant(bot, app, token);
+    const session: Session = { v: 1, sid: randomB64url(16), id: user.id, login: user.login, type: user.type, exp: nowSeconds() + SESSION_TTL, ...(keep ? { token, app: app.kind, for: `${st.t.repo}#${st.t.pr}` } : {}) };
     log("signed in", { repo: st.t.repo, pr: st.t.pr, outcome: s.status });
     return redirect(`${st.t.path}?lang=${lang}`, 303, [clear, await sessionCookie(keys, session)]);
   });
@@ -502,11 +577,11 @@ export async function logout(req: Request, env: ConfiguredEnv, bot: Bot, keys: K
   const session = await readSession(req, keys);
   if (!form || !session) return redirect(`/agreement?lang=${lang}`, 303, [clearCookie(SESSION_COOKIE)]);
   if (!(await csrfVerify(keys.csrf, [session.sid, "logout"], form.get("csrf") ?? ""))) return messagePage(lang, 403, "refusedStale");
-  if (session.token) await revokeGrant(env, bot, session.token);
+  if (session.token) await revokeGrant(bot, sessionApp(env, session.app), session.token);
   return redirect(`/agreement?lang=${lang}`, 303, [clearCookie(SESSION_COOKIE)]);
 }
 
-/** Design 6.3: the signature. Stops at the first failure with nothing posted. */
+/** Design 6.3: the signature. Stops at the first failure with nothing posted or recorded. */
 export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys): Promise<Response> {
   if (!sameOrigin(req, env)) return messagePage(pickLang(req, new URL(req.url)), 403, "refusedOrigin");
   const form = await readForm(req);
@@ -523,26 +598,17 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
     log("agree refused", { reason: "csrf" });
     return messagePage(lang, 403, "csrf", back);
   }
-  const tokenHere = Boolean(session.token) && session.for === `${t.repo}#${t.pr}`;
-  if (form.get("accept") !== "yes") {
-    if (!tokenHere) return messagePage(lang, 401, "signInAgain", back);
-    // The box was not ticked: the same page again, with the error beside the box and nothing posted.
-    const r = await guard(lang, async () => {
-      const config = await bot.registry.config();
-      if (!config.served_repositories[t.repo]) return messagePage(lang, 404, "notServed");
-      const signing = await signingState(config);
-      if (!signing.on) return messagePage(lang, 503, "paused");
-      return acceptPage(lang, env, session, t, keys, signing.setSha256, true);
-    });
-    return r;
-  }
-  if (!tokenHere) return messagePage(lang, 401, "signInAgain", back);
+  if (!session.token || session.for !== `${t.repo}#${t.pr}`) return messagePage(lang, 401, "signInAgain", back);
   const r = await guard(lang, async () => {
     const config = await bot.registry.config();
     if (!config.served_repositories[t.repo]) return messagePage(lang, 404, "notServed");
-    const signing = await signingState(config);
+    const signing = await signingState(config, env);
     if (!signing.on) return messagePage(lang, 503, "paused");
-    if (version !== AGREEMENT_VERSION || form.get("set_sha256") !== signing.setSha256) return messagePage(lang, 409, "changed", back);
+    // A token of the other app (the current version changed flow since the sign-in) cannot take this acceptance.
+    if (!tokenFor(session, t, signing)) return messagePage(lang, 401, "signInAgain", back);
+    // The box was not ticked: the same page again, with the error beside the box and nothing posted.
+    if (form.get("accept") !== "yes") return acceptPage(lang, env, session, t, keys, signing, true);
+    if (version !== signing.version || form.get("set_sha256") !== signing.setSha256) return messagePage(lang, 409, "changed", back);
     if (!(await env.RL_AGREE_IP.limit({ key: clientIp(req) })).success || !(await env.RL_AGREE_ACCOUNT.limit({ key: String(session.id) })).success) {
       return messagePage(lang, 429, "tooManyAgree");
     }
@@ -559,6 +625,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
       const [status, key] = s.status in why ? why[s.status as keyof typeof why] : ([403, "postedNotNeeded"] as const);
       return messagePage(lang, status, key, back);
     }
+    if (signing.flow === "signin") return agreeBySignin(lang, env, bot, keys, session, t, signing, back);
     const confirm = async (c: { id: number; html_url: string; created_at: string }, queue: boolean): Promise<Response> => {
       const next: Session = { v: 1, sid: session.sid, id: session.id, login: session.login, type: session.type, exp: session.exp, pending: { repo: t.repo, pr: t.pr, comment_id: c.id, comment_url: c.html_url, at: c.created_at } };
       if (queue) {
@@ -574,10 +641,10 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
     const already = (assessed: Assessment) => assessed.acceptances.find((x) => x.account === session.id && !x.edited);
     const earlier = already(s.a);
     if (earlier) {
-      await revokeGrant(env, bot, must(session.token));
+      await revokeGrant(bot, signing.app, must(session.token));
       return confirm({ id: earlier.commentId, html_url: earlier.commentUrl, created_at: earlier.createdAt }, false);
     }
-    const sentence = sentenceFor(AGREEMENT_VERSION, signing.setSha256);
+    const sentence = sentenceFor(signing.version, signing.setSha256);
     let posted: { id: number; html_url: string; created_at: string };
     try {
       posted = (await bot.gh.request<{ id: number; html_url: string; created_at: string }>("POST", `/repos/${t.repo}/issues/${t.pr}/comments`, { token: must(session.token) }, { body: sentence })).data;
@@ -591,11 +658,39 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
       }
       throw e;
     }
-    await revokeGrant(env, bot, must(session.token));
+    await revokeGrant(bot, signing.app, must(session.token));
     log("signed", { repo: t.repo, pr: t.pr });
     return confirm(posted, true);
   });
   return r;
+}
+
+/**
+ * The signature of a "signin" version: nothing is posted anywhere. The
+ * Worker hands the account it read and the signer's own token to
+ * record.yml, which asks GitHub whose token it is before it records
+ * anything and then deletes the grant, so a Worker that lies can record
+ * nobody but the account signing in at that moment. The session forgets
+ * the token at once: a reload or a second click cannot hand it over again.
+ */
+async function agreeBySignin(lang: Lang, env: ConfiguredEnv, bot: Bot, keys: Keys, session: Session, t: Target, signing: Signing, back: { href: string; label: string }): Promise<Response> {
+  const token = must(session.token);
+  try {
+    await bot.registry.dispatchSignin({ repo: t.repo, pr: t.pr, github_id: session.id, version: signing.version, lang, site_commit: env.BUILD_COMMIT, signin_token: token });
+  } catch (e) {
+    log("signin dispatch failed", { repo: t.repo, pr: t.pr, status: e instanceof GitHubError ? e.status : 0 });
+    await revokeGrant(bot, signing.app, token);
+    return messagePage(lang, 503, "recorderUnreachable", back, [clearCookie(SESSION_COOKIE)]);
+  }
+  const at = new Date().toISOString().slice(0, 19) + "Z";
+  const next: Session = { v: 1, sid: session.sid, id: session.id, login: session.login, type: session.type, exp: session.exp, pending: { signin: true, repo: t.repo, pr: t.pr, version: signing.version, at } };
+  try {
+    await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr, await_signin: session.id });
+  } catch {
+    log("enqueue failed", { repo: t.repo, pr: t.pr });
+  }
+  log("signed", { repo: t.repo, pr: t.pr, outcome: "handed_to_recorder" });
+  return redirect(`${t.path}?lang=${lang}`, 303, [await sessionCookie(keys, next)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -605,25 +700,25 @@ function notConfiguredBox(lang: Lang, configured: boolean): string {
   return configured ? "" : `<div class="card" role="status"><p><strong>${escapeHtml(S[lang].notConfigured)}</strong></p></div>\n`;
 }
 
-export async function agreementPage(kind: "individual" | "entity", lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, configured: boolean): Promise<Response> {
+export async function agreementPage(kind: "individual" | "entity", lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, configured: boolean, version: number): Promise<Response> {
   const t = S[lang];
   const g = t.agreement;
   const entity = kind === "entity";
-  const texts = agreementTexts(lang, kind, "");
+  const texts = agreementTexts(lang, kind, "", version);
   const spanish = lang === "es";
   const summaryEs = spanish
-    ? `<details class="fold"><summary><span>${g.partSummary}<small>${g.partSummarySub}</small></span></summary><div class="fold-body"><div class="prose">${rendered(must(FILES["summary.es.md"]), "re").html}</div></div></details>`
+    ? `<details class="fold"><summary><span>${g.partSummary}<small>${g.partSummarySub}</small></span></summary><div class="fold-body"><div class="prose">${rendered(must(filesOf(version)["summary.es.md"]), "re").html}</div></div></details>`
     : "";
   const banner = g.banner ? `<div class="banner">${g.banner}</div>` : "";
   const intro = entity ? `<div class="card"><p>${g.entityNote}</p></div>${g.entityOnlyEnglish ? `\n<p class="note">${g.entityOnlyEnglish}</p>` : ""}` : `<p class="note">${g.how} ${g.entity}</p>`;
   const labels: [string, string] = entity && spanish ? ["Contributor Agreement (English)", g.partB] : [g.partA, g.partB];
-  const body = `<div class="progress"><p class="eyebrow">${g.eyebrow}</p></div>
+  const body = `<div class="progress"><p class="eyebrow">${g.eyebrow(version)}</p></div>
 <h1 class="h-page">${entity ? g.entityH1 : g.h1}</h1>
 ${notConfiguredBox(lang, configured)}${banner}
 <p class="lede">${g.lede}</p>
 ${summaryList(lang)}
 ${summaryEs}
-${await metaLine(lang, env, kind)}
+${await metaLine(lang, env, version, kind)}
 ${intro}
 ${toc(t, texts.parts, labels)}
 ${texts.html}`;

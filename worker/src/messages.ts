@@ -6,7 +6,7 @@
  * only causes a recomputation.
  */
 export type QueueMessage =
-  | { kind: "evaluate"; repo: string; pr: number; record_comment?: number; attempt?: number }
+  | { kind: "evaluate"; repo: string; pr: number; record_comment?: number; await_signin?: number; attempt?: number }
   | { kind: "release"; repo: string; pr: number; sha: string; attempt?: number }
   | { kind: "held"; repo: string; sha: string }
   | { kind: "coverage"; repo: string; pr: number }
@@ -29,7 +29,15 @@ export function parseMessage(body: unknown): QueueMessage | null {
     case "evaluate":
       if (typeof b.repo !== "string" || !REPO.test(b.repo) || !posInt(b.pr)) return null;
       if (b.record_comment !== undefined && !posInt(b.record_comment)) return null;
-      return { kind: "evaluate", repo: b.repo, pr: b.pr, ...(b.record_comment ? { record_comment: b.record_comment } : {}), ...(attempt !== undefined ? { attempt } : {}) };
+      if (b.await_signin !== undefined && !posInt(b.await_signin)) return null;
+      return {
+        kind: "evaluate",
+        repo: b.repo,
+        pr: b.pr,
+        ...(b.record_comment ? { record_comment: b.record_comment } : {}),
+        ...(b.await_signin ? { await_signin: b.await_signin } : {}),
+        ...(attempt !== undefined ? { attempt } : {}),
+      };
     case "release":
       if (typeof b.repo !== "string" || !REPO.test(b.repo) || !posInt(b.pr) || typeof b.sha !== "string" || !SHA.test(b.sha)) return null;
       return { kind: "release", repo: b.repo, pr: b.pr, sha: b.sha, ...(attempt !== undefined ? { attempt } : {}) };

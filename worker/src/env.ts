@@ -20,6 +20,15 @@ export interface Env {
   CLIENT_SECRET?: string;
   WEBHOOK_SECRET?: string;
   SESSION_KEY?: string;
+  /**
+   * The identity-only sign-in app (a GitHub App with no permission at all),
+   * set by scripts/create-signin-app.ts. Until both exist, and the client id
+   * is the one registry/config.json names, a version whose flow is
+   * "signin" cannot be signed on the site, and a "comment" version is
+   * signed through kleidos-cla as before.
+   */
+  SIGNIN_CLIENT_ID?: string;
+  SIGNIN_CLIENT_SECRET?: string;
 }
 
 /** The Env once every secret is present. */
@@ -43,6 +52,29 @@ function parseAllowlist(raw: string | undefined): Set<number> {
       .map(Number)
       .filter((n) => Number.isSafeInteger(n)),
   );
+}
+
+/** The OAuth credentials of one of the two apps a signer can sign in with. */
+export interface OAuthApp {
+  kind: "bot" | "signin";
+  clientId: string;
+  clientSecret: string;
+}
+
+/** The bot's own app, kleidos-cla: the sign-in of a version whose flow is "comment" (version 1). */
+export function botApp(env: ConfiguredEnv): OAuthApp {
+  return { kind: "bot", clientId: env.CLIENT_ID, clientSecret: env.CLIENT_SECRET };
+}
+
+/**
+ * The identity-only sign-in app, when its two secrets exist and the client
+ * id is the one the register names (`signin_client_id`); null otherwise.
+ * The register's naming it is the switch: the recorder accepts no token
+ * of any other app.
+ */
+export function signinApp(env: Env, configured: string | null | undefined): OAuthApp | null {
+  if (!env.SIGNIN_CLIENT_ID || !env.SIGNIN_CLIENT_SECRET || typeof configured !== "string" || configured !== env.SIGNIN_CLIENT_ID) return null;
+  return { kind: "signin", clientId: env.SIGNIN_CLIENT_ID, clientSecret: env.SIGNIN_CLIENT_SECRET };
 }
 
 /** The accounts the app may be installed on. Throws on an empty list: nothing is ever removed in that state. */

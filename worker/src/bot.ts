@@ -158,6 +158,8 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     const chosen = byAccount.get(acc.account);
     if (!chosen || (acc.commentId === msg.record_comment && chosen.commentId !== msg.record_comment)) byAccount.set(acc.account, acc);
   }
+  // A sign-in handed to the recorder posts no comment: the account the sign page named is waited for until its record shows.
+  if (msg.await_signin && a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
   for (const acc of byAccount.values()) {
     // Only a first look dispatches: the delayed re-checks that follow it just watch for the record.
     const asked = msg.record_comment === acc.commentId || now - Date.parse(acc.createdAt) > RECORD_AFTER_MS;
@@ -175,7 +177,11 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     await send(bot.env, { kind: "release", repo: msg.repo, pr: msg.pr, sha: a.pr.head.sha });
   }
   if (!clear && pendingRecord && attempt < RECORD_DELAYS.length) {
-    await send(bot.env, { kind: "evaluate", repo: msg.repo, pr: msg.pr, attempt: attempt + 1, ...(msg.record_comment ? { record_comment: msg.record_comment } : {}) }, RECORD_DELAYS[attempt]);
+    await send(
+      bot.env,
+      { kind: "evaluate", repo: msg.repo, pr: msg.pr, attempt: attempt + 1, ...(msg.record_comment ? { record_comment: msg.record_comment } : {}), ...(msg.await_signin ? { await_signin: msg.await_signin } : {}) },
+      RECORD_DELAYS[attempt],
+    );
   }
   log("evaluated", { repo: msg.repo, pr: msg.pr, outcome: clear ? "success" : "action_required", count: a.missing.length, attempt });
 }
