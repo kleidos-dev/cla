@@ -1,8 +1,8 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "1.0.0",
-  "commit": "fe956cffe83955b1f17a4121b906979dc9f8df6b",
+  "version": "1.1.0",
+  "commit": "76ecdbbacb7c3ed96a1ec42b65044e9557c42743",
   "profiles": [
     "base",
     "python",
@@ -14,7 +14,7 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "027897087191c703dd0b96d0aa9a18b56f40708a6e458d75ad1d4758ac2b295c"
+      "sha256": "1d0c76cf0cac264e4ac349ee1cd586cf409b447d1a423330ae4ed29b8662adbf"
     },
     {
       "path": ".github/quality/md_nowrap.py",
@@ -40,6 +40,11 @@
       "path": ".github/quality/ruff.toml",
       "source_path": "quality/ruff/ruff.toml",
       "sha256": "1ca922f05fcf936c03aaf041168ff49c91fb958d47b9f35c08402e4983d7a942"
+    },
+    {
+      "path": ".github/quality/mypy_groups.py",
+      "source_path": "quality/mypy_groups.py",
+      "sha256": "258580727e03fd65fec16936e265b76cc8e078828ee8787c488d156810bff2ca"
     },
     {
       "path": ".github/zizmor.yml",
@@ -68,7 +73,7 @@
       "id": "pre-commit-python",
       "path": ".pre-commit-config.yaml",
       "source_path": ".pre-commit-config.yaml",
-      "sha256": "6150b5d2abb97e60b284fa4109efb8c423876fb80a699e9bbaaa48aeb2bac211"
+      "sha256": "25558bb55d26e33e5abe79a4a96d1740fb783a8cc178029598830be755ab37bf"
     },
     {
       "id": "pre-commit-actions",
