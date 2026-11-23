@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# A review of every pull request is requested from the maintainers on its
+# own: a contributor does not need to mention or assign anyone.
+* @kleidos-dev/maintainers
+
+# This file itself: who reviews is the maintainers' decision.
+/.github/CODEOWNERS @kleidos-dev/maintainers
