@@ -31,6 +31,22 @@ describe("the policy", () => {
   });
 });
 
+describe("the edge", () => {
+  it("may not rewrite any response: every page, redirect and asset says no-transform", async () => {
+    const w = await world();
+    const { path } = await setup(w);
+    const b = new Browser(w, alice);
+    const css = /href="(\/assets\/cla\.[0-9a-f]+\.css)"/.exec(await (await b.get("/agreement")).text())![1]!;
+    for (const p of [path, `${path}?lang=es`, "/agreement", "/agreement?lang=es", "/agreement/entity", "/privacy", "/privacy?lang=es", "/agreement/es", css, "/assets/mark.svg", "/assets/fonts/kleidos-mono.woff2", "/button/v1/needed-0-1.svg", "/healthz"]) {
+      const r = await b.get(p);
+      expect(r.headers.get("cache-control"), p).toMatch(/(^|, )no-transform$/);
+    }
+    await b.signIn(path);
+    const r = await b.get(path);
+    expect(r.headers.get("cache-control")).toMatch(/no-transform/);
+  });
+});
+
 describe("the comment's button", () => {
   it("each state has its own immutable URL, and the comment moves to the new one when the state changes", async () => {
     const w = await world();
@@ -60,7 +76,7 @@ describe("the comment's button", () => {
       const r = await b.get(p);
       expect(r.status, p).toBe(200);
       expect(r.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
-      expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable, no-transform");
       expect(r.headers.get("content-security-policy")).toBe(CSP);
       expect(r.headers.get("x-content-type-options")).toBe("nosniff");
       const svg = await r.text();

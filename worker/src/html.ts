@@ -30,11 +30,15 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 export type Cache = "no-store" | "public" | "immutable";
 
+// Every value carries no-transform: without it Cloudflare's edge rewrites
+// the HTML on its way out (the zone's Web Analytics injects its beacon
+// script, which the CSP then blocks on every page, and the privacy notice
+// says there are no analytics here).
 const CACHE: Record<Cache, string> = {
-  "no-store": "no-store",
-  public: "public, max-age=300",
+  "no-store": "no-store, no-transform",
+  public: "public, max-age=300, no-transform",
   // A URL whose content never changes: the hashed stylesheet and the button images.
-  immutable: "public, max-age=31536000, immutable",
+  immutable: "public, max-age=31536000, immutable, no-transform",
 };
 
 let cssHash: Promise<string> | null = null;
