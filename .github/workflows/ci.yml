@@ -6,8 +6,8 @@
 #
 #   🧹 Lint ───────┬─ 🔎 Types (mypy)
 #   ⚖️ Licensing ──┼─ 🔎 ESLint and tsc
-#                  ├─ 🐍 Register tests
-#                  ├─ 🧪 Worker tests
+#                  ├─ 🐍 Register tests ─┬─ 📦 Coverage reports ── 📊 SonarCloud
+#                  ├─ 🧪 Worker tests ───┘
 #                  ├─ 🔑 App setup script test
 #                  ├─ 🛡️ Dependency vulnerabilities (OSV)
 #                  └─ 🔐 Secrets and MAC scan (gitleaks)
@@ -18,8 +18,9 @@
 # every pre-commit hook, the agreement digests among them. The Worker's
 # vitest run and the setup script's test are this repository's own.
 #
-# No job here holds a secret or writes anything: pull requests from forks
-# run with the read-only token like everyone else's.
+# No job here holds a secret or writes to the repository: pull requests from
+# forks run with the read-only token like everyone else's, and the SonarCloud
+# job's short-lived token comes from its own OIDC token, which a fork has not.
 name: CI
 
 on:
@@ -77,9 +78,11 @@ jobs:
     needs: [lint, reuse]
     uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d # quality-v2.3.0
     with:
-      install: ""
-      run: python -m unittest discover -s registry/tests -v
-      coverage-report: ""
+      install: python -m pip install --require-hashes -r requirements.txt
+      run: >-
+        python -m coverage run -m unittest discover -s registry/tests -v
+        && python -m coverage xml
+      coverage-artifact: coverage-register
     permissions:
       contents: read
 
@@ -115,7 +118,14 @@ jobs:
         run: npm ci
       - name: Vitest in the Workers runtime, GitHub mocked
         working-directory: worker
-        run: npm test
+        run: npm run test:coverage
+      - name: Hand the coverage report to the SonarCloud job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-worker
+          path: worker/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 1
 
   script:
     name: "🔑 App setup script test"
@@ -131,3 +141,31 @@ jobs:
           node-version: 26
       - name: create-github-app.ts end to end, against a mocked GitHub and a fake wrangler
         run: node --test scripts/test/
+
+  # The two reports in the one artifact the SonarCloud job reads.
+  coverage:
+    name: "📦 Coverage reports"
+    needs: [register, worker]
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/upload-artifact/merge@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          pattern: coverage-*
+          retention-days: 1
+
+  # Secretless: the job's GitHub OIDC token is exchanged for a SonarQube
+  # Cloud token that lasts 30 minutes and can analyze this one project (no
+  # SONAR_TOKEN secret exists); a pull request from a fork ends green with a
+  # notice. Mandatory: a refused exchange, a scanner error or an analysis
+  # the server refuses is a red job.
+  sonarcloud:
+    name: "📊 SonarCloud"
+    needs: [coverage]
+    if: github.event_name != 'schedule'
+    uses: kleidos-dev/.github/.github/workflows/reusable-sonarcloud.yml@f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d # quality-v2.3.0
+    permissions:
+      contents: read
+      id-token: write

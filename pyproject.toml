@@ -10,6 +10,13 @@
 extend = ".github/quality/ruff.toml"
 target-version = "py315"
 
+[tool.coverage.run]
+# Relative paths, which SonarCloud needs on GitHub Actions; branches as well
+# as lines.
+relative_files = true
+branch = true
+include = ["registry/cla.py"]
+
 [tool.mypy]
 # >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
 strict = true

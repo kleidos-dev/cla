@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ../scripts/tsconfig.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && git verify-commit HEAD && git fetch --quiet origin main && git merge-base --is-ancestor HEAD origin/main && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
     "test:scripts": "node --test ../scripts/test/"
   },
@@ -22,6 +23,7 @@
     "@eslint/js": "10.0.1",
     "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
+    "@vitest/coverage-istanbul": "5.1.1",
     "eslint": "10.15.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.73.0",
