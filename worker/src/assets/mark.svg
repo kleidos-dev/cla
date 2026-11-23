@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -50 100 100" width="100" height="100"><!-- SPDX-FileCopyrightText: 2026 José M. Requena Plens --><!-- SPDX-License-Identifier: GPL-3.0-or-later --><!-- kleidos-dev/brand logo/svg/kleidos-mark.svg, metadata removed -->
+  <g class="mark">
+    <circle cx="0" cy="0" r="42" fill="none" stroke="#00D2FF" stroke-width="3"/>
+    <rect x="-14" y="-28" width="28" height="56" rx="14" fill="#0F3460"/>
+    <rect x="-14" y="-28" width="28" height="56" rx="14" fill="none" stroke="#00D2FF" stroke-width="2.5"/>
+    <circle cx="0" cy="-4" r="5" fill="#00D2FF"/>
+    <rect x="-1.5" y="-4" width="3" height="14" fill="#00D2FF"/>
+  </g>
+</svg>

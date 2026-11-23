@@ -190,12 +190,14 @@ describe("texts", () => {
     const pr = openPr(w, alice, { repo: REGISTRY });
     await opened(w, pr);
     const needed = w.gh.botComments(REGISTRY, pr.number)[0]!.body;
-    expect(needed).toContain("and a maintainer starts the checks.");
+    expect(needed).toContain("Sign it once and a maintainer starts the checks of this pull request");
+    expect(needed).toContain("una persona que mantiene el repositorio inicia las comprobaciones");
     expect(needed).not.toContain("start by themselves");
     await w.gh.signDirectly(alice);
     await opened(w, pr, "reopened");
     const accepted = w.gh.botComments(REGISTRY, pr.number)[0]!.body;
-    expect(accepted).toContain("### 📝 Contributor Agreement accepted");
+    expect(accepted).toContain("**Contributor Agreement signed.**");
+    expect(accepted).toContain("a maintainer starts its checks");
     expect(accepted).toContain("started by a maintainer, not automatically");
     expect(accepted).not.toContain("run by themselves");
     expect(w.gh.check(REGISTRY, pr.head.sha)!.summary).toContain("started by a maintainer");
@@ -204,11 +206,19 @@ describe("texts", () => {
   it("the Spanish pages carry Spanish chrome, and English parts are marked", async () => {
     const w = await world();
     const b = new Browser(w, alice);
-    const html = await (await b.get("/agreement/es")).text();
+    const old = await b.get("/agreement/es");
+    expect(old.status).toBe(301);
+    expect(old.headers.get("location")).toBe("/agreement?lang=es");
+    expect((await b.get("/privacy/es")).headers.get("location")).toBe("/privacy?lang=es");
+    const res = await b.get("/agreement?lang=es");
+    expect(res.headers.get("content-language")).toBe("es");
+    const html = await res.text();
     expect(html).toContain('<html lang="es">');
     expect(html).toContain("Saltar al contenido");
-    expect(html).toContain(">Privacidad</a>");
-    expect(html).toContain('lang="en">Kleidos Contributor Agreement</a>');
+    expect(html).toContain('<a href="/privacy?lang=es">Aviso de privacidad</a>');
+    expect(html).toContain('lang="en">Kleidos Contributor Agreement (English)</a>');
+    expect(html).toContain("Solo el texto inglés obliga.");
+    expect(html).toContain('lang="en"><strong>Only the English text is binding.</strong>');
     expect(html).not.toContain(">Register and source<");
   });
 
@@ -247,8 +257,8 @@ describe("signing", () => {
       const res = await b.get(path);
       const html = await res.text();
       expect(html, how).toContain("was edited or deleted, so it cannot be recorded");
-      expect(html, how).toContain("Sign in with GitHub again to accept");
-      expect(html, how).not.toContain("You accepted the Kleidos Contributor Agreement.");
+      expect(html, how).toContain("Sign in with GitHub again to sign");
+      expect(html, how).not.toContain("You accepted the Kleidos Contributor Agreement on ");
       // The pending acceptance is gone from the cookie: the next visit is the ordinary sign page.
       expect(await (await b.get(path)).text(), how).not.toContain("was edited or deleted");
     }
@@ -263,9 +273,9 @@ describe("signing", () => {
     b.jar.set("__Host-cla", cookie);
     const again = await b.post("/agree", { ...form, accept: "yes" });
     expect(again.status).toBe(303);
-    expect(again.headers.get("location")).toBe(path);
+    expect(again.headers.get("location")).toBe(`${path}?lang=en`);
     expect(w.gh.comments.filter((c) => c.pr === pr.number && c.user.id === alice.id)).toHaveLength(1);
-    expect(await (await b.get(path)).text()).toContain("You accepted the Kleidos Contributor Agreement.");
+    expect(await (await b.get(path)).text()).toContain("You accepted the Kleidos Contributor Agreement on ");
   });
 
   it("a form body without Content-Length is still capped", async () => {

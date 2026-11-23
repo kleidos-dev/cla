@@ -110,7 +110,23 @@ describe("pages and hygiene", () => {
     const pr = openPr(w, { id: 123456, login: "alice", type: "User" });
     const b = new Browser(w, { id: 123456, login: "alice", type: "User" });
     const path = `/sign/${SANDBOX}/${pr.number}`;
-    const responses = [await b.get("/agreement"), await b.get("/agreement/entity"), await b.get("/agreement/es"), await b.get("/privacy"), await b.get("/privacy/es"), await b.get("/setup"), await b.get(path), await b.get("/sign/kleidos-dev/boards/1")];
+    const es = { "accept-language": "es-ES,es;q=0.9" };
+    const responses = [
+      await b.get("/agreement"),
+      await b.get("/agreement/entity"),
+      await b.get("/agreement/es"),
+      await b.get("/agreement?lang=es"),
+      await b.get("/agreement/entity?lang=es"),
+      await b.get("/privacy"),
+      await b.get("/privacy/es"),
+      await b.get("/privacy", es),
+      await b.get("/setup"),
+      await b.get(path),
+      await b.get(path, es),
+      await b.get("/sign/kleidos-dev/boards/1"),
+      await b.get("/button/v1/needed-0-2.svg"),
+      await b.get("/assets/mark.svg"),
+    ];
     const { callback } = await b.signIn(path);
     responses.push(callback, await b.get(path));
     for (const r of responses) {
@@ -132,7 +148,15 @@ describe("pages and hygiene", () => {
     const html = await (await b.get(path)).text();
     expect(html).not.toMatch(/<script|\son[a-z]+=|\sstyle=/i);
     expect(html).toContain('<html lang="en">');
-    expect(html).toContain('<p lang="es">');
+    expect(html).toContain(`<a href="${path}?lang=es" hreflang="es" lang="es">Español</a>`);
+    for (const r of responses) {
+      // Every response carries the policy, the SVG image included; HTML says its language and varies on it.
+      expect(r.headers.get("content-security-policy")).toBe(CSP);
+      if (r.headers.get("content-type")?.startsWith("text/html")) {
+        expect(r.headers.get("content-language")).toMatch(/^(en|es)$/);
+        expect(r.headers.get("vary")).toBe("Accept-Language");
+      }
+    }
   });
 
   it("public routes: downloads are the hashed bytes, unknown paths 404, wrong methods 405, the stylesheet is served", async () => {

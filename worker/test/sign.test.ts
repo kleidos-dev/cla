@@ -27,7 +27,7 @@ async function setup(w: World, opener: User = alice, extra: Partial<Parameters<t
 async function signedInPage(b: Browser, path: string) {
   const { callback } = await b.signIn(path);
   expect(callback.status).toBe(303);
-  expect(callback.headers.get("location")).toBe(path);
+  expect(callback.headers.get("location")).toBe(`${path}?lang=en`);
   const page = await b.get(path);
   return { page, html: await page.text() };
 }
@@ -43,10 +43,15 @@ describe("web signing", () => {
     const out = await b.get(path);
     expect(out.status).toBe(200);
     const outHtml = await out.text();
-    expect(outHtml).toContain("Sign in with GitHub to accept");
-    expect(outHtml).toContain("Individual Contributor Non-Exclusive License Agreement");
-    expect(outHtml).toContain("Kleidos Addendum to the Contributor Agreement (version 1)");
-    expect(outHtml).not.toContain('action="/agree"');
+    // Step 1: signing in is not signing, and no legal text is shown before it.
+    expect(outHtml).toContain("Step 1 of 2 · Sign in");
+    expect(outHtml).toContain("<strong>Nothing is signed yet.</strong>");
+    expect(outHtml).toContain(`<a class="btn btn-primary btn-block" href="/auth/login?return=${encodeURIComponent(path)}&amp;lang=en">Sign in with GitHub to sign</a>`);
+    expect(outHtml).toContain('<span class="eyebrow">Still to sign</span><span>@alice</span>');
+    expect(outHtml).not.toContain("Individual Contributor Non-Exclusive License Agreement");
+    expect(outHtml).not.toContain("Kleidos Addendum to the Contributor Agreement");
+    expect(outHtml).not.toContain(SENTENCE.replaceAll("'", "&#39;"));
+    expect(outHtml).not.toContain('action="/agree'); 
 
     const { authorize, callback } = await b.signIn(path);
     expect(authorize.origin + authorize.pathname).toBe("https://github.com/login/oauth/authorize");
@@ -58,15 +63,24 @@ describe("web signing", () => {
 
     const page = await b.get(path);
     const html = await page.text();
-    expect(html).toContain("Signed in as <strong>@alice</strong> (GitHub account id 123456)");
-    expect(html).toContain('action="/agree"');
-    expect(html).toContain(SENTENCE.replaceAll("'", "&#39;"));
+    // Step 2: the summary, the box and the button first, the full text in a fold after them.
+    expect(html).toContain("Step 2 of 2 · Accept");
+    expect(html).toContain("<strong>Not signed yet:</strong> you sign with the button below.");
+    expect(html).toContain("Signed in as <strong>@alice</strong>");
+    expect(html).toContain('action="/agree#accept" novalidate>');
+    expect(html).not.toMatch(/\srequired[\s>]/);
+    expect(html).toContain('<label for="accept-box" lang="en">' + SENTENCE.replaceAll("'", "&#39;") + "</label>");
+    const button = html.indexOf(">I agree and sign</button>");
+    expect(button).toBeGreaterThan(0);
+    expect(html.indexOf('<details class="fold" id="text">')).toBeGreaterThan(button);
+    expect(html.indexOf("Individual Contributor Non-Exclusive License Agreement")).toBeGreaterThan(button);
+    expect(html).toContain("Kleidos Addendum to the Contributor Agreement (version 1)");
     const form = Browser.form(html);
     expect(form.set_sha256).toBe(CONFIG.versions["1"].set_sha256);
 
     const agreed = await b.post("/agree", { ...form, accept: "yes" });
     expect(agreed.status).toBe(303);
-    expect(agreed.headers.get("location")).toBe(path);
+    expect(agreed.headers.get("location")).toBe(`${path}?lang=en`);
     const acceptance = w.gh.comments.find((c) => c.repo === SANDBOX && c.pr === pr.number && c.user.id === alice.id)!;
     expect(acceptance.body).toBe(SENTENCE);
     expect(acceptance.via_app).toBe(true);
@@ -78,8 +92,9 @@ describe("web signing", () => {
     const pending = await b.get(path);
     expect(pending.headers.get("refresh")).toBeNull();
     const pendingHtml = await pending.text();
-    expect(pendingHtml).toContain("being recorded");
-    expect(pendingHtml).toContain(`<a href="${path}">Check again</a>`);
+    expect(pendingHtml).toContain("Done · Signed");
+    expect(pendingHtml).toContain("<strong>Signed.</strong> Being recorded in the public register");
+    expect(pendingHtml).toContain(`<a href="${path}?lang=en">Check now</a>`);
 
     await drain(w, 1);
     expect(w.gh.dispatches).toEqual([{ kind: "sign", repo: SANDBOX, pr: String(pr.number), comment_id: String(acceptance.id) }]);
@@ -89,13 +104,17 @@ describe("web signing", () => {
     expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
     const bot = w.gh.botComments(SANDBOX, pr.number);
     expect(bot).toHaveLength(1);
-    expect(bot[0]!.body).toContain("### 📝 Contributor Agreement accepted");
+    expect(bot[0]!.body).toContain("**Contributor Agreement signed.**");
+    expect(bot[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v1/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     expect(bot[0]!.body).toContain(`/blob/${w.gh.recordCommits.get(alice.id)}/signatures/individual/123456.json`);
     expect(run.approved).toBe(true);
 
     const done = await b.get(path);
     expect(done.headers.get("refresh")).toBeNull();
-    expect(await done.text()).toContain("signatures/individual/123456.json</a>");
+    const doneHtml = await done.text();
+    expect(doneHtml).toContain("signatures/individual/123456.json</a>");
+    expect(doneHtml).toContain('<p class="status is-done">Recorded</p>');
+    expect(doneHtml).toContain(`>Back to the pull request</a>`);
   });
 
   it("a later pull request of a signer is green from the first event, with no comment", async () => {
@@ -301,7 +320,7 @@ describe("web signing", () => {
     const before = w.gh.revokedGrants.length;
     const r = await a.post("/auth/logout", { csrf });
     expect(r.status).toBe(303);
-    expect(r.headers.get("location")).toBe("/agreement");
+    expect(r.headers.get("location")).toBe("/agreement?lang=en");
     expect(a.jar.has("__Host-cla")).toBe(false);
     expect(w.gh.revokedGrants.length).toBeGreaterThan(before);
   });
@@ -315,7 +334,7 @@ describe("web signing", () => {
     expect((await a.get(`/sign/${SANDBOX}/1`)).status).toBe(503);
     expect((await a.get(`/auth/login?return=/sign/${SANDBOX}/1`)).status).toBe(503);
     expect(await (await a.get("/agreement")).text()).toContain("The CLA bot is not configured yet");
-    expect(await (await a.get("/agreement/es")).text()).toContain("El bot del CLA aún no está configurado");
+    expect(await (await a.get("/agreement?lang=es")).text()).toContain("El bot del CLA aún no está configurado");
     const hook = await handleFetch(new Request(`${ORIGIN}/webhook`, { method: "POST", headers: { "x-github-event": "ping", "x-github-delivery": "0123456789ab" }, body: "{}" }), w.env);
     expect(hook.status).toBe(401);
     expect(w.queue.sent).toHaveLength(0);
@@ -325,6 +344,6 @@ describe("web signing", () => {
     const w = await world();
     const a = new Browser(w, alice);
     expect(await (await a.get("/agreement")).text()).not.toContain("not configured yet");
-    expect(await (await a.get("/agreement/es")).text()).not.toContain("aún no está configurado");
+    expect(await (await a.get("/agreement?lang=es")).text()).not.toContain("aún no está configurado");
   });
 });

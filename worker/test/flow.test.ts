@@ -41,11 +41,16 @@ describe("evaluation", () => {
     expect(check.details_url).toBe(`https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number}`);
     expect(check.external_id).toMatch(new RegExp(`^\\d+#${pr.number}$`));
     const [comment] = w.gh.botComments(SANDBOX, pr.number);
-    expect(comment!.body.startsWith("<!-- kleidos-cla:v1 -->\n### 📝 Contributor Agreement needed before the checks run")).toBe(true);
-    expect(comment!.body).toContain("**Still to accept:** @alice");
-    expect(comment!.body).toContain(`[Read and sign the agreement →](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
-    expect(comment!.body).toContain("SHA-256 `89c1d46b9b1048508d9acdba113620b08a45c57d7e067ee41dd2b816a839a61e`");
-    expect(comment!.body).toContain("**Your data.**");
+    expect(comment!.body.startsWith("<!-- kleidos-cla:v1 -->\n**Contributor Agreement needed.** ")).toBe(true);
+    expect(comment!.body).toContain("Still to sign: @alice.");
+    expect(comment!.body).toContain("<sub>Firma una vez el Acuerdo de Contribución y arrancan las comprobaciones. Falta firmar: @alice.</sub>");
+    // The button: its image URL names the state and the count, wrapped in the sign link, with alt text.
+    expect(comment!.body).toContain(`[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v1/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    // The privacy notice is one link away, not a paragraph in the comment.
+    expect(comment!.body).toContain("[Privacy](https://cla.kleidos.dev/privacy)");
+    expect(comment!.body).toContain("[Acuerdo en español](https://cla.kleidos.dev/agreement?lang=es)");
+    expect(comment!.body).not.toContain("**Your data.**");
+    expect(comment!.body.split("\n").length).toBeLessThanOrEqual(7);
     expect(run.approved).toBe(false);
     expect(w.gh.dispatches).toHaveLength(0);
   });
@@ -82,10 +87,10 @@ describe("evaluation", () => {
     await opened(w, pr);
     expect(w.gh.check(SANDBOX, pr.head.sha)!.title).toBe("2 signatures needed");
     const body = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
-    expect(body).toContain("**Still to accept:** [bob](https://github.com/bob), [carol](https://github.com/carol)");
-    expect(body).toContain("**Accepted:**");
-    expect(body).toContain("| @alice (id 123456) | 1 (SHA-256 `89c1d46b9b10`)");
-    expect(body).toContain("**No signature needed:** `jmrplens` (the project owner)");
+    expect(body).toContain("**Contributor Agreement: 1 of 3 signed.** @alice has signed; still to sign: [bob](https://github.com/bob), [carol](https://github.com/carol).");
+    expect(body).toContain("<sub>Ya ha firmado @alice; falta firmar: bob, carol.</sub>");
+    expect(body).toContain("/button/v1/partial-1-3.svg");
+    expect(body).toContain("No signature needed: `jmrplens` (the project owner).");
     expect(body).not.toContain("@bob");
     expect(body).not.toContain("@carol");
     await w.gh.signDirectly(bob);
@@ -94,7 +99,8 @@ describe("evaluation", () => {
     expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
     const updated = w.gh.botComments(SANDBOX, pr.number);
     expect(updated).toHaveLength(1);
-    expect(updated[0]!.body).toContain("### 📝 Contributor Agreement accepted");
+    expect(updated[0]!.body).toContain("**Contributor Agreement signed.**");
+    expect(updated[0]!.body).toContain("/button/v1/signed-3-3.svg");
   });
 
   it("Co-authored-by trailers count as authors, and an unlinked co-author email blocks", async () => {
@@ -102,7 +108,7 @@ describe("evaluation", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(alice, { coAuthors: [bob] })] });
     await opened(w, pr);
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("**Still to accept:** [bob](https://github.com/bob)");
+    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
 
     const pr2 = openPr(w, alice, { commits: [commit(alice, { coAuthors: [{ email: "someone@example.org" }] })] });
     await opened(w, pr2);
@@ -115,7 +121,7 @@ describe("evaluation", () => {
     c.authors.nodes = c.authors.nodes.slice(0, 1);
     const pr3 = openPr(w, alice, { commits: [c] });
     await opened(w, pr3);
-    expect(w.gh.botComments(SANDBOX, pr3.number)[0]!.body).toContain("**Still to accept:** [bob](https://github.com/bob)");
+    expect(w.gh.botComments(SANDBOX, pr3.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
   });
 
   it("an automation account that is not on the list fails closed", async () => {
@@ -161,7 +167,7 @@ describe("evaluation", () => {
     expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
     expect(w.gh.check(SANDBOX, first)!.conclusion).toBe("success");
     expect(run.approved).toBe(false);
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("**Still to accept:** [bob](https://github.com/bob)");
+    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
   });
 
   it("a pull request that changes .github/ (or renames out of it) is never approved automatically", async () => {

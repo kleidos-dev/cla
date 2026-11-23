@@ -5,12 +5,15 @@ import { cron, handleMessage, makeBot } from "./bot";
 import type { ConfiguredEnv, Env } from "./env";
 import { isConfigured } from "./env";
 import { GitHubError, NotAllowedError } from "./github";
-import { STYLESHEET, messagePage, redirect, securityHeaders, stylesheetPath, text } from "./html";
+import { buttonSvg, parseButtonPath } from "./button";
+import { ASSETS, STYLESHEET, messagePage, redirect, securityHeaders, stylesheetPath, text } from "./html";
+import type { Lang } from "./i18n";
+import { pickLang } from "./i18n";
 import { keysFor } from "./keys";
 import { log } from "./log";
 import type { QueueMessage } from "./messages";
 import { parseMessage } from "./messages";
-import { NOT_CONFIGURED_EN, agree, agreementPage, callback, login, logout, privacyPage, setupPage, signPage, signingState, spanishPage } from "./web";
+import { agree, agreementPage, callback, login, logout, privacyPage, setupPage, signPage, signingState } from "./web";
 import { handleWebhook } from "./webhook";
 
 const PUBLIC_ROUTES = new Set(["/agreement", "/agreement/entity", "/agreement/es", "/privacy", "/privacy/es", "/healthz", "/robots.txt", "/.well-known/security.txt", "/", "/setup"]);
@@ -46,22 +49,23 @@ function securityTxt(env: Env): Response {
   );
 }
 
-async function publicRoute(path: string, env: Env): Promise<Response | null> {
+async function publicRoute(path: string, env: Env, lang: Lang): Promise<Response | null> {
   switch (path) {
     case "/":
       return redirect("/agreement", 302);
     case "/agreement":
-      return agreementPage("individual", env, isConfigured(env));
+      return agreementPage("individual", lang, env, isConfigured(env));
     case "/agreement/entity":
-      return agreementPage("entity", env, isConfigured(env));
+      return agreementPage("entity", lang, env, isConfigured(env));
+    // The old Spanish addresses: every page now exists in both languages at one path.
     case "/agreement/es":
-      return spanishPage(isConfigured(env));
+      return redirect("/agreement?lang=es", 301);
     case "/privacy":
-      return privacyPage("en");
+      return privacyPage(lang);
     case "/privacy/es":
-      return privacyPage("es");
+      return redirect("/privacy?lang=es", 301);
     case "/setup":
-      return setupPage();
+      return setupPage(lang);
     case "/healthz":
       return healthz(env);
     case "/robots.txt":
@@ -76,7 +80,13 @@ async function publicRoute(path: string, env: Env): Promise<Response | null> {
     return new Response(FILES[name], { headers: h });
   }
   if (path.startsWith("/assets/") && path === (await stylesheetPath())) {
-    return new Response(STYLESHEET, { headers: securityHeaders(new Headers({ "content-type": "text/css; charset=utf-8" }), "public") });
+    return new Response(STYLESHEET, { headers: securityHeaders(new Headers({ "content-type": "text/css; charset=utf-8" }), "immutable") });
+  }
+  const asset = Object.hasOwn(ASSETS, path) ? ASSETS[path] : undefined;
+  if (asset) return new Response(asset.body, { headers: securityHeaders(new Headers({ "content-type": asset.type }), "public") });
+  const button = parseButtonPath(path);
+  if (button) {
+    return new Response(buttonSvg(button.state, button.signed, button.total), { headers: securityHeaders(new Headers({ "content-type": "image/svg+xml; charset=utf-8" }), "immutable") });
   }
   return null;
 }
@@ -86,9 +96,11 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
   const path = url.pathname;
   const method = req.method;
 
-  if (PUBLIC_ROUTES.has(path) || path.startsWith("/agreement/v") || path.startsWith("/assets/")) {
+  const lang = pickLang(req, url);
+
+  if (PUBLIC_ROUTES.has(path) || path.startsWith("/agreement/v") || path.startsWith("/assets/") || path.startsWith("/button/")) {
     if (method !== "GET" && method !== "HEAD") return methodNotAllowed("GET, HEAD");
-    return (await publicRoute(path, env)) ?? notFound();
+    return (await publicRoute(path, env, lang)) ?? notFound();
   }
 
   const isSign = path.startsWith("/sign/");
@@ -99,7 +111,7 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
   if (!isConfigured(env)) {
     // Without the webhook secret no delivery can be verified, so every one is refused as unsigned.
     if (path === "/webhook") return text("not configured: no delivery can be verified\n", 401);
-    return messagePage(503, "Not configured yet", NOT_CONFIGURED_EN);
+    return messagePage(lang, 503, "notConfigured");
   }
 
   const bot = makeBot(env);

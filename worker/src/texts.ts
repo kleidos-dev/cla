@@ -2,6 +2,7 @@
 import type { Account } from "./authors";
 import type { Assessment } from "./assess";
 import { MARKER, allClear } from "./assess";
+import { buttonAlt, buttonPath, buttonState } from "./button";
 import type { Config } from "./registry";
 import { isLogin } from "./util";
 
@@ -29,32 +30,8 @@ export function who(a: Account, opener: number): string {
   return `[${a.login}](https://github.com/${a.login.replace("[bot]", "%5Bbot%5D")})`;
 }
 
-function digest(config: Config): { version: number; sha: string; short: string } {
-  const v = config.current_version;
-  const sha = config.versions[String(v)]?.set_sha256 ?? "";
-  return { version: v, sha, short: sha.slice(0, 12) };
-}
-
 export function signUrl(ctx: TextContext, repo: string, pr: number): string {
   return `${ctx.origin}/sign/${repo}/${pr}`;
-}
-
-function filesUrl(ctx: TextContext, version: number): string {
-  const ref = /^[0-9a-f]{40}$/.test(ctx.buildCommit) ? ctx.buildCommit : "main";
-  return `https://github.com/${ctx.registry}/tree/${ref}/agreements/v${version}`;
-}
-
-function signedTable(a: Assessment, ctx: TextContext): string[] {
-  const rows = ["| Account | Version | Accepted (UTC) | Register entry |", "| --- | --- | --- | --- |"];
-  for (const acc of a.required) {
-    const rec = a.signed.get(acc.id);
-    if (!rec) continue;
-    const commit = ctx.recordCommits.get(acc.id);
-    const ref = commit && /^[0-9a-f]{40}$/.test(commit) ? commit : "signatures";
-    const path = `signatures/individual/${acc.id}.json`;
-    rows.push(`| ${who(acc, a.opener.id)} (id ${acc.id}) | ${rec.version} (SHA-256 \`${rec.set_sha256.slice(0, 12)}\`) | ${rec.accepted_at} | [\`${path}\`](https://github.com/${ctx.registry}/blob/${ref}/${path}) |`);
-  }
-  return rows;
 }
 
 function notNeeded(a: Assessment): string | null {
@@ -62,7 +39,7 @@ function notNeeded(a: Assessment): string | null {
     ...a.exempt.map((e) => `${isLogin(e.account.login) ? `\`${e.account.login}\`` : `account id ${e.account.id}`} (${e.why})`),
     ...a.entityCovered.map((e) => `${who(e.account, a.opener.id)} (covered by the agreement of ${escapeMd(e.entity)})`),
   ];
-  return parts.length ? `**No signature needed:** ${parts.join(", ")}` : null;
+  return parts.length ? parts.join(", ") : null;
 }
 
 function escapeMd(s: string): string {
@@ -93,62 +70,86 @@ function manualStart(ctx: TextContext): string | null {
   return null;
 }
 
-const PRIVACY_LINE =
-  "<sub>**Your data.** José M. Requena Plens (controller) records your GitHub account id and login, the version you accepted, the time and a link to your acceptance on this pull request, to know which contributions the agreement covers and to keep proof of it. The record is public. No email, real name or IP address is stored. If you are listed here as a commit co-author, your account was found from the commit metadata of this pull request. You have the rights of access, rectification, erasure, restriction, objection and portability (GDPR arts. 15 to 22): write to mail@kleidos.dev. [Full notice](https://cla.kleidos.dev/privacy).</sub>";
+/** A login in the Spanish line: the opener @-mentioned again (no second notification), anybody else as plain text. */
+function whoPlain(a: Account, opener: number): string {
+  if (!isLogin(a.login)) return `account id ${a.id}`;
+  return a.id === opener ? `@${a.login}` : escapeMd(a.login);
+}
 
-/** The bot's one comment on a pull request (design 5.1, 5.2, 5.3). */
+function footLine(ctx: TextContext, sign: boolean): string {
+  const o = ctx.origin;
+  const links = [`[Agreement](${o}/agreement)`, `[Acuerdo en español](${o}/agreement?lang=es)`, `[Privacy](${o}/privacy)`];
+  if (sign) links.push(`Employer or under 18? [Who signs](https://github.com/${ctx.registry}#who-signs)`);
+  return `<sub>${links.join(" · ")}</sub>`;
+}
+
+function registerLine(a: Assessment, ctx: TextContext): string {
+  const entries: string[] = [];
+  for (const acc of a.required) {
+    if (!a.signed.has(acc.id)) continue;
+    const commit = ctx.recordCommits.get(acc.id);
+    const ref = commit && /^[0-9a-f]{40}$/.test(commit) ? commit : "signatures";
+    const name = isLogin(acc.login) ? escapeMd(acc.login) : `account id ${acc.id}`;
+    entries.push(`[${name}](https://github.com/${ctx.registry}/blob/${ref}/signatures/individual/${acc.id}.json)`);
+  }
+  return entries.length ? `Register entries: ${entries.join(", ")} · ` : "";
+}
+
+/**
+ * The bot's one comment on a pull request: two lines (English, then
+ * Spanish), any special line, the sign button, one line of links. The
+ * button's URL names the state and the count, so every state is a new
+ * image URL and GitHub's image cache never shows a stale one.
+ */
 export function commentBody(a: Assessment, ctx: TextContext): string {
-  const d = digest(ctx.config);
+  const total = a.required.length;
+  const signed = a.required.filter((r) => a.signed.has(r.id)).length;
+  const clear = allClear(a);
+  const state = buttonState(signed, total, clear);
+  const manual = manualStart(ctx);
+  const image = (href: string) => `[![${buttonAlt(state, signed, total)}](${ctx.origin}${buttonPath(state, signed, total)})](${href})`;
   const lines: string[] = [MARKER];
-  if (allClear(a)) {
-    lines.push(
-      "### 📝 Contributor Agreement accepted",
-      "",
-      ctx.autoApprove
-        ? "Everyone who wrote this pull request has accepted the Kleidos Contributor Agreement. The checks of this pull request run by themselves from now on, and so will those of your later pull requests in any Kleidos repository that starts them automatically."
-        : "Everyone who wrote this pull request has accepted the Kleidos Contributor Agreement; it covers your later pull requests in every Kleidos repository too.",
-      "",
-      ...signedTable(a, ctx),
-      "",
-    );
-    const nn = notNeeded(a);
-    if (nn) lines.push(nn, "");
-    const manual = manualStart(ctx);
+  const nn = notNeeded(a);
+  if (state === "none") {
+    lines.push(`**No signature needed.** Every author of this pull request is covered${nn ? `: ${nn}` : ""}.`, "<sub>No hace falta firmar: todas las personas autoras están cubiertas.</sub>", "");
     if (manual) lines.push(manual, "");
-    lines.push(
-      `This message and the entry it links are your confirmation; the full text you accepted stays at [cla.kleidos.dev/agreement](${ctx.origin}/agreement).`,
-      "",
-      manual
-        ? "**En español:** todas las personas que han escrito este pull request han aceptado el acuerdo; las comprobaciones las inicia una persona que mantiene el repositorio."
-        : "**En español:** todas las personas que han escrito este pull request han aceptado el acuerdo; las comprobaciones se ejecutan solas desde ahora.",
-    );
+    lines.push(image(`${ctx.origin}/agreement`), "", footLine(ctx, false));
     return lines.join("\n");
   }
-  lines.push(
-    "### 📝 Contributor Agreement needed before the checks run",
-    "",
-    "Thanks for the pull request. Kleidos asks every contributor to accept its Contributor Agreement once; it then covers every Kleidos repository. Until then the checks of this pull request stay on hold.",
-    "",
-  );
-  if (a.signed.size > 0) lines.push("**Accepted:**", "", ...signedTable(a, ctx), "");
-  if (a.missing.length) lines.push(`**Still to accept:** ${a.missing.map((m) => who(m, a.opener.id)).join(", ")}`, "");
-  const nn = notNeeded(a);
-  if (nn) lines.push(nn, "");
+  if (state === "signed") {
+    lines.push(
+      manual
+        ? "**Contributor Agreement signed.** Everyone who wrote this pull request has accepted it; a maintainer starts its checks."
+        : "**Contributor Agreement signed.** Everyone who wrote this pull request has accepted it, so its checks run by themselves from now on.",
+      manual
+        ? "<sub>Todas las personas autoras han aceptado el acuerdo; las comprobaciones las inicia una persona que mantiene el repositorio.</sub>"
+        : "<sub>Todas las personas autoras han aceptado el acuerdo; las comprobaciones se ejecutan solas desde ahora.</sub>",
+      "",
+    );
+    if (nn) lines.push(`No signature needed: ${nn}.`, "");
+    if (manual) lines.push(manual, "");
+    lines.push(image(signUrl(ctx, a.repo, a.pr.number)), "", `<sub>${registerLine(a, ctx)}[Agreement](${ctx.origin}/agreement) · [Privacy](${ctx.origin}/privacy)</sub>`);
+    return lines.join("\n");
+  }
+  const still = a.missing.map((m) => who(m, a.opener.id)).join(", ");
+  const stillEs = a.missing.map((m) => whoPlain(m, a.opener.id)).join(", ");
+  const start = manual ? "Sign it once and a maintainer starts the checks of this pull request" : "Sign it once and the checks of this pull request start";
+  const startEs = manual ? "Firma una vez el Acuerdo de Contribución y una persona que mantiene el repositorio inicia las comprobaciones." : "Firma una vez el Acuerdo de Contribución y arrancan las comprobaciones.";
+  if (state === "partial") {
+    const done = a.required.filter((r) => a.signed.has(r.id));
+    const doneEn = done.map((d) => who(d, a.opener.id)).join(", ");
+    const doneEs = done.map((d) => whoPlain(d, a.opener.id)).join(", ");
+    lines.push(
+      `**Contributor Agreement: ${signed} of ${total} signed.** ${doneEn} ${done.length === 1 ? "has" : "have"} signed${still ? `; still to sign: ${still}` : ""}.`,
+      `<sub>Ya ${done.length === 1 ? "ha" : "han"} firmado ${doneEs}${stillEs ? `; falta firmar: ${stillEs}` : ""}.</sub>`,
+      "",
+    );
+  } else {
+    lines.push(`**Contributor Agreement needed.** ${start}; it covers every Kleidos repository.${still ? ` Still to sign: ${still}.` : ""}`, `<sub>${startEs}${stillEs ? ` Falta firmar: ${stillEs}.` : ""}</sub>`, "");
+  }
+  if (nn) lines.push(`No signature needed: ${nn}.`, "");
   for (const s of specialLines(a, ctx)) lines.push(s, "");
-  lines.push(
-    `**[Read and sign the agreement →](${signUrl(ctx, a.repo, a.pr.number)})**`,
-    "",
-    '- **How:** the link opens cla.kleidos.dev. You sign in with GitHub, read the agreement and its Addendum, tick one box and click "I agree". Each person listed signs with their own account.',
-    "- **What it does:** you keep your copyright. You give José M. Requena Plens a non-exclusive licence, free of charge, that lets him publish your contribution under the project's open-source licence and also license it under other terms, including paid commercial licences.",
-    `- **What happens next:** your acceptance line is posted on this pull request under your account and recorded in the public register at [${ctx.registry}](https://github.com/${ctx.registry}); this comment is updated${ctx.autoApprove ? " and the checks start by themselves" : ", and a maintainer starts the checks"}.`,
-    `- **The text:** Kleidos Contributor Agreement, version ${d.version}, SHA-256 \`${d.sha}\` ([files](${filesUrl(ctx, d.version)})). It can only be concluded in English.`,
-    "",
-    `If you wrote this for your employer, or you are under 18, do not sign here: see [who signs](https://github.com/${ctx.registry}#who-signs).`,
-    "",
-    `**En español:** para que se ejecuten las comprobaciones hay que aceptar una vez el Acuerdo de Contribución de Kleidos, en el enlace de arriba y con tu cuenta de GitHub. El texto que obliga es el inglés; hay un [resumen en español](${ctx.origin}/agreement/es).`,
-    "",
-    PRIVACY_LINE,
-  );
+  lines.push(image(signUrl(ctx, a.repo, a.pr.number)), "", footLine(ctx, true));
   return lines.join("\n");
 }
 

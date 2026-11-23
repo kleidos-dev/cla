@@ -24,3 +24,41 @@ path = ["agreements/v1/individual.md", "agreements/v1/entity.md"]
 precedence = "override"
 SPDX-FileCopyrightText = "Contributor Agreements, https://contributoragreements.org/"
 SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# The informative Spanish translation of the individual Contributor
+# Agreement 1.2: a translation of the CC BY-SA 4.0 text above, so shared
+# under the same licence. Not part of the set SHA256SUMS lists: it binds
+# nothing.
+[[annotations]]
+path = ["agreements/v1/individual.es.md"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "Contributor Agreements, https://contributoragreements.org/ (original text)",
+  "2026 José M. Requena Plens <jmrplens@kleidos.dev> (Spanish translation)",
+]
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# The Kleidos mark and the sign button's drawings, copied from
+# kleidos-dev/brand: the brand's artwork, under its licence.
+[[annotations]]
+path = ["worker/src/assets/mark.svg", "worker/src/assets/button/*.svg"]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens <mail@kleidos.dev>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Kleidos Mono's outlines of the digits and the slash, read from the font
+# below to draw the button's count.
+[[annotations]]
+path = ["worker/src/assets/button/glyphs.json"]
+precedence = "override"
+SPDX-FileCopyrightText = "2022 The Mona Sans Project Authors (https://github.com/github/mona-sans)"
+SPDX-License-Identifier = "OFL-1.1"
+
+# Kleidos Sans and Kleidos Mono: Mona Sans 2.0.27 subset and renamed by the
+# firmware repository's scripts/site/subset_fonts.py (the Reserved Font
+# Name "Mona" is not used).
+[[annotations]]
+path = ["worker/src/assets/fonts/*.woff2"]
+precedence = "override"
+SPDX-FileCopyrightText = "2022 The Mona Sans Project Authors (https://github.com/github/mona-sans), with Reserved Font Name \"Mona\""
+SPDX-License-Identifier = "OFL-1.1"

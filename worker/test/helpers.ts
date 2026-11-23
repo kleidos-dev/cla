@@ -194,10 +194,11 @@ export class Browser {
     return { authorize, callback, callbackUrl };
   }
 
-  /** Reads the form of the sign page into fields. */
+  /** Reads the acceptance form of the sign page into fields (the page's other form, sign-out, is not part of it). */
   static form(html: string): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const m of html.matchAll(/<input type="hidden" name="([a-z0-9_]+)" value="([^"]*)">/g)) out[m[1]!] = m[2]!.replaceAll("&amp;", "&");
+    const agree = /<form[^>]*action="\/agree[^"]*"[^>]*>([\s\S]*?)<\/form>/.exec(html)?.[1] ?? "";
+    for (const m of agree.matchAll(/<input type="hidden" name="([a-z0-9_]+)" value="([^"]*)">/g)) out[m[1]!] = m[2]!.replaceAll("&amp;", "&");
     return out;
   }
 }

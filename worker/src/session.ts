@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import type { Lang } from "./i18n";
+import { isLang } from "./i18n";
 import type { Keys } from "./keys";
 import { open, seal } from "./keys";
 import { isLogin, nowSeconds } from "./util";
@@ -34,6 +36,8 @@ export interface OAuthTransaction {
   state: string;
   verifier: string;
   return: string;
+  /** The language of the page the sign-in started from, to come back to it. */
+  lang?: Lang;
   exp: number;
 }
 
@@ -72,7 +76,7 @@ export async function readTransaction(req: Request, keys: Keys): Promise<OAuthTr
   const raw = readCookie(req, OAUTH_COOKIE);
   if (!raw) return null;
   const v = (await open(keys.oauth, OAUTH_COOKIE, raw)) as OAuthTransaction | null;
-  if (!v || v.v !== 1 || typeof v.state !== "string" || typeof v.verifier !== "string" || typeof v.return !== "string" || typeof v.exp !== "number") return null;
+  if (!v || v.v !== 1 || typeof v.state !== "string" || typeof v.verifier !== "string" || typeof v.return !== "string" || typeof v.exp !== "number" || (v.lang !== undefined && !isLang(v.lang))) return null;
   if (v.exp <= nowSeconds()) return null;
   return v;
 }

@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 import { AGREEMENT_VERSION, FILES, NOTICES, checkIntegrity } from "./agreement";
 import type { Assessment } from "./assess";
-import { HeadMovedError, acceptedSentences, assess } from "./assess";
+import { HeadMovedError, acceptedSentences, allClear, assess } from "./assess";
 import type { Bot } from "./bot";
 import type { ConfiguredEnv } from "./env";
 import { GitHubError, NotAllowedError, WEB } from "./github";
 import { escapeHtml, messagePage, page, redirect } from "./html";
+import type { Lang, Strings } from "./i18n";
+import { BACK, S, isLang, pickLang } from "./i18n";
 import type { Keys } from "./keys";
 import { csrfToken, csrfVerify } from "./keys";
 import { log } from "./log";
-import { renderMarkdown } from "./markdown";
+import type { Heading } from "./markdown";
+import { addHeadingIds, renderMarkdown } from "./markdown";
 import type { Config, SignatureRecord } from "./registry";
 import { recordValid } from "./registry";
 import type { Session } from "./session";
@@ -50,76 +53,208 @@ export async function signingState(config: Config | null): Promise<{ on: boolean
   return { on: true, setSha256: integrity.setSha256 };
 }
 
-function prLink(t: Target): string {
-  return `<a href="${WEB}/${escapeHtml(t.repo)}/pull/${t.pr}">${escapeHtml(t.repo)}#${t.pr}</a>`;
+// ---------------------------------------------------------------------------
+// Pieces of the pages
+
+function prName(t: Target): string {
+  return `${escapeHtml(t.repo)}#${t.pr}`;
 }
 
-function filesUrl(env: ConfiguredEnv | { BUILD_COMMIT: string; REGISTRY_REPO: string }): string {
+function prUrl(t: Target): string {
+  return `${WEB}/${escapeHtml(t.repo)}/pull/${t.pr}`;
+}
+
+function prLink(t: Target): string {
+  return `<a href="${prUrl(t)}">${prName(t)}</a>`;
+}
+
+/** The eyebrow naming the step, and its two bars (decoration: the words carry it). */
+function progress(lang: Lang, step: 1 | 2 | 3): string {
+  const bars = [1, 2].map((n) => `<span class="${n < step ? "done" : n === step ? "current" : ""}"></span>`).join("");
+  return `<div class="progress"><p class="eyebrow">${S[lang].steps[step - 1]}</p><span class="bars" aria-hidden="true">${bars}</span></div>`;
+}
+
+function where(html: string): string {
+  return `<p class="where">${html}</p>`;
+}
+
+function loginHref(t: Target, lang: Lang, sw = false): string {
+  return `/auth/login?return=${encodeURIComponent(t.path)}${sw ? "&amp;switch=1" : ""}&amp;lang=${lang}`;
+}
+
+function filesUrl(env: { BUILD_COMMIT: string; REGISTRY_REPO: string }): string {
   const ref = /^[0-9a-f]{40}$/.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT : "main";
   return `https://github.com/${env.REGISTRY_REPO}/tree/${ref}/agreements/v${AGREEMENT_VERSION}`;
 }
 
-async function versionLine(env: { BUILD_COMMIT: string; REGISTRY_REPO: string }): Promise<string> {
+async function metaLine(lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, kind: "individual" | "entity" = "individual"): Promise<string> {
   const { setSha256 } = await checkIntegrity();
   const commit = /^[0-9a-f]{40}$/.test(env.BUILD_COMMIT) ? env.BUILD_COMMIT.slice(0, 12) : "main";
-  return `<p class="meta">Version ${AGREEMENT_VERSION} · SHA-256 <code>${setSha256}</code> · from <a href="${filesUrl(env)}">${escapeHtml(env.REGISTRY_REPO)}@<code>${escapeHtml(commit)}</code></a> · download: <a href="/agreement/v${AGREEMENT_VERSION}/individual.md" download>individual.md</a>, <a href="/agreement/v${AGREEMENT_VERSION}/addendum.md" download>addendum.md</a>, <a href="/agreement/v${AGREEMENT_VERSION}/SHA256SUMS" download>SHA256SUMS</a></p>`;
+  const v = AGREEMENT_VERSION;
+  return `<p class="meta"><span>${S[lang].meta(v, setSha256)}</span><span><a href="${filesUrl(env)}">${escapeHtml(env.REGISTRY_REPO)}@<code>${escapeHtml(commit)}</code></a></span><span>${S[lang].downloads}: <a href="/agreement/v${v}/${kind}.md" download>${kind}.md</a>, <a href="/agreement/v${v}/addendum.md" download>addendum.md</a>, <a href="/agreement/v${v}/SHA256SUMS" download>SHA256SUMS</a></span></p>`;
 }
 
-const SUMMARY = `<div class="box"><ul>
-<li><strong>You keep</strong> your copyright and every right in your work.</li>
-<li><strong>You grant</strong> José M. Requena Plens a non-exclusive licence, free of charge, to publish your contribution under the project's open-source licence and to license it under other terms.</li>
-<li><strong>That includes paid commercial licences</strong> (commercial exceptions); each version that contains your contribution also stays available under an open-source licence (Addendum, clause 10).</li>
-</ul></div>
-<p lang="es">El texto que obliga es el inglés. <a href="/agreement/es">Resumen en español y traducción del Anexo</a>.</p>`;
-
-function agreementText(kind: "individual" | "entity"): string {
-  const opts = { headingShift: 1 };
-  return `<section class="text" aria-label="Contributor Agreement">${renderMarkdown(FILES[`${kind}.md`]!, opts)}</section>
-<section class="text" aria-label="Addendum">${renderMarkdown(FILES["addendum.md"]!, opts)}</section>`;
+function summaryList(lang: Lang): string {
+  const a = S[lang].accept;
+  return `<ul class="summary" aria-label="${a.summaryLabel}">${a.summary.map(([k, v]) => `<li><strong>${k}</strong> ${v}</li>`).join("")}</ul>`;
 }
 
-const BEFORE = `<h2 id="before">Before you accept</h2>
-<ul>
-<li>When you click "I agree", the acceptance sentence is posted as a comment on the pull request under your GitHub account. That comment is your signature, and the public register at <a href="https://github.com/kleidos-dev/cla">kleidos-dev/cla</a> records it.</li>
-<li>Nothing is posted until you press the button. If you make a mistake afterwards, write to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.</li>
-<li>The agreement can only be concluded in English. The Spanish texts are for information.</li>
-<li>If you are signing for your employer or another organization, or you are under 18, do not sign here: see <a href="https://github.com/kleidos-dev/cla#who-signs">who signs</a>.</li>
-</ul>
-<p class="meta"><strong>Your data.</strong> José M. Requena Plens records your GitHub account id and login, the version you accepted, the time and a link to your acceptance comment. The record is public. No email, real name or IP address is stored. One cookie keeps you signed in for up to an hour. <a href="/privacy">Privacy notice</a>.</p>`;
-
-const GITHUB_SCREEN = `<p class="meta">GitHub will ask you to authorize <strong>kleidos-cla</strong> and will list "Verify your GitHub identity", "Know which resources you can access" and "Act on your behalf": GitHub shows these lines for every GitHub App. This app reads your account id and login, and posts one acceptance line on this pull request when you click "I agree". The permission is revoked as soon as that is done.</p>`;
-
-function signInLink(t: Target, label = "Sign in with GitHub to accept", sw = false): string {
-  return `<p><a class="button" href="/auth/login?return=${encodeURIComponent(t.path)}${sw ? "&amp;switch=1" : ""}">${escapeHtml(label)}</a></p>`;
+/** A Markdown text with ids on its headings; a leading comment (a file's licence header) is not part of the text. */
+function rendered(src: string, prefix: string): { html: string; headings: Heading[] } {
+  return addHeadingIds(renderMarkdown(src.replace(/^<!--[\s\S]*?-->\s*/, ""), { headingShift: 1 }), prefix);
 }
 
-function whoami(s: Session, t: Target, logoutCsrf: string): string {
-  return `<p>Signed in as <strong>@${escapeHtml(s.login)}</strong> (GitHub account id ${s.id}). Not you? <a href="/auth/login?return=${encodeURIComponent(t.path)}&amp;switch=1">Switch account</a></p>
-<form class="inline" method="post" action="/auth/logout"><input type="hidden" name="csrf" value="${logoutCsrf}"><button class="link" type="submit">Sign out</button></form>`;
+/**
+ * The two texts of the agreement. In Spanish: the informative translations
+ * of the Contributor Agreement and of the Addendum (the entity version has
+ * none, so it stays in English, marked as such).
+ */
+function agreementTexts(lang: Lang, kind: "individual" | "entity", prefix: string): { html: string; parts: [Heading[], Heading[]] } {
+  const spanish = lang === "es";
+  const ca = rendered(spanish && kind === "individual" ? FILES["individual.es.md"]! : FILES[`${kind}.md`]!, `${prefix}ca`);
+  const ad = rendered(spanish ? FILES["addendum.es.md"]! : FILES["addendum.md"]!, `${prefix}ad`);
+  const caLang = spanish && kind === "individual" ? "es" : "en";
+  const label = spanish ? ["Acuerdo", "Anexo"] : ["Contributor Agreement", "Addendum"];
+  return {
+    html: `<section class="prose" lang="${caLang}" aria-label="${label[0]}">${ca.html}</section>\n<section class="prose" lang="${lang}" aria-label="${label[1]}">${ad.html}</section>`,
+    parts: [ca.headings, ad.headings],
+  };
 }
 
-async function signForm(s: Session, t: Target, keys: Keys, setSha256: string): Promise<string> {
+function toc(t: Strings, parts: [Heading[], Heading[]], labels: [string, string]): string {
+  const [ca, ad] = parts;
+  if (!ca[0] || !ad[0]) return "";
+  const li = (h: Heading) => `<li><a href="#${h.id}">${h.html}</a></li>`;
+  return `<details class="toc" open><summary class="eyebrow">${t.agreement.toc}</summary><ol>
+<li><a href="#${ca[0].id}">${labels[0]}</a><ol>${ca.filter((h) => h.level === 4).map(li).join("")}</ol></li>
+<li><a href="#${ad[0].id}">${labels[1]}</a><ol>${ad.filter((h) => h.level === 3).map(li).join("")}</ol></li>
+</ol></details>`;
+}
+
+function whoRow(lang: Lang, s: Session, t: Target, logoutCsrf: string): string {
+  const a = S[lang].accept;
+  return `<div class="who"><span>${a.signedInAs} <strong>@${escapeHtml(s.login)}</strong></span><a href="${loginHref(t, lang, true)}">${a.switch}</a><form method="post" action="/auth/logout"><input type="hidden" name="csrf" value="${logoutCsrf}"><input type="hidden" name="lang" value="${lang}"><button class="link-btn" type="submit">${a.signOut}</button></form></div>`;
+}
+
+function alertCard(html: string): string {
+  return `<div class="card is-pending" role="alert"><p>${html}</p></div>`;
+}
+
+/** Step 1: what this is and who still signs, and one button. No legal text: that comes once signed in. */
+function startBody(lang: Lang, t: Target, a: Assessment | null, signingOn: boolean, extra: { again?: boolean; notice?: string; who?: string } = {}): string {
+  const s = S[lang].start;
+  const still = a ? (a.missing.length ? a.missing.map((m) => `@${escapeHtml(m.login)}`).join(", ") : allClear(a) ? s.nobody : "—") : "";
+  const action = signingOn
+    ? `<a class="btn btn-primary btn-block" href="${loginHref(t, lang)}">${extra.again ? s.buttonAgain : s.button}</a>\n<p class="note">${s.note}</p>`
+    : alertCard(S[lang].status.paused);
+  return `${progress(lang, 1)}
+<h1 class="h-task">${s.h1}</h1>
+${where(s.where)}
+${extra.notice ?? ""}
+<p class="lede">${s.lede}</p>
+<div class="card">
+<p class="card-row"><span class="eyebrow">${S[lang].prLabel}</span>${prLink(t)}</p>
+${a ? `<p class="card-row"><span class="eyebrow">${s.stillLabel}</span><span>${still}</span></p>` : ""}
+</div>
+${action}
+${extra.who ?? ""}
+<ul class="links">${s.links.map(([l, h]) => `<li><a href="${h}">${l}</a></li>`).join("")}</ul>
+<details class="fold"><summary>${s.ghSummary}</summary><div class="fold-body"><p class="note">${s.ghBody}</p></div></details>
+<details class="fold"><summary>${s.whoSummary}</summary><div class="fold-body"><p class="note">${s.whoBody}</p></div></details>`;
+}
+
+/** Step 2: the summary, the box and the button above the fold, the full text in a fold below. */
+async function acceptBody(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, setSha256: string, error: boolean): Promise<string> {
+  const a = S[lang].accept;
   const csrf = await csrfToken(keys.csrf, [s.sid, "agree", `${t.repo}#${t.pr}`, String(AGREEMENT_VERSION)]);
+  const logoutCsrf = await csrfToken(keys.csrf, [s.sid, "logout"]);
   const [owner, repo] = t.repo.split("/") as [string, string];
   const sentence = sentenceFor(AGREEMENT_VERSION, setSha256);
-  return `<h2 id="accept">Accept</h2>
-<form method="post" action="/agree">
+  const translation = a.translation ? `<details class="translation"><summary>${a.translation.summary}</summary><p lang="es">${a.translation.body(setSha256.slice(0, 12))}</p></details>` : "";
+  const errorBox = error ? `<p class="error" id="accept-error" role="alert"><span class="error-mark" aria-hidden="true">!</span><span>${a.error}</span></p>` : "";
+  const box = error ? ' aria-invalid="true" aria-describedby="accept-error post-note" autofocus' : ' aria-describedby="post-note"';
+  const texts = agreementTexts(lang, "individual", "f-");
+  return `${progress(lang, 2)}
+<h1 class="h-task">${a.h1}</h1>
+${where(a.where)}
+${summaryList(lang)}
+<form class="accept${error ? " is-error" : ""}" id="accept" method="post" action="/agree#accept" novalidate>
 <input type="hidden" name="csrf" value="${csrf}">
-<input type="hidden" name="owner" value="${escapeHtml(owner)}"> <input type="hidden" name="repo" value="${escapeHtml(repo)}">
-<input type="hidden" name="pr" value="${t.pr}"> <input type="hidden" name="version" value="${AGREEMENT_VERSION}">
-<input type="hidden" name="set_sha256" value="${setSha256}">
-<p id="post-note">When you click the button, the line beside the checkbox is posted as a comment on pull request ${escapeHtml(t.repo)}#${t.pr} under your account @${escapeHtml(s.login)}. That comment is your signature.</p>
-<p class="accept"><input type="checkbox" id="accept" name="accept" value="yes" required aria-describedby="post-note">
-<label for="accept">${escapeHtml(sentence)}</label></p>
-<p><button type="submit">I agree: post my acceptance on the pull request</button></p>
-</form>`;
+<input type="hidden" name="owner" value="${escapeHtml(owner)}"><input type="hidden" name="repo" value="${escapeHtml(repo)}">
+<input type="hidden" name="pr" value="${t.pr}"><input type="hidden" name="version" value="${AGREEMENT_VERSION}">
+<input type="hidden" name="set_sha256" value="${setSha256}"><input type="hidden" name="lang" value="${lang}">
+${errorBox}
+<div class="check"><input type="checkbox" id="accept-box" name="accept" value="yes"${box}><label for="accept-box" lang="en">${escapeHtml(sentence)}</label></div>
+<div class="actionbar"><button class="btn btn-primary btn-block" type="submit">${a.button}</button></div>
+<p class="note" id="post-note">${a.note(escapeHtml(s.login), prName(t))}</p>
+${translation}
+</form>
+${whoRow(lang, s, t, logoutCsrf)}
+<details class="fold" id="text"><summary><span>${a.foldTitle}<small>${a.foldSub}</small></span></summary><div class="fold-body">
+${a.binding ? `<p class="banner">${a.binding}</p>` : ""}
+${await metaLine(lang, env)}
+${texts.html}
+<p class="backbar"><span>${a.backbar}</span><a href="#accept">${a.backLink}</a></p>
+</div></details>
+<section class="prose" aria-labelledby="before"><h2 id="before" class="h-sub">${a.beforeTitle}</h2><ul>${a.before.map((x) => `<li>${x}</li>`).join("")}</ul><p class="note">${a.data}</p></section>`;
 }
+
+interface DoneFacts {
+  login: string;
+  id: number;
+  setSha256: string;
+  at: string;
+  commentUrl: string;
+  entryUrl: string | null;
+}
+
+/** Step 3: signed; recorded or being recorded. */
+function doneBody(lang: Lang, t: Target, f: DoneFacts): string {
+  const d = S[lang].done;
+  const recorded = f.entryUrl !== null;
+  const path = `signatures/individual/${f.id}.json`;
+  const entry = f.entryUrl ? `<a href="${escapeHtml(f.entryUrl)}">${path}</a>` : `${d.entryRecording} <a href="${escapeHtml(t.path)}">${d.checkNow}</a>`;
+  return `${progress(lang, 3)}
+<h1 class="h-task">${d.h1}</h1>
+${where(recorded ? d.whereRecorded : d.whereRecording)}
+<div class="card is-done" role="status">
+<p class="status ${recorded ? "is-done" : "is-pending"}">${recorded ? d.statusRecorded : d.statusRecording}</p>
+<p>${d.lede(prLink(t))}</p>
+<dl class="facts">
+<div><dt class="eyebrow">${d.account}</dt><dd>${d.accountValue(escapeHtml(f.login), f.id)}</dd></div>
+<div><dt class="eyebrow">${d.version}</dt><dd>${AGREEMENT_VERSION} · SHA-256 <code>${f.setSha256}</code></dd></div>
+<div><dt class="eyebrow">${d.accepted}</dt><dd>${escapeHtml(f.at)}</dd></div>
+<div><dt class="eyebrow">${d.comment}</dt><dd><a href="${escapeHtml(f.commentUrl)}">${prName(t)}</a></dd></div>
+<div><dt class="eyebrow">${d.entry}</dt><dd>${entry}</dd></div>
+</dl>
+</div>
+<a class="btn btn-primary btn-block" href="${prUrl(t)}">${d.back}</a>
+<p class="note">${d.checks}</p>
+<p class="note">${d.keep}</p>`;
+}
+
+/** A sign-page state that needs nothing from the reader: a heading, one card, who is signed in. */
+function statusBody(lang: Lang, t: Target, title: string, html: string, tone: "done" | "info" | "alert", who: string): string {
+  const card = tone === "alert" ? alertCard(html) : `<div class="card${tone === "done" ? " is-done" : ""}" role="status"><p>${html}</p></div>`;
+  return `<h1 class="h-task">${escapeHtml(title)}</h1>
+<p class="where">${S[lang].prLabel} ${prLink(t)}</p>
+${card}
+${who}
+<a class="btn btn-block" href="${prUrl(t)}">${BACK.pr[lang]}</a>`;
+}
+
+// ---------------------------------------------------------------------------
+// The sign page
 
 type SignerStatus = "must_sign" | "signed" | "exempt" | "entity" | "not_author" | "closed" | "locked" | "not_user" | "private";
 
-async function signerStatus(bot: Bot, config: Config, t: Target, account: { id: number; type: string }): Promise<{ status: SignerStatus; a: Assessment; record?: SignatureRecord; entity?: string }> {
+async function assessTarget(bot: Bot, config: Config, t: Target): Promise<Assessment> {
   const token = await bot.gh.token([t.repo], { pull_requests: "read", contents: "read" });
-  const a = await assess(bot.gh, bot.registry, config, t.repo, t.pr, token);
+  return assess(bot.gh, bot.registry, config, t.repo, t.pr, token);
+}
+
+async function signerStatus(bot: Bot, config: Config, t: Target, account: { id: number; type: string }): Promise<{ status: SignerStatus; a: Assessment; record?: SignatureRecord; entity?: string }> {
+  const a = await assessTarget(bot, config, t);
   if (a.pr.base.repo.private) return { status: "private", a };
   if (a.pr.state !== "open") return { status: "closed", a };
   if (a.pr.locked) return { status: "locked", a };
@@ -133,15 +268,15 @@ async function signerStatus(bot: Bot, config: Config, t: Target, account: { id: 
   return { status: "not_author", a };
 }
 
-function guard<T>(fn: () => Promise<T>): Promise<T | Response> {
+function guard<T>(lang: Lang, fn: () => Promise<T>): Promise<T | Response> {
   return fn().catch(async (e: unknown) => {
-    if (e instanceof NotAllowedError) return messagePage(404, "Not served", "This repository is not served by the Kleidos CLA bot.");
-    if (e instanceof HeadMovedError) return messagePage(503, "The pull request changed", "The pull request received new commits while it was being read. Nothing was posted. Reload this page.");
+    if (e instanceof NotAllowedError) return messagePage(lang, 404, "notServed");
+    if (e instanceof HeadMovedError) return messagePage(lang, 503, "headMoved");
     if (e instanceof GitHubError) {
       log("github error", { status: e.status, reason: e.kind, request_id: e.requestId });
-      if (e.kind === "rate_limited") return messagePage(429, "GitHub is rate limiting", "GitHub asked us to slow down. Wait a minute and reload this page.");
-      if (e.kind === "not_found") return messagePage(404, "Not found", "GitHub does not know this pull request.");
-      return messagePage(503, "GitHub unavailable", "GitHub did not answer as expected. Nothing was posted. Wait a minute and reload this page.");
+      if (e.kind === "rate_limited") return messagePage(lang, 429, "ghRateLimited");
+      if (e.kind === "not_found") return messagePage(lang, 404, "ghNotFound");
+      return messagePage(lang, 503, "ghUnavailable");
     }
     throw e;
   });
@@ -155,19 +290,33 @@ async function servedTarget(bot: Bot, path: string): Promise<{ t: Target; config
   return { t, config };
 }
 
+function signTitle(lang: Lang, t: Target, step: "start" | "accept"): string {
+  return `${S[lang][step].title} · ${t.repo}#${t.pr}`;
+}
+
+/** Step 2 for a signed-in signer whose token is for this pull request; `error` when the box was not ticked. */
+async function acceptPage(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, setSha256: string, error: boolean): Promise<Response> {
+  return page(await acceptBody(lang, env, s, t, keys, setSha256, error), { title: signTitle(lang, t, "accept"), lang, path: t.path, status: error ? 400 : 200 });
+}
+
 export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys, path: string): Promise<Response> {
-  if (!(await env.RL_SIGN.limit({ key: clientIp(req) })).success) return messagePage(429, "Too many requests", "Too many requests from your network. Wait a minute and reload this page.");
+  const lang = pickLang(req, new URL(req.url));
+  const st0 = S[lang].status;
+  if (!(await env.RL_SIGN.limit({ key: clientIp(req) })).success) return messagePage(lang, 429, "tooManySign");
   let replaced: string | null = null;
-  const r = await guard(async () => {
+  const r = await guard(lang, async () => {
     const st = await servedTarget(bot, path);
-    if (!st) return messagePage(404, "Not found", "There is no pull request to sign for at this address.");
+    if (!st) return messagePage(lang, 404, "noTarget");
     const { t, config } = st;
     const session = await readSession(req, keys);
     const signing = await signingState(config);
-    const head = `<h1>Kleidos Contributor Agreement</h1>\n<p>Pull request ${prLink(t)}</p>`;
-    const off = signing.on ? "" : `<div class="box alert" role="alert"><p>The agreement is being updated, so signing is paused for a moment. The checks keep working. Come back later, or write to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>.</p></div>`;
+    const back = { href: prUrl(t), label: BACK.pr[lang] };
     if (!session) {
-      return page(`${head}\n${off}\n${SUMMARY}\n${await versionLine(env)}\n<p><a href="#before">Jump to the acceptance</a></p>\n${signing.on ? signInLink(t) + GITHUB_SCREEN : ""}\n${agreementText("individual")}\n${BEFORE}\n${signing.on ? signInLink(t) : ""}`, { title: `Sign the Kleidos Contributor Agreement · ${t.repo}#${t.pr}` });
+      const a = await assessTarget(bot, config, t);
+      if (a.pr.base.repo.private) return messagePage(lang, 404, "noTarget");
+      if (a.pr.state !== "open") return messagePage(lang, 409, "closed", back);
+      if (a.pr.locked) return messagePage(lang, 409, "locked", back);
+      return page(startBody(lang, t, a, signing.on), { title: signTitle(lang, t, "start"), lang, path: t.path });
     }
     const logoutCsrf = await csrfToken(keys.csrf, [session.sid, "logout"]);
     let notice = "";
@@ -176,60 +325,51 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       const recorded = recordValid(config, rec);
       if (recorded || (await acceptanceStands(bot, config, t, session.id, session.pending.comment_id))) {
         const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;
-        const path2 = `signatures/individual/${session.id}.json`;
-        const entry = recorded
-          ? `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/${commit ?? "signatures"}/${path2}">${path2}</a>`
-          : `being recorded, usually within a minute. <a href="${escapeHtml(t.path)}">Check again</a>`;
-        return page(
-          `<h1>Your acceptance</h1>
-<div class="box ok" role="status">
-<p>You accepted the Kleidos Contributor Agreement.</p>
-<ul>
-<li>Account: @${escapeHtml(session.login)} (GitHub account id ${session.id})</li>
-<li>Version ${AGREEMENT_VERSION}, SHA-256 <code>${signing.setSha256}</code></li>
-<li>Accepted (UTC): ${escapeHtml(recorded ? rec.accepted_at : session.pending.at)}</li>
-<li>Acceptance comment: <a href="${escapeHtml(session.pending.comment_url)}">${escapeHtml(session.pending.comment_url)}</a></li>
-<li>Register entry: ${entry}</li>
-</ul>
-</div>
-<p>This page is your confirmation: save or print it. The full text you accepted stays at <a href="/agreement">cla.kleidos.dev/agreement</a>, and the check on ${prLink(t)} turns green by itself once the entry is recorded.</p>
-${whoami(session, t, logoutCsrf)}`,
-          { title: "Your acceptance · Kleidos Contributor Agreement" },
-        );
+        const facts: DoneFacts = {
+          login: session.login,
+          id: session.id,
+          setSha256: signing.setSha256,
+          at: recorded ? rec.accepted_at : session.pending.at,
+          commentUrl: session.pending.comment_url,
+          entryUrl: recorded ? `https://github.com/${env.REGISTRY_REPO}/blob/${commit ?? "signatures"}/signatures/individual/${session.id}.json` : null,
+        };
+        return page(doneBody(lang, t, facts), { title: recorded ? S[lang].done.titleRecorded : S[lang].done.titleRecording, lang, path: t.path });
       }
       // The acceptance comment was edited or deleted, so the recorder will refuse it: say so and let the signer sign again.
       const rest: Session = { ...session };
       delete rest.pending;
       replaced = await sessionCookie(keys, rest);
-      notice = `<div class="box alert" role="alert"><p>Your acceptance comment on this pull request was edited or deleted, so it cannot be recorded. Nothing is kept from it. To accept, sign in again below.</p></div>`;
+      notice = alertCard(st0.edited);
     }
     const s = await signerStatus(bot, config, t, session);
-    const who = notice + whoami(session, t, logoutCsrf);
+    const who = whoRow(lang, session, t, logoutCsrf);
+    const login = escapeHtml(session.login);
     switch (s.status) {
       case "private":
-        return messagePage(404, "Not found", "There is no pull request to sign for at this address.");
+        return messagePage(lang, 404, "noTarget");
       case "closed":
-        return messagePage(409, "Pull request closed", "This pull request is closed, so there is nothing to sign on it. Open or reopen a pull request and follow its link.", { href: `${WEB}/${t.repo}/pull/${t.pr}`, label: "Back to the pull request" });
+        return messagePage(lang, 409, "closed", back);
       case "locked":
-        return messagePage(409, "Pull request locked", "This pull request is locked, so no acceptance can be posted on it. Write to mail@kleidos.dev.", { href: `${WEB}/${t.repo}/pull/${t.pr}`, label: "Back to the pull request" });
+        return messagePage(lang, 409, "locked", back);
       case "not_user":
-        return page(`${head}\n<div class="box alert" role="alert"><p>Only a personal account can sign. @${escapeHtml(session.login)} is not one.</p></div>\n${who}`, { title: "Only a personal account can sign", status: 403 });
+        return page(statusBody(lang, t, st0.notUserTitle, st0.notUser(login), "alert", who), { title: st0.notUserTitle, lang, path: t.path, status: 403 });
       case "exempt":
-        return page(`${head}\n<div class="box ok" role="status"><p>@${escapeHtml(session.login)} is on the Kleidos exemption list: nothing to sign.</p></div>\n${who}`, { title: "Nothing to sign" });
+        return page(statusBody(lang, t, st0.nothingTitle, st0.exempt(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "entity":
-        return page(`${head}\n<div class="box ok" role="status"><p>@${escapeHtml(session.login)} is covered by the agreement of ${escapeHtml(s.entity ?? "an entity")}: nothing to sign.</p></div>\n${who}`, { title: "Nothing to sign" });
-      case "signed":
+        return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(s.entity ?? "an entity")), "info", who), { title: st0.nothingTitle, lang, path: t.path });
+      case "signed": {
         await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr });
-        return page(
-          `${head}\n<div class="box ok" role="status"><p>You accepted version ${s.record!.version} on ${escapeHtml(s.record!.accepted_at.slice(0, 10))}. Nothing to do: the pull request is being checked again. <a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/signatures/signatures/individual/${session.id}.json">Register entry</a>.</p></div>\n${who}`,
-          { title: "Already signed" },
-        );
+        const entry = `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/signatures/signatures/individual/${session.id}.json">${st0.entry}</a>`;
+        return page(statusBody(lang, t, st0.signedTitle, `${st0.signed(s.record!.version, escapeHtml(s.record!.accepted_at.slice(0, 10)))} ${entry}.`, "done", who), { title: st0.signedTitle, lang, path: t.path });
+      }
       case "not_author":
-        return page(`${head}\n<div class="box" role="status"><p>@${escapeHtml(session.login)} is not listed as an author of this pull request, so there is nothing to sign here.</p></div>\n${who}`, { title: "Nothing to sign here" });
+        return page(statusBody(lang, t, st0.nothingTitle, st0.notAuthor(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "must_sign": {
-        const canSign = signing.on && session.token && session.for === `${t.repo}#${t.pr}`;
-        const action = canSign ? await signForm(session, t, keys, signing.setSha256) : signing.on ? signInLink(t, "Sign in with GitHub again to accept") : "";
-        return page(`${head}\n${who}\n${off}\n${SUMMARY}\n${await versionLine(env)}\n<p><a href="#accept">Jump to the acceptance</a></p>\n${agreementText("individual")}\n${BEFORE}\n${action}`, { title: `Sign the Kleidos Contributor Agreement · ${t.repo}#${t.pr}` });
+        if (signing.on && session.token && session.for === `${t.repo}#${t.pr}`) {
+          const body = await acceptBody(lang, env, session, t, keys, signing.setSha256, false);
+          return page(notice ? body.replace(`${where(S[lang].accept.where)}\n`, `${where(S[lang].accept.where)}\n${notice}\n`) : body, { title: signTitle(lang, t, "accept"), lang, path: t.path });
+        }
+        return page(startBody(lang, t, s.a, signing.on, { again: true, notice, who }), { title: signTitle(lang, t, "start"), lang, path: t.path });
       }
     }
   });
@@ -249,16 +389,20 @@ async function acceptanceStands(bot: Bot, config: Config, t: Target, account: nu
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sign-in, sign-out and the signature
+
 async function pkceChallenge(verifier: string): Promise<string> {
   return b64urlEncode(new Uint8Array(await crypto.subtle.digest("SHA-256", utf8(verifier))));
 }
 
 export async function login(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys, url: URL): Promise<Response> {
-  if (!(await env.RL_AUTH.limit({ key: clientIp(req) })).success) return messagePage(429, "Too many requests", "Too many sign-in attempts from your network. Wait a minute and try again.");
+  const lang = pickLang(req, url);
+  if (!(await env.RL_AUTH.limit({ key: clientIp(req) })).success) return messagePage(lang, 429, "tooManyAuth");
   const ret = url.searchParams.get("return") ?? "";
-  const st = await guard(() => servedTarget(bot, ret));
+  const st = await guard(lang, () => servedTarget(bot, ret));
   if (st instanceof Response) return st;
-  if (!st || st.t.path !== ret) return messagePage(400, "Bad link", "This sign-in link is not valid. Go back to the pull request and follow its link again.");
+  if (!st || st.t.path !== ret) return messagePage(lang, 400, "badLink");
   const t: { state: string; verifier: string } = { state: randomB64url(32), verifier: randomB64url(32) };
   const authorize = new URL(`${WEB}/login/oauth/authorize`);
   authorize.searchParams.set("client_id", env.CLIENT_ID);
@@ -268,7 +412,7 @@ export async function login(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   authorize.searchParams.set("code_challenge_method", "S256");
   authorize.searchParams.set("allow_signup", "false");
   if (url.searchParams.get("switch") === "1") authorize.searchParams.set("prompt", "select_account");
-  const cookie = await transactionCookie(keys, { v: 1, state: t.state, verifier: t.verifier, return: st.t.path, exp: nowSeconds() + OAUTH_TTL });
+  const cookie = await transactionCookie(keys, { v: 1, state: t.state, verifier: t.verifier, return: st.t.path, lang, exp: nowSeconds() + OAUTH_TTL });
   return redirect(authorize.toString(), 302, [cookie]);
 }
 
@@ -281,27 +425,29 @@ async function revokeGrant(env: ConfiguredEnv, bot: Bot, token: string): Promise
 }
 
 export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys, url: URL): Promise<Response> {
-  if (!(await env.RL_AUTH.limit({ key: clientIp(req) })).success) return messagePage(429, "Too many requests", "Too many sign-in attempts from your network. Wait a minute and try again.");
+  const reqLang = pickLang(req, url);
+  if (!(await env.RL_AUTH.limit({ key: clientIp(req) })).success) return messagePage(reqLang, 429, "tooManyAuth");
   const clear = clearCookie(OAUTH_COOKIE);
   const tx = await readTransaction(req, keys);
-  if (!tx) return messagePage(400, "Session expired", "The sign-in took too long or was already used. Go back to the pull request and follow its link again.", undefined, [clear]);
-  const back = { href: tx.return, label: "Back to the sign page" };
+  if (!tx) return messagePage(reqLang, 400, "oauthExpired", undefined, [clear]);
+  const lang = tx.lang ?? reqLang;
+  const back = { href: `${tx.return}?lang=${lang}`, label: BACK.sign[lang] };
   const state = url.searchParams.get("state") ?? "";
   const code = url.searchParams.get("code") ?? "";
   // The state is compared before anything else, the error branch included:
   // a redirect that did not come from this sign-in leaves it untouched.
   if (!safeEqual(state, tx.state)) {
     log("oauth refused", { reason: "state" });
-    return messagePage(400, "Sign-in refused", "This sign-in did not start here. Nothing was signed. Follow the pull request's link again.", url.searchParams.get("error") ? back : undefined);
+    return messagePage(lang, 400, "oauthState", url.searchParams.get("error") ? back : undefined);
   }
-  if (url.searchParams.get("error")) return messagePage(400, "Authorization cancelled", "GitHub's authorization was cancelled, so nothing was signed or posted.", back, [clear]);
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(code)) return messagePage(400, "Sign-in refused", "GitHub's answer was not valid. Follow the pull request's link again.", undefined, [clear]);
-  const r = await guard(async () => {
+  if (url.searchParams.get("error")) return messagePage(lang, 400, "oauthCancelled", back, [clear]);
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(code)) return messagePage(lang, 400, "oauthCode", undefined, [clear]);
+  const r = await guard(lang, async () => {
     const st = await servedTarget(bot, tx.return);
-    if (!st) return messagePage(400, "Bad link", "This sign-in link is not valid.", undefined, [clear]);
+    if (!st) return messagePage(lang, 400, "badLink", undefined, [clear]);
     const repoToken = await bot.gh.token([st.t.repo], { pull_requests: "read", contents: "read" });
     const repo = (await bot.gh.request<{ id: number; private: boolean }>("GET", `/repos/${st.t.repo}`, { token: repoToken })).data;
-    if (repo.private) return messagePage(404, "Not found", "There is no pull request to sign for at this address.", undefined, [clear]);
+    if (repo.private) return messagePage(lang, 404, "noTarget", undefined, [clear]);
     const exchange = await fetch(`${WEB}/login/oauth/access_token`, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "user-agent": "kleidos-cla" },
@@ -310,20 +456,20 @@ export async function callback(req: Request, env: ConfiguredEnv, bot: Bot, keys:
     const body = (await exchange.json().catch(() => ({}))) as { access_token?: string; error?: string };
     if (!exchange.ok || !body.access_token || body.error) {
       log("oauth exchange refused", { status: exchange.status, reason: typeof body.error === "string" ? body.error.slice(0, 40) : "none" });
-      return messagePage(400, "Sign-in refused", "GitHub did not accept this sign-in (it may have been used already). Follow the pull request's link again.", back, [clear]);
+      return messagePage(lang, 400, "oauthExchange", back, [clear]);
     }
     const token = body.access_token;
     const user = (await bot.gh.request<{ id: number; login: string; type: string }>("GET", "/user", { token })).data;
     if (!isLogin(user.login) || typeof user.id !== "number") {
       await revokeGrant(env, bot, token);
-      return messagePage(400, "Sign-in refused", "GitHub's answer was not valid.", undefined, [clear]);
+      return messagePage(lang, 400, "oauthUser", undefined, [clear]);
     }
     const s = await signerStatus(bot, st.config, st.t, user);
     const keep = s.status === "must_sign";
     if (!keep) await revokeGrant(env, bot, token);
     const session: Session = { v: 1, sid: randomB64url(16), id: user.id, login: user.login, type: user.type, exp: nowSeconds() + SESSION_TTL, ...(keep ? { token, for: `${st.t.repo}#${st.t.pr}` } : {}) };
     log("signed in", { repo: st.t.repo, pr: st.t.pr, outcome: s.status });
-    return redirect(st.t.path, 303, [clear, await sessionCookie(keys, session)]);
+    return redirect(`${st.t.path}?lang=${lang}`, 303, [clear, await sessionCookie(keys, session)]);
   });
   return r;
 }
@@ -341,54 +487,75 @@ async function readForm(req: Request): Promise<URLSearchParams | null> {
   return new URLSearchParams(new TextDecoder().decode(buf));
 }
 
+/** A form's language: its own `lang` field, else the request's. */
+function formLang(req: Request, form: URLSearchParams | null): Lang {
+  const v = form?.get("lang");
+  return isLang(v) ? v : pickLang(req, new URL(req.url));
+}
+
 export async function logout(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys): Promise<Response> {
-  if (!sameOrigin(req, env)) return messagePage(403, "Refused", "This form did not come from cla.kleidos.dev.");
+  if (!sameOrigin(req, env)) return messagePage(pickLang(req, new URL(req.url)), 403, "refusedOrigin");
   const form = await readForm(req);
+  const lang = formLang(req, form);
   const session = await readSession(req, keys);
-  if (!form || !session) return redirect("/agreement", 303, [clearCookie(SESSION_COOKIE)]);
-  if (!(await csrfVerify(keys.csrf, [session.sid, "logout"], form.get("csrf") ?? ""))) return messagePage(403, "Refused", "This form is out of date. Reload the page and try again.");
+  if (!form || !session) return redirect(`/agreement?lang=${lang}`, 303, [clearCookie(SESSION_COOKIE)]);
+  if (!(await csrfVerify(keys.csrf, [session.sid, "logout"], form.get("csrf") ?? ""))) return messagePage(lang, 403, "refusedStale");
   if (session.token) await revokeGrant(env, bot, session.token);
-  return redirect("/agreement", 303, [clearCookie(SESSION_COOKIE)]);
+  return redirect(`/agreement?lang=${lang}`, 303, [clearCookie(SESSION_COOKIE)]);
 }
 
 /** Design 6.3: the signature. Stops at the first failure with nothing posted. */
 export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Keys): Promise<Response> {
-  if (!sameOrigin(req, env)) return messagePage(403, "Refused", "This form did not come from cla.kleidos.dev, so nothing was posted.");
+  if (!sameOrigin(req, env)) return messagePage(pickLang(req, new URL(req.url)), 403, "refusedOrigin");
   const form = await readForm(req);
-  if (!form) return messagePage(400, "Refused", "The form could not be read, so nothing was posted. Reload the page and try again.");
+  const lang = formLang(req, form);
+  if (!form) return messagePage(lang, 400, "formUnreadable");
   const session = await readSession(req, keys);
-  if (!session) return messagePage(401, "Session expired", "Your sign-in has expired, so nothing was posted. Go back to the pull request and follow its link again.");
+  if (!session) return messagePage(lang, 401, "sessionExpired");
   const t = parseSignPath(`/sign/${form.get("owner") ?? ""}/${form.get("repo") ?? ""}/${form.get("pr") ?? ""}`);
-  if (!t) return messagePage(400, "Refused", "The form is not valid, so nothing was posted.");
+  if (!t) return messagePage(lang, 400, "formInvalid");
+  const back = { href: `${t.path}?lang=${lang}`, label: BACK.sign[lang] };
   const version = Number(form.get("version"));
   const csrfOk = await csrfVerify(keys.csrf, [session.sid, "agree", `${t.repo}#${t.pr}`, String(version)], form.get("csrf") ?? "");
   if (!csrfOk) {
     log("agree refused", { reason: "csrf" });
-    return messagePage(403, "Refused", "This form is out of date or was not made for you, so nothing was posted. Reload the sign page and try again.", { href: t.path, label: "Back to the sign page" });
+    return messagePage(lang, 403, "csrf", back);
   }
-  if (form.get("accept") !== "yes") return messagePage(400, "Not accepted", "The box was not ticked, so nothing was posted.", { href: t.path, label: "Back to the sign page" });
-  if (!session.token || session.for !== `${t.repo}#${t.pr}`) return messagePage(401, "Sign in again", "Sign in again on this pull request's page to accept. Nothing was posted.", { href: t.path, label: "Back to the sign page" });
-  const r = await guard(async () => {
+  const tokenHere = Boolean(session.token) && session.for === `${t.repo}#${t.pr}`;
+  if (form.get("accept") !== "yes") {
+    if (!tokenHere) return messagePage(lang, 401, "signInAgain", back);
+    // The box was not ticked: the same page again, with the error beside the box and nothing posted.
+    const r = await guard(lang, async () => {
+      const config = await bot.registry.config();
+      if (!config.served_repositories[t.repo]) return messagePage(lang, 404, "notServed");
+      const signing = await signingState(config);
+      if (!signing.on) return messagePage(lang, 503, "paused");
+      return acceptPage(lang, env, session, t, keys, signing.setSha256, true);
+    });
+    return r;
+  }
+  if (!tokenHere) return messagePage(lang, 401, "signInAgain", back);
+  const r = await guard(lang, async () => {
     const config = await bot.registry.config();
-    if (!config.served_repositories[t.repo]) return messagePage(404, "Not served", "This repository is not served by the Kleidos CLA bot.");
+    if (!config.served_repositories[t.repo]) return messagePage(lang, 404, "notServed");
     const signing = await signingState(config);
-    if (!signing.on) return messagePage(503, "Signing paused", "The agreement is being updated, so signing is paused. Nothing was posted. Try again later.");
-    if (version !== AGREEMENT_VERSION || form.get("set_sha256") !== signing.setSha256) return messagePage(409, "The agreement changed", "The text on your page is not the current one, so nothing was posted. Reload the sign page.", { href: t.path, label: "Back to the sign page" });
+    if (!signing.on) return messagePage(lang, 503, "paused");
+    if (version !== AGREEMENT_VERSION || form.get("set_sha256") !== signing.setSha256) return messagePage(lang, 409, "changed", back);
     if (!(await env.RL_AGREE_IP.limit({ key: clientIp(req) })).success || !(await env.RL_AGREE_ACCOUNT.limit({ key: String(session.id) })).success) {
-      return messagePage(429, "Too many requests", "Too many attempts. Wait a minute and try again. Nothing was posted.");
+      return messagePage(lang, 429, "tooManyAgree");
     }
     const s = await signerStatus(bot, config, t, session);
     if (s.status !== "must_sign") {
       log("agree refused", { reason: s.status, repo: t.repo, pr: t.pr });
-      const why: Record<string, [number, string]> = {
-        closed: [409, "This pull request is closed, so nothing was posted."],
-        locked: [409, "This pull request is locked, so nothing was posted."],
-        private: [404, "There is no pull request to sign for at this address."],
-        not_user: [403, "Only a personal account can sign. Nothing was posted."],
-        signed: [409, "You have already accepted this agreement. Nothing was posted."],
-      };
-      const [status, sentence] = why[s.status] ?? [403, `@${session.login} does not need to sign on this pull request, so nothing was posted.`];
-      return messagePage(status, "Nothing posted", sentence, { href: t.path, label: "Back to the sign page" });
+      const why = {
+        closed: [409, "postedClosed"],
+        locked: [409, "postedLocked"],
+        private: [404, "postedPrivate"],
+        not_user: [403, "postedNotUser"],
+        signed: [409, "postedSigned"],
+      } as const;
+      const [status, key] = s.status in why ? why[s.status as keyof typeof why] : ([403, "postedNotNeeded"] as const);
+      return messagePage(lang, status, key, back);
     }
     const confirm = async (c: { id: number; html_url: string; created_at: string }, queue: boolean): Promise<Response> => {
       const next: Session = { v: 1, sid: session.sid, id: session.id, login: session.login, type: session.type, exp: session.exp, pending: { repo: t.repo, pr: t.pr, comment_id: c.id, comment_url: c.html_url, at: c.created_at } };
@@ -399,7 +566,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
           log("enqueue failed", { repo: t.repo, pr: t.pr });
         }
       }
-      return redirect(t.path, 303, [await sessionCookie(keys, next)]);
+      return redirect(`${t.path}?lang=${lang}`, 303, [await sessionCookie(keys, next)]);
     };
     // A second submission (a double click, a reload of the post) finds the first acceptance and confirms it.
     const already = (assessed: Assessment) => assessed.acceptances.find((x) => x.account === session.id && !x.edited);
@@ -418,7 +585,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
         // The grant may have been revoked by a first submission that did post: look before saying nothing was posted.
         const again = already((await signerStatus(bot, config, t, session)).a);
         if (again) return confirm({ id: again.commentId, html_url: again.commentUrl, created_at: again.createdAt }, false);
-        return messagePage(401, "Sign in again", "GitHub did not accept the comment with your sign-in (it may have expired or been revoked). Nothing was posted.", { href: t.path, label: "Back to the sign page" }, [clearCookie(SESSION_COOKIE)]);
+        return messagePage(lang, 401, "signInAgainGitHub", back, [clearCookie(SESSION_COOKIE)]);
       }
       throw e;
     }
@@ -429,47 +596,48 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   return r;
 }
 
-/** What every page says while the app's secrets are missing. */
-export const NOT_CONFIGURED_EN = "The CLA bot is not configured yet: signing opens once its GitHub App is set up. Come back later, or write to mail@kleidos.dev.";
-const NOT_CONFIGURED_ES = "El bot del CLA aún no está configurado: la firma se abrirá cuando su aplicación de GitHub esté instalada. Vuelve más tarde o escribe a mail@kleidos.dev.";
+// ---------------------------------------------------------------------------
+// The public texts
 
-function notConfiguredBox(configured: boolean, sentence: string): string {
-  return configured ? "" : `<div class="box" role="status"><p><strong>${escapeHtml(sentence)}</strong></p></div>\n`;
+function notConfiguredBox(lang: Lang, configured: boolean): string {
+  return configured ? "" : `<div class="card" role="status"><p><strong>${escapeHtml(S[lang].notConfigured)}</strong></p></div>\n`;
 }
 
-export function agreementPage(kind: "individual" | "entity", env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, configured: boolean): Promise<Response> {
-  return (async () => {
-    const entityNote =
-      kind === "entity"
-        ? `<div class="box"><p>The entity version is signed outside this site: as a PDF with an electronic signature, or by email from the entity's domain to <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a>, with the list of the GitHub account ids it authorizes. Accounts it covers sign nothing here.</p></div>`
-        : `<p>For a company or other organization: <a href="/agreement/entity">the entity version</a>.</p>`;
-    return page(
-      `<h1>Kleidos Contributor Agreement${kind === "entity" ? " (entity version)" : ""}</h1>\n${notConfiguredBox(configured, NOT_CONFIGURED_EN)}${SUMMARY}\n${await versionLine(env)}\n${entityNote}\n<p>To sign, open a pull request in a Kleidos repository and follow the link the bot posts on it.</p>\n${agreementText(kind)}`,
-      { title: `Kleidos Contributor Agreement${kind === "entity" ? " (entity version)" : ""}`, cache: "public" },
-    );
-  })();
+export async function agreementPage(kind: "individual" | "entity", lang: Lang, env: { BUILD_COMMIT: string; REGISTRY_REPO: string }, configured: boolean): Promise<Response> {
+  const t = S[lang];
+  const g = t.agreement;
+  const entity = kind === "entity";
+  const texts = agreementTexts(lang, kind, "");
+  const spanish = lang === "es";
+  const summaryEs = spanish
+    ? `<details class="fold"><summary><span>${g.partSummary}<small>${g.partSummarySub}</small></span></summary><div class="fold-body"><div class="prose">${rendered(FILES["summary.es.md"]!, "re").html}</div></div></details>`
+    : "";
+  const banner = g.banner ? `<div class="banner">${g.banner}</div>` : "";
+  const intro = entity ? `<div class="card"><p>${g.entityNote}</p></div>${g.entityOnlyEnglish ? `\n<p class="note">${g.entityOnlyEnglish}</p>` : ""}` : `<p class="note">${g.how} ${g.entity}</p>`;
+  const labels: [string, string] = entity && spanish ? ["Contributor Agreement (English)", g.partB] : [g.partA, g.partB];
+  const body = `<div class="progress"><p class="eyebrow">${g.eyebrow}</p></div>
+<h1 class="h-page">${entity ? g.entityH1 : g.h1}</h1>
+${notConfiguredBox(lang, configured)}${banner}
+<p class="lede">${g.lede}</p>
+${summaryList(lang)}
+${summaryEs}
+${await metaLine(lang, env, kind)}
+${intro}
+${toc(t, texts.parts, labels)}
+${texts.html}`;
+  return page(body, { title: entity ? g.entityTitle : g.title, lang, path: entity ? "/agreement/entity" : "/agreement", kind: "doc", cache: "public" });
 }
 
-export async function spanishPage(configured: boolean): Promise<Response> {
-  const opts = { headingShift: 1 };
-  return page(
-    `<h1>Acuerdo de Contribución de Kleidos: textos en español</h1>
-${notConfiguredBox(configured, NOT_CONFIGURED_ES)}<div class="box"><p>Estos textos son informativos. El acuerdo se celebra en inglés y solo el texto inglés obliga: <a href="/agreement" hreflang="en" lang="en">Kleidos Contributor Agreement</a>.</p></div>
-<section class="text">${renderMarkdown(FILES["summary.es.md"]!, opts)}</section>
-<section class="text">${renderMarkdown(FILES["addendum.es.md"]!, opts)}</section>`,
-    { title: "Acuerdo de Contribución de Kleidos: textos en español", lang: "es", cache: "public" },
-  );
-}
-
-export function privacyPage(lang: "en" | "es"): Promise<Response> {
+export function privacyPage(lang: Lang): Promise<Response> {
   const src = lang === "es" ? NOTICES.privacyEs : NOTICES.privacy;
-  return page(renderMarkdown(src, { links: { "PRIVACY.es.md": "/privacy/es", "PRIVACY.md": "/privacy" } }), {
-    title: lang === "es" ? "Aviso de privacidad · Acuerdo de Contribución de Kleidos" : "Privacy notice · Kleidos Contributor Agreement",
-    lang,
-    cache: "public",
-  });
+  const html = addHeadingIds(renderMarkdown(src, { links: { "PRIVACY.es.md": "/privacy?lang=es", "PRIVACY.md": "/privacy?lang=en" } }), "p").html;
+  return page(`<div class="progress"><p class="eyebrow">${S[lang].privacy.eyebrow}</p></div>\n<div class="prose privacy">${html}</div>`, { title: S[lang].privacy.title, lang, path: "/privacy", kind: "doc", cache: "public" });
 }
 
-export function setupPage(): Promise<Response> {
-  return page(`<h1>kleidos-cla installed</h1>\n<p>The app is installed. It serves only the Kleidos repositories; an installation on any other account is removed automatically.</p>`, { title: "kleidos-cla installed" });
+export function setupPage(lang: Lang): Promise<Response> {
+  const [title, sentence] =
+    lang === "es"
+      ? ["kleidos-cla instalada", "La aplicación está instalada. Solo atiende los repositorios de Kleidos; una instalación en cualquier otra cuenta se retira automáticamente."]
+      : ["kleidos-cla installed", "The app is installed. It serves only the Kleidos repositories; an installation on any other account is removed automatically."];
+  return page(`<h1 class="h-task">${title}</h1>\n<p>${sentence}</p>`, { title, lang, path: "/setup" });
 }

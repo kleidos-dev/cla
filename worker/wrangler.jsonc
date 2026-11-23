@@ -13,9 +13,13 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "cla.kleidos.dev", "custom_domain": true }],
-  // The agreement, the notices and the stylesheet are bundled as text, so
-  // the deployed Worker serves the bytes of the commit it was built from.
-  "rules": [{ "type": "Text", "globs": ["**/*.md", "**/SHA256SUMS", "**/*.css"], "fallthrough": true }],
+  // The agreement, the notices, the stylesheet, the mark and the button's
+  // drawings are bundled as text and the fonts as bytes, so the deployed
+  // Worker serves the bytes of the commit it was built from.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.md", "**/SHA256SUMS", "**/*.css", "**/*.svg"], "fallthrough": true },
+    { "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }
+  ],
   "vars": {
     "ALLOWED_ACCOUNT_IDS": "357318718",
     "REGISTRY_REPO": "kleidos-dev/cla",

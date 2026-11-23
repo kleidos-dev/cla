@@ -16,6 +16,7 @@ Version 1 is made of two texts accepted together, in a single act. **English is 
 | [`agreements/v1/entity.md`](agreements/v1/entity.md) | The same template, entity version, for a company or other organization. |
 | [`agreements/v1/addendum.md`](agreements/v1/addendum.md) | The Kleidos Addendum: twelve clauses that adapt the template to Spanish law and state the purpose of the licence, including the commercial exception and the commitment to keep every published version open source (clause 10). Where the two differ, the Addendum prevails. |
 | [`agreements/v1/addendum.es.md`](agreements/v1/addendum.es.md) | Traducción informativa del Anexo al español. |
+| [`agreements/v1/individual.es.md`](agreements/v1/individual.es.md) | Traducción informativa del Contributor Agreement individual al español: borrador pendiente de revisión, no forma parte del conjunto que se acepta. |
 | [`agreements/v1/summary.es.md`](agreements/v1/summary.es.md) | Resumen informativo en español. |
 | [`agreements/v1/SHA256SUMS`](agreements/v1/SHA256SUMS) | The SHA-256 of `individual.md`, `entity.md` and `addendum.md`. |
 
@@ -30,9 +31,9 @@ Check it yourself with `sha256sum -c SHA256SUMS && sha256sum SHA256SUMS` inside 
 ## How to sign
 
 1. Open your pull request in any Kleidos repository.
-2. The bot `kleidos-cla` comments with a **Read and sign the agreement** link, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
-3. The link opens `cla.kleidos.dev/sign/<owner>/<repo>/<number>`, where the whole text can be read without signing in. Click **Sign in with GitHub to accept**. GitHub asks you to authorize the app `kleidos-cla`; it reads your account id and login and, when you click "I agree", posts one comment on that pull request for you.
-4. Back on the page, tick the box and click **I agree: post my acceptance on the pull request**. The acceptance sentence is posted on the pull request under your account; that comment is your signature. The app's permission is revoked at once.
+2. The bot `kleidos-cla` posts a short comment, in English and Spanish, with a **Sign the agreement** button that shows how many authors have signed, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
+3. The button opens `cla.kleidos.dev/sign/<owner>/<repo>/<number>` (step 1 of 2): what the agreement is, who still has to sign, and **Sign in with GitHub to sign**. Signing in is not signing. GitHub asks you to authorize the app `kleidos-cla`; it reads your account id and login and, when you click "I agree and sign", posts one comment on that pull request for you. The full text is always at [cla.kleidos.dev/agreement](https://cla.kleidos.dev/agreement) ([en español](https://cla.kleidos.dev/agreement?lang=es), informative).
+4. Back on the page (step 2 of 2), read the summary, open the full text if you want, tick the box and click **I agree and sign**. The acceptance sentence is posted on the pull request under your account; that comment is your signature. The app's permission is revoked at once, and a confirmation page shows the register entry once it is recorded.
 5. Within a minute the register records it, the bot's comment turns to "accepted" and `📝 CLA` turns green. Where the repository lets the app start an outside contributor's checks, the waiting checks start by themselves; elsewhere a maintainer starts them, and the comment says which. Later pull requests, in any Kleidos repository, are green from the start.
 
 Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1:
@@ -96,11 +97,12 @@ signer ── sign in with GitHub ──▶│ /sign, /auth, /agree            �
                verify.yml checks the whole branch after every write and weekly
 ```
 
-- **The Worker never writes the register.** The GitHub App has no contents write at all. The click on "I agree" makes the app post the sentence with the signer's own short-lived user token, so GitHub itself witnesses who signed; this repository's own job then re-reads that comment from GitHub and records it. A compromised Worker could not fabricate a signature for an account that is not authorizing the app at that moment, could not backdate one (`accepted_at` is GitHub's), and could not alter or remove a record.
+- **The Worker never writes the register.** The GitHub App has no contents write at all. The click on "I agree and sign" makes the app post the sentence with the signer's own short-lived user token, so GitHub itself witnesses who signed; this repository's own job then re-reads that comment from GitHub and records it. A compromised Worker could not fabricate a signature for an account that is not authorizing the app at that moment, could not backdate one (`accepted_at` is GitHub's), and could not alter or remove a record.
 - **Every fact is re-read on every event.** Queue messages carry identifiers only; a lost, repeated or replayed webhook only causes a recomputation. Webhooks are checked against their HMAC signature before anything is parsed.
 - **CI waits through GitHub's own fork approval** ("Require approval for all external contributors"). In a repository whose `auto_approve` is true, the app approves the held runs of a pull request once every author has signed, except when its head commit changes anything under `.github/` (read from that commit's own tree against its merge base, so a head that moves cannot change the answer), or when a held run may target a self-hosted runner: those wait for a maintainer. `pull_request_target` is used nowhere.
 - **The merge block** is the required status check `📝 CLA`, pinned to the app in each repository's ruleset.
-- **The sign page** runs no JavaScript at all, loads nothing from elsewhere, and sends a strict Content-Security-Policy. The session and the OAuth transaction live in two encrypted `__Host-` cookies; the server keeps no session.
+- **The sign page** runs no JavaScript at all, loads nothing from elsewhere (its stylesheet, fonts and mark come from its own origin), and sends a strict Content-Security-Policy. The session and the OAuth transaction live in two encrypted `__Host-` cookies; the server keeps no session. Every page exists in English and Spanish at one path (`?lang=en|es`, else the browser's `Accept-Language`); the links carry the language, so no cookie remembers it.
+- **The comment's button** is an SVG the Worker draws, at `/button/v1/<state>-<signed>-<total>.svg`. GitHub shows comment images through its camo proxy, which caches by URL, so the content of a URL never changes and the bot rewrites its comment with the URL of the new state on every evaluation.
 
 The code:
 

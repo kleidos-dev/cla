@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 import css from "./assets/cla.css";
+import monoFont from "./assets/fonts/kleidos-mono.woff2";
+import displayFont from "./assets/fonts/kleidos-sans-display.woff2";
+import textFont from "./assets/fonts/kleidos-sans-text.woff2";
+import mark from "./assets/mark.svg";
+import type { Lang, MessageKey } from "./i18n";
+import { MESSAGES, S } from "./i18n";
 import { escapeHtml } from "./markdown";
 import { sha256Hex } from "./util";
 
 export { escapeHtml };
 
-export const CSP = "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+/** No script anywhere; styles, images and the brand's fonts only from this origin. */
+export const CSP = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "content-security-policy": CSP,
@@ -21,6 +28,15 @@ const SECURITY_HEADERS: Record<string, string> = {
   "permissions-policy": "accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()",
 };
 
+export type Cache = "no-store" | "public" | "immutable";
+
+const CACHE: Record<Cache, string> = {
+  "no-store": "no-store",
+  public: "public, max-age=300",
+  // A URL whose content never changes: the hashed stylesheet and the button images.
+  immutable: "public, max-age=31536000, immutable",
+};
+
 let cssHash: Promise<string> | null = null;
 export function stylesheetPath(): Promise<string> {
   cssHash ??= sha256Hex(css).then((h) => `/assets/cla.${h.slice(0, 12)}.css`);
@@ -28,62 +44,90 @@ export function stylesheetPath(): Promise<string> {
 }
 export const STYLESHEET = css;
 
-export function securityHeaders(h: Headers, cache: "no-store" | "public"): Headers {
+/** The static files besides the stylesheet, by path: the fonts the stylesheet names and the header's mark. */
+export const ASSETS: Record<string, { body: string | ArrayBuffer; type: string }> = {
+  "/assets/fonts/kleidos-sans-text.woff2": { body: textFont, type: "font/woff2" },
+  "/assets/fonts/kleidos-sans-display.woff2": { body: displayFont, type: "font/woff2" },
+  "/assets/fonts/kleidos-mono.woff2": { body: monoFont, type: "font/woff2" },
+  "/assets/mark.svg": { body: mark, type: "image/svg+xml" },
+};
+
+export function securityHeaders(h: Headers, cache: Cache): Headers {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) h.set(k, v);
-  h.set("cache-control", cache === "no-store" ? "no-store" : "public, max-age=300");
+  h.set("cache-control", CACHE[cache]);
   return h;
 }
 
 export interface PageOptions {
   title: string;
+  lang: Lang;
+  /** The path of this page without its query: the language switch and the alternate links point at it. Omitted on pages that answer a form. */
+  path?: string;
+  /** A task page (one narrow column) or a document (the reading measure). */
+  kind?: "task" | "doc";
   status?: number;
-  cache?: "no-store" | "public";
-  lang?: "en" | "es";
+  cache?: Cache;
   headers?: Record<string, string>;
   cookies?: string[];
 }
 
-/** The skip link, header and footer, in the page's own language (WCAG 3.1.2). */
-const CHROME_EN = {
-  top: `<a class="skip" href="#main">Skip to the content</a>
-<header><nav aria-label="Site"><a href="/agreement">Kleidos Contributor Agreement</a></nav></header>`,
-  bottom: `<footer><p><a href="/agreement">Agreement</a> · <a href="/agreement/es" hreflang="es" lang="es">Resumen en español</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/kleidos-dev/cla">Register and source</a> · Contact: <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></p></footer>`,
-};
-const CHROME_ES = {
-  top: `<a class="skip" href="#main">Saltar al contenido</a>
-<header><nav aria-label="Sitio"><a href="/agreement" hreflang="en" lang="en">Kleidos Contributor Agreement</a></nav></header>`,
-  bottom: `<footer><p><a href="/agreement" hreflang="en">Acuerdo (en inglés)</a> · <a href="/agreement/es">Resumen en español</a> · <a href="/privacy/es">Privacidad</a> · <a href="https://github.com/kleidos-dev/cla">Registro y código fuente</a> · Contacto: <a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></p></footer>`,
-};
+/** The site's own links carry the page's language, so a reader stays in it from page to page. */
+export function localize(html: string, lang: Lang): string {
+  return html.replace(/href="(\/(?:agreement(?:\/entity)?|privacy|sign\/[^"?#]+))(#[^"]*)?"/g, (_, p: string, frag: string | undefined) => `href="${p}?lang=${lang}${frag ?? ""}"`);
+}
+
+function header(lang: Lang, path: string | undefined): string {
+  const t = S[lang];
+  const sw = path
+    ? `<nav class="lang" aria-label="${t.langNav}">
+<a href="${escapeHtml(path)}?lang=en" hreflang="en" lang="en"${lang === "en" ? ' aria-current="true"' : ""}>English</a>
+<a href="${escapeHtml(path)}?lang=es" hreflang="es" lang="es"${lang === "es" ? ' aria-current="true"' : ""}>Español</a>
+</nav>`
+    : "";
+  return `<a class="skip" href="#main">${t.skip}</a>
+<header class="top"><div class="bar">
+<a class="brand" href="/agreement"><span class="tile"><img src="/assets/mark.svg" alt="" width="30" height="30"></span><span class="brand-words"><span class="brand-name">${t.brandName}</span><span class="brand-sub">${t.brandSub}</span></span></a>
+${sw}
+</div></header>`;
+}
+
+function footer(lang: Lang): string {
+  return `<footer class="foot"><ul class="links">${S[lang].footer.map(([l, h]) => `<li><a href="${h}">${l}</a></li>`).join("")}</ul></footer>`;
+}
 
 export async function page(body: string, opts: PageOptions): Promise<Response> {
-  const lang = opts.lang ?? "en";
+  const lang = opts.lang;
+  const kind = opts.kind ?? "task";
+  const other: Lang = lang === "en" ? "es" : "en";
+  const alt = opts.path ? `\n<link rel="alternate" hreflang="${lang}" href="${escapeHtml(opts.path)}?lang=${lang}">\n<link rel="alternate" hreflang="${other}" href="${escapeHtml(opts.path)}?lang=${other}">` : "";
   const html = `<!doctype html>
 <html lang="${lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <title>${escapeHtml(opts.title)}</title>
-<link rel="stylesheet" href="${await stylesheetPath()}">
+<link rel="stylesheet" href="${await stylesheetPath()}">${alt}
 </head>
-<body>
-${lang === "es" ? CHROME_ES.top : CHROME_EN.top}
-<main id="main">
+<body${kind === "doc" ? ' class="is-doc"' : ""}>
+${localize(`${header(lang, opts.path)}
+<main id="main" class="${kind}">
 ${body}
 </main>
-${lang === "es" ? CHROME_ES.bottom : CHROME_EN.bottom}
+${footer(lang)}`, lang)}
 </body>
 </html>
 `;
-  const headers = securityHeaders(new Headers({ "content-type": "text/html; charset=utf-8", ...(opts.headers ?? {}) }), opts.cache ?? "no-store");
+  const headers = securityHeaders(new Headers({ "content-type": "text/html; charset=utf-8", "content-language": lang, vary: "Accept-Language", ...(opts.headers ?? {}) }), opts.cache ?? "no-store");
   for (const c of opts.cookies ?? []) headers.append("set-cookie", c);
   return new Response(html, { status: opts.status ?? 200, headers });
 }
 
-/** A short page with one message and what to do next. */
-export function messagePage(status: number, title: string, sentence: string, next?: { href: string; label: string }, cookies?: string[]): Promise<Response> {
-  const link = next ? `<p><a href="${escapeHtml(next.href)}">${escapeHtml(next.label)}</a></p>` : "";
-  return page(`<h1>${escapeHtml(title)}</h1>\n<div class="box alert" role="alert"><p>${escapeHtml(sentence)}</p></div>\n${link}`, { title, status, cookies: cookies ?? [] });
+/** A short page with one message and what to do next, in the reader's language. */
+export function messagePage(lang: Lang, status: number, key: MessageKey, next?: { href: string; label: string }, cookies?: string[]): Promise<Response> {
+  const [title, sentence] = MESSAGES[key][lang];
+  const link = next ? `<a class="btn btn-block" href="${escapeHtml(next.href)}">${escapeHtml(next.label)}</a>` : "";
+  return page(`<h1 class="h-task">${escapeHtml(title)}</h1>\n<div class="card is-pending" role="alert"><p>${escapeHtml(sentence)}</p></div>\n${link}`, { title, lang, status, cookies: cookies ?? [] });
 }
 
 export function redirect(location: string, status = 303, cookies: string[] = []): Response {
@@ -92,6 +136,6 @@ export function redirect(location: string, status = 303, cookies: string[] = [])
   return new Response(null, { status, headers });
 }
 
-export function text(body: string, status = 200, type = "text/plain; charset=utf-8", cache: "no-store" | "public" = "no-store"): Response {
+export function text(body: string, status = 200, type = "text/plain; charset=utf-8", cache: Cache = "no-store"): Response {
   return new Response(body, { status, headers: securityHeaders(new Headers({ "content-type": type }), cache) });
 }

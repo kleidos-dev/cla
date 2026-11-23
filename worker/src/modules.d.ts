@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Files bundled as text by the "Text" rule of wrangler.jsonc.
+// Files bundled by the "Text" and "Data" rules of wrangler.jsonc.
 declare module "*.md" {
   const text: string;
   export default text;
@@ -11,4 +11,12 @@ declare module "*/SHA256SUMS" {
 declare module "*.css" {
   const text: string;
   export default text;
+}
+declare module "*.svg" {
+  const text: string;
+  export default text;
+}
+declare module "*.woff2" {
+  const bytes: ArrayBuffer;
+  export default bytes;
 }

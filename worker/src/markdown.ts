@@ -179,3 +179,35 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
   closeLists(0);
   return out.join("\n");
 }
+
+export interface Heading {
+  level: number;
+  id: string;
+  html: string;
+}
+
+function slug(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&[a-z#0-9]+;/g, "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** Gives every h2 to h5 of rendered HTML an id (the prefix and a slug of its text) so a contents list can link it. */
+export function addHeadingIds(html: string, prefix: string): { html: string; headings: Heading[] } {
+  const headings: Heading[] = [];
+  const seen = new Set<string>();
+  const out = html.replace(/<h([2-5])>(.*?)<\/h\1>/g, (_, level: string, inner: string) => {
+    const base = `${prefix}-${slug(inner)}`.slice(0, 60).replace(/-$/, "");
+    let id = base;
+    for (let n = 2; seen.has(id); n++) id = `${base}-${n}`;
+    seen.add(id);
+    headings.push({ level: Number(level), id, html: inner });
+    return `<h${level} id="${id}">${inner}</h${level}>`;
+  });
+  return { html: out, headings };
+}

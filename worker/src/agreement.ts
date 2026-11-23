@@ -3,6 +3,7 @@ import addendum from "../../agreements/v1/addendum.md";
 import addendumEs from "../../agreements/v1/addendum.es.md";
 import entity from "../../agreements/v1/entity.md";
 import individual from "../../agreements/v1/individual.md";
+import individualEs from "../../agreements/v1/individual.es.md";
 import sums from "../../agreements/v1/SHA256SUMS";
 import summaryEs from "../../agreements/v1/summary.es.md";
 import privacy from "../../PRIVACY.md";
@@ -17,6 +18,7 @@ export const FILES: Record<string, string> = {
   "entity.md": entity,
   "addendum.md": addendum,
   "addendum.es.md": addendumEs,
+  "individual.es.md": individualEs,
   "summary.es.md": summaryEs,
   SHA256SUMS: sums,
 };
