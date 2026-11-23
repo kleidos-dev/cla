@@ -48,6 +48,32 @@ describe("the test's HTML reader", () => {
   });
 });
 
+describe("block lines", () => {
+  it("a heading is one to six number signs, a space and text, less the number signs that close it", () => {
+    const html = (md: string) => renderMarkdown(md).html;
+    for (const [md, out] of [
+      ["# a", "<h1>a</h1>"],
+      ["######\ta", "<h6>a</h6>"],
+      ["##  a b  ##  ", "<h2>a b</h2>"],
+      ["# a#", "<h1>a</h1>"],
+      ["# a # #", "<h1>a #</h1>"],
+      ["# # a", "<h1># a</h1>"],
+      ["# ##", "<h1></h1>"],
+      ["# ", "<h1></h1>"],
+    ] as const)
+      expect(html(md), md).toBe(out);
+    for (const md of ["#", "#a", "####### a", " # a", "# a\u2028b"]) expect(html(md), md).toMatch(/^<p>/);
+  });
+
+  it("a list item is a marker, a space and text", () => {
+    const html = (md: string) => renderMarkdown(md).html;
+    for (const mark of ["-", "*", "+"]) expect(html(`${mark}  a -  b `), mark).toBe("<ul>\n<li>\na -  b \n</li>\n</ul>");
+    for (const mark of ["1.", "12.", "123."]) expect(html(`  ${mark}\ta`), mark).toBe("<ol>\n<li>\na\n</li>\n</ol>");
+    expect(html("- ")).toBe("<ul>\n<li>\n\n</li>\n</ul>");
+    for (const md of ["-", "-a", "1.a", "1234. a", "1) a", "- a\u2029b"]) expect(html(md), md).toMatch(/^<p>/);
+  });
+});
+
 describe("hostile Markdown", () => {
   it("is text wherever it stands: no tag, no attribute and no id comes from the source", () => {
     const places: [string, (s: string) => string, string[]][] = [

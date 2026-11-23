@@ -11,10 +11,25 @@ export function fromUtf8(b: Uint8Array): string {
   return decoder.decode(b);
 }
 
+/**
+ * `s` without the run of the given characters at its end. Read from the end
+ * once, where an expression like /=+$/ tries every run of the string.
+ */
+export function stripEnd(s: string, chars: string): string {
+  let end = s.length;
+  while (end > 0 && chars.includes(s.charAt(end - 1))) end--;
+  return s.slice(0, end);
+}
+
+/** Compares two strings by their UTF-16 code units: the same order in every locale. */
+export function byCodeUnits(a: string, b: string): number {
+  return Number(a > b) - Number(a < b);
+}
+
 export function b64urlEncode(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return stripEnd(btoa(bin).replaceAll("+", "-").replaceAll("/", "_"), "=");
 }
 
 export function b64urlDecode(s: string): Uint8Array<ArrayBuffer> | null {
