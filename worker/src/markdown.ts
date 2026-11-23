@@ -5,10 +5,14 @@ import { must } from "./util";
  * A small Markdown renderer for the subset the agreement texts and notices
  * use: headings, paragraphs (soft line breaks kept as <br>), nested bullet
  * and numbered lists, strong and emphasis, inline code, backslash escapes,
- * links and bare URLs. Every character of the source reaches the page
- * escaped; a link keeps only an http(s), mailto or same-site target. A test
- * strips the tags again and compares the words with the source, so the
- * rendering can neither drop nor change one.
+ * links and bare URLs. A link keeps only an http(s), mailto or same-site
+ * target. The source is parsed into nodes whose text is plain text, and the
+ * nodes are serialized in one place: every text and every attribute value is
+ * escaped there, and a tag is one of the fixed names below, so no character
+ * of the source can become markup. Nothing is ever read back out of HTML:
+ * what needs the words of a heading takes them from its nodes. A test reads
+ * the HTML back and compares the words with the source, so the rendering can
+ * neither drop nor change one.
  */
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => must(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]));
@@ -17,90 +21,160 @@ export function escapeHtml(s: string): string {
 export interface RenderOptions {
   /** Added to every heading level (the page has its own <h1>). */
   headingShift?: number;
+  /** Gives every h2 to h5 an id (this prefix and a slug of its text) so a contents list can link it. */
+  idPrefix?: string;
   /** Rewrites of relative link targets, such as PRIVACY.es.md → /privacy/es. */
   links?: Record<string, string>;
 }
 
+/** An inline node: plain text, never HTML, or an element with its children. */
+type Inline = string | { tag: "a" | "code" | "em" | "strong"; href?: string; children: Inline[] };
+
+/** What an inline rule found at a position: its nodes and where the source goes on. */
+interface Match {
+  nodes: Inline[];
+  end: number;
+}
+
+type InlineRule = (src: string, at: number, opts: RenderOptions) => Match | null;
+
 function safeHref(href: string, opts: RenderOptions): string | null {
-  const mapped = opts.links?.[href];
-  if (mapped) return mapped;
+  if (opts.links && Object.hasOwn(opts.links, href)) return must(opts.links[href]);
   if (/^https:\/\/[^\s"'<>]+$/.test(href) || /^http:\/\/[^\s"'<>]+$/.test(href)) return href;
   if (/^mailto:[^\s"'<>]+$/.test(href)) return href;
-  if (/^\/[A-Za-z0-9/_.#-]*$/.test(href)) return href;
+  if (/^\/(?!\/)[A-Za-z0-9/_.#-]*$/.test(href)) return href;
   return null;
 }
 
 const ESCAPABLE = /[\\`*_{}[\]()#+\-.!>|]/;
 
-/** Inline Markdown to HTML. */
-export function renderInline(src: string, opts: RenderOptions = {}): string {
-  let out = "";
-  let i = 0;
+const escapeRule: InlineRule = (src, at) => {
+  const next = src[at + 1];
+  return next !== undefined && ESCAPABLE.test(next) ? { nodes: [next], end: at + 2 } : null;
+};
+
+const codeRule: InlineRule = (src, at) => {
+  const m = /^`([^`]+)`/.exec(src.slice(at));
+  return m && { nodes: [{ tag: "code", children: [must(m[1])] }], end: at + m[0].length };
+};
+
+const linkRule: InlineRule = (src, at, opts) => {
+  const m = /^\[((?:\\.|[^\]\\])*)\]\(([^()\s]+)\)/.exec(src.slice(at));
+  if (!m) return null;
+  const href = safeHref(must(m[2]), opts);
+  const label = parseInline(must(m[1]), opts);
+  const nodes: Inline[] = href !== null && label.length > 0 ? [{ tag: "a", href, children: label }] : label;
+  return { nodes, end: at + m[0].length };
+};
+
+const strongRule: InlineRule = (src, at, opts) => {
+  if (src[at + 1] !== "*") return null;
+  const end = src.indexOf("**", at + 2);
+  return end > at + 2 ? { nodes: [{ tag: "strong", children: parseInline(src.slice(at + 2, end), opts) }], end: end + 2 } : null;
+};
+
+const emphasisRule: InlineRule = (src, at, opts) => {
+  if (src[at + 1] === " " || src[at + 1] === "*") return null;
+  const end = src.indexOf("*", at + 1);
+  if (end <= at + 1 || src[end - 1] === " " || src[end - 1] === "\\") return null;
+  return { nodes: [{ tag: "em", children: parseInline(src.slice(at + 1, end), opts) }], end: end + 1 };
+};
+
+const bareUrlRule: InlineRule = (src, at) => {
+  if (at > 0 && !/[\s(]/.test(must(src[at - 1]))) return null;
+  const m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(src.slice(at));
+  return m && { nodes: [{ tag: "a", href: m[0], children: [m[0]] }], end: at + m[0].length };
+};
+
+/** The rules that can apply at a character, in order; at any other character the source is text. */
+const INLINE_RULES: ReadonlyMap<string, readonly InlineRule[]> = new Map([
+  ["\\", [escapeRule]],
+  ["`", [codeRule]],
+  ["[", [linkRule]],
+  ["*", [strongRule, emphasisRule]],
+  ["h", [bareUrlRule]],
+]);
+
+function matchInline(src: string, at: number, opts: RenderOptions): Match | null {
+  for (const rule of INLINE_RULES.get(must(src[at])) ?? []) {
+    const m = rule(src, at, opts);
+    if (m) return m;
+  }
+  return null;
+}
+
+/** Inline Markdown to nodes. */
+function parseInline(src: string, opts: RenderOptions): Inline[] {
+  const nodes: Inline[] = [];
   let text = "";
-  const flush = () => {
-    out += escapeHtml(text);
-    text = "";
-  };
+  let i = 0;
   while (i < src.length) {
-    const rest = src.slice(i);
-    const ch = must(src[i]);
-    if (ch === "\\" && i + 1 < src.length && ESCAPABLE.test(must(src[i + 1]))) {
-      text += must(src[i + 1]);
-      i += 2;
+    const m = matchInline(src, i, opts);
+    if (!m) {
+      text += must(src[i]);
+      i++;
       continue;
     }
-    if (ch === "`") {
-      const m = /^`([^`]+)`/.exec(rest);
-      if (m) {
-        flush();
-        out += `<code>${escapeHtml(must(m[1]))}</code>`;
-        i += m[0].length;
-        continue;
-      }
-    }
-    if (ch === "[") {
-      const m = /^\[((?:\\.|[^\]\\])*)\]\(([^()\s]+)\)/.exec(rest);
-      if (m) {
-        flush();
-        const href = safeHref(must(m[2]), opts);
-        const label = must(m[1]);
-        if (label.length > 0) out += href ? `<a href="${escapeHtml(href)}">${renderInline(label, opts)}</a>` : renderInline(label, opts);
-        i += m[0].length;
-        continue;
-      }
-    }
-    if (ch === "*" && src[i + 1] === "*") {
-      const end = src.indexOf("**", i + 2);
-      if (end > i + 2) {
-        flush();
-        out += `<strong>${renderInline(src.slice(i + 2, end), opts)}</strong>`;
-        i = end + 2;
-        continue;
-      }
-    }
-    if (ch === "*" && src[i + 1] !== " " && src[i + 1] !== "*") {
-      const end = src.indexOf("*", i + 1);
-      if (end > i + 1 && src[end - 1] !== " " && src[end - 1] !== "\\") {
-        flush();
-        out += `<em>${renderInline(src.slice(i + 1, end), opts)}</em>`;
-        i = end + 1;
-        continue;
-      }
-    }
-    if (ch === "h" && (i === 0 || /[\s(]/.test(must(src[i - 1])))) {
-      const m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(rest);
-      if (m) {
-        flush();
-        out += `<a href="${escapeHtml(m[0])}">${escapeHtml(m[0])}</a>`;
-        i += m[0].length;
-        continue;
-      }
-    }
-    text += ch;
-    i++;
+    if (text) nodes.push(text);
+    text = "";
+    nodes.push(...m.nodes);
+    i = m.end;
   }
-  flush();
-  return out;
+  if (text) nodes.push(text);
+  return nodes;
+}
+
+/** The one place inline nodes become HTML. */
+function inlineHtml(nodes: readonly Inline[]): string {
+  return nodes
+    .map((n) => {
+      if (typeof n === "string") return escapeHtml(n);
+      const href = n.href === undefined ? "" : ` href="${escapeHtml(n.href)}"`;
+      return `<${n.tag}${href}>${inlineHtml(n.children)}</${n.tag}>`;
+    })
+    .join("");
+}
+
+/** The words of inline nodes, without their formatting. */
+function inlineText(nodes: readonly Inline[]): string {
+  return nodes.map((n) => (typeof n === "string" ? n : inlineText(n.children))).join("");
+}
+
+/** Inline Markdown to HTML. */
+export function renderInline(src: string, opts: RenderOptions = {}): string {
+  return inlineHtml(parseInline(src, opts));
+}
+
+export interface Heading {
+  level: number;
+  id: string;
+  html: string;
+}
+
+export interface Rendered {
+  html: string;
+  /** The headings that have an id, in order. */
+  headings: Heading[];
+}
+
+/** A heading's text as an id fragment; the characters HTML escapes are dropped, any other run outside a-z and 0-9 is one hyphen. */
+function slug(text: string): string {
+  return text
+    .replace(/[&<>"']/g, "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** The id of a heading: its prefix and slug, numbered when an earlier heading has it already. */
+function headingId(prefix: string, text: string, seen: Set<string>): string {
+  const base = `${prefix}-${slug(text)}`.slice(0, 60).replace(/-$/, "");
+  let id = base;
+  for (let n = 2; seen.has(id); n++) id = `${base}-${n}`;
+  seen.add(id);
+  return id;
 }
 
 interface ListFrame {
@@ -108,11 +182,13 @@ interface ListFrame {
   indent: number;
 }
 
-/** Block Markdown to HTML. */
-export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
+/** Block Markdown to HTML, and its headings when idPrefix gives them ids. */
+export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered {
   const shift = opts.headingShift ?? 0;
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const out: string[] = [];
+  const headings: Heading[] = [];
+  const ids = new Set<string>();
   let para: string[] = [];
   const lists: ListFrame[] = [];
   let itemOpen = false;
@@ -142,7 +218,15 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
     if (h) {
       closeLists(0);
       const level = Math.min(6, must(h[1]).length + shift);
-      out.push(`<h${level}>${renderInline(must(h[2]), opts)}</h${level}>`);
+      const nodes = parseInline(must(h[2]), opts);
+      const html = inlineHtml(nodes);
+      let attr = "";
+      if (opts.idPrefix !== undefined && level >= 2 && level <= 5) {
+        const id = headingId(opts.idPrefix, inlineText(nodes), ids);
+        headings.push({ level, id, html });
+        attr = ` id="${escapeHtml(id)}"`;
+      }
+      out.push(`<h${level}${attr}>${html}</h${level}>`);
       continue;
     }
     const li = /^(\s*)([-*+]|\d{1,3}\.)\s+(.*)$/.exec(line);
@@ -179,37 +263,5 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
     para.push(line);
   }
   closeLists(0);
-  return out.join("\n");
-}
-
-export interface Heading {
-  level: number;
-  id: string;
-  html: string;
-}
-
-function slug(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, "")
-    .replace(/&[a-z#0-9]+;/g, "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-/** Gives every h2 to h5 of rendered HTML an id (the prefix and a slug of its text) so a contents list can link it. */
-export function addHeadingIds(html: string, prefix: string): { html: string; headings: Heading[] } {
-  const headings: Heading[] = [];
-  const seen = new Set<string>();
-  const out = html.replace(/<h([2-5])>(.*?)<\/h\1>/g, (_, level: string, inner: string) => {
-    const base = `${prefix}-${slug(inner)}`.slice(0, 60).replace(/-$/, "");
-    let id = base;
-    for (let n = 2; seen.has(id); n++) id = `${base}-${n}`;
-    seen.add(id);
-    headings.push({ level: Number(level), id, html: inner });
-    return `<h${level} id="${id}">${inner}</h${level}>`;
-  });
-  return { html: out, headings };
+  return { html: out.join("\n"), headings };
 }

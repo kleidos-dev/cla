@@ -13,8 +13,8 @@ import { BACK, S, isLang, pickLang } from "./i18n";
 import type { Keys } from "./keys";
 import { csrfToken, csrfVerify } from "./keys";
 import { log } from "./log";
-import type { Heading } from "./markdown";
-import { addHeadingIds, renderMarkdown } from "./markdown";
+import type { Heading, Rendered } from "./markdown";
+import { renderMarkdown } from "./markdown";
 import type { Config, SignatureRecord } from "./registry";
 import { flowOf, recordValid } from "./registry";
 import type { Session } from "./session";
@@ -139,8 +139,8 @@ function summaryList(lang: Lang): string {
 }
 
 /** A Markdown text with ids on its headings; a leading comment (a file's licence header) is not part of the text. */
-function rendered(src: string, prefix: string): { html: string; headings: Heading[] } {
-  return addHeadingIds(renderMarkdown(src.replace(/^<!--[\s\S]*?-->\s*/, ""), { headingShift: 1 }), prefix);
+function rendered(src: string, prefix: string): Rendered {
+  return renderMarkdown(src.replace(/^<!--[\s\S]*?-->\s*/, ""), { headingShift: 1, idPrefix: prefix });
 }
 
 /**
@@ -728,7 +728,7 @@ ${texts.html}`;
 
 export function privacyPage(lang: Lang): Promise<Response> {
   const src = lang === "es" ? NOTICES.privacyEs : NOTICES.privacy;
-  const html = addHeadingIds(renderMarkdown(src, { links: { "PRIVACY.es.md": "/privacy?lang=es", "PRIVACY.md": "/privacy?lang=en" } }), "p").html;
+  const { html } = renderMarkdown(src, { idPrefix: "p", links: { "PRIVACY.es.md": "/privacy?lang=es", "PRIVACY.md": "/privacy?lang=en" } });
   return page(`<div class="progress"><p class="eyebrow">${S[lang].privacy.eyebrow}</p></div>\n<div class="prose privacy">${html}</div>`, { title: S[lang].privacy.title, lang, path: "/privacy", kind: "doc", cache: "public" });
 }
 
