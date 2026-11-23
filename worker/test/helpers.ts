@@ -14,7 +14,8 @@ import configJson from "../../registry/config.json";
 export const ORIGIN = "https://cla.kleidos.dev";
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const SANDBOX = "kleidos-dev/cla-sandbox";
-type ClientId = (typeof configJson)["signin_client_id"];
+/** registry/config.json's shape, with a sign-in app that may or may not be named yet. */
+type TestConfig = Omit<typeof configJson, "signin_client_id"> & { signin_client_id: string | null };
 
 /**
  * The register's configuration as the tests use it: registry/config.json
@@ -25,11 +26,11 @@ type ClientId = (typeof configJson)["signin_client_id"];
  * state (his exemption is lifted for an end-to-end test now and then; the
  * flows tested here do not depend on that).
  */
-export const CONFIG: typeof configJson = {
+export const CONFIG: TestConfig = {
   ...configJson,
   current_version: 1,
   accepted_versions: [1],
-  signin_client_id: null as unknown as ClientId,
+  signin_client_id: null,
   exempt: configJson.exempt.some((e) => e.id === 28966312) ? configJson.exempt : [{ id: 28966312, login: "jmrplens", why: "the project owner" }, ...configJson.exempt],
 };
 
@@ -83,7 +84,7 @@ export interface World {
  * and the sign-in app named: what the switch of registry/config.json makes
  * (registry/README.md, "A new version of the agreement").
  */
-export const CONFIG_V2: typeof CONFIG = { ...CONFIG, current_version: 2, accepted_versions: [1, 2], signin_client_id: SIGNIN_CLIENT_ID as unknown as ClientId };
+export const CONFIG_V2: TestConfig = { ...CONFIG, current_version: 2, accepted_versions: [1, 2], signin_client_id: SIGNIN_CLIENT_ID };
 
 /**
  * `signinSecrets` puts the sign-in app's two secrets in the Worker (what

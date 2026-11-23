@@ -299,7 +299,7 @@ describe("web signing", () => {
 
   it("signing pauses on version skew between the registry and this deployment, checks keep working", async () => {
     const w = await world();
-    const cfg = structuredClone(CONFIG) as typeof CONFIG & { current_version: number };
+    const cfg = structuredClone(CONFIG);
     cfg.current_version = 2;
     (cfg.versions as Record<string, unknown>)["2"] = { ...cfg.versions["1"], set_sha256: "f".repeat(64), path: "agreements/v2" };
     cfg.accepted_versions = [1, 2];
