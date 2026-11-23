@@ -744,6 +744,12 @@ class Trailers(unittest.TestCase):
             ("Co-authored-by: A <a@x.y>.\nCo-authored-by: A <a @x.y>\nCo-authored-by: A <>", ""),
             ("Co-authored-by: A <a@x.y>>\nCo-authored-by: a@x.y>\n Co-authored-by: A <a@x.y>", ""),
             ("Co-authored-by:\nA <a@x.y>\nCo-authored-by: A <a@x.y\n>", ""),
+            # Only a line feed ends a line here: the Worker also reads these three.
+            ("x\r\n\r\nCo-authored-by: A <a@x.y>\r\nSigned-off-by: C <c@x.y>\r\n", ""),
+            ("x\rCo-authored-by: A <a@x.y>\rSigned-off-by: C <c@x.y>", ""),
+            ("x\u2028Co-authored-by: A <a@x.y>\u2028Signed-off-by: C <c@x.y>", ""),
+            # Nothing but blanks and tabs may follow the email.
+            *((f"Co-authored-by: A <a@x.y>{end}", "") for end in "\r\v\f\x85\xa0\u2028\u2029"),
         ):
             with self.subTest(message):
                 self.assertEqual(" ".join(cla.trailer_emails(message)), emails)
@@ -1334,6 +1340,25 @@ class Verify(unittest.TestCase):
                 self.commit_as(RECORDER, "stamp", files)
                 self.assertTrue(self.verify(config=CONFIG_V2), name)
 
+    def test_a_token_is_checked_against_the_pinned_roots_and_nothing_else(self) -> None:
+        text = json.dumps(self.signin_record(1))
+        head = self.commit_as(
+            RECORDER,
+            "sign: 1",
+            {"signatures/individual/1.json": text, "signatures/individual/1.tsr": "a token"},
+        )
+        with mock.patch.object(cla, "verify_tsr", return_value=None) as verify_tsr:
+            self.assertIsNone(cla.tsr_problem(self.root, CONFIG_V2, head, "1"))
+        verify_tsr.assert_called_once_with(
+            b"a token", cla.sha256(text), list(Timestamps.ROOTS), True
+        )
+        outside = self.root.resolve() / "outside.pem"
+        shutil.copy(Timestamps.ROOTS[0], outside)
+        for name in ("registry/tsa/../../README.md", "README.md", str(outside), "registry/tsa"):
+            ts = {**CONFIG_V2["timestamping"], "roots": [*CONFIG_V2["timestamping"]["roots"], name]}
+            with self.subTest(name), self.assertRaisesRegex(RuntimeError, "not a root pinned"):
+                self.run_verify(config={**CONFIG_V2, "timestamping": ts})
+
     def test_a_rewritten_history(self) -> None:
         old = self.sign(1)
         self.git("reset", "-q", "--hard", "HEAD~1")
@@ -1410,7 +1435,9 @@ class Verify(unittest.TestCase):
         )
         self.assertTrue(self.verify())
 
-    def run_main(self, *args: str) -> tuple[int, str]:
+    def run_main(
+        self, *args: str, workflows: tuple[str, ...] = (), coverage: tuple[str, ...] = ()
+    ) -> tuple[int, str]:
         """The verify command over this history, what GitHub says of it apart."""
         out = io.StringIO()
         with (
@@ -1419,7 +1446,12 @@ class Verify(unittest.TestCase):
             mock.patch.object(cla, "load_config", lambda: CONFIG),
             mock.patch.object(cla, "commit_facts", lambda *_: self.facts),
             mock.patch.object(cla, "GitHubWitness", lambda *_: self.witness),
-            mock.patch.object(cla, "verify_workflows", lambda *_: []),
+            mock.patch.object(
+                cla, "verify_workflows", lambda *_: [cla.Finding("workflow", p) for p in workflows]
+            ),
+            mock.patch.object(
+                cla, "verify_coverage", lambda *_: [cla.Finding("coverage", p) for p in coverage]
+            ),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(out),
         ):
@@ -1440,6 +1472,22 @@ class Verify(unittest.TestCase):
         code, out = self.run_main("--ref", "signatures", "--marker-out", ".verify/next")
         self.assertEqual(code, 1, out)
         self.assertFalse(self.marker.exists())
+
+    def test_a_problem_found_outside_the_history_leaves_no_marker(self) -> None:
+        self.sign(1)
+        for where, found in (
+            ("a workflow", {"workflows": ("record.yml is disabled",)}),
+            ("the coverage", {"coverage": ("#7 has no coverage",)}),
+        ):
+            with self.subTest(where):
+                code, out = self.run_main(
+                    *("--ref", "signatures", "--marker-out", ".verify/next"),
+                    *("--merged-since", "2026-11-01"),
+                    **found,
+                )
+                self.assertEqual(code, 1, out)
+                self.assertIn("records cross-checked through", out)
+                self.assertFalse(self.marker.exists())
 
     def test_a_tag_named_like_the_branch_does_not_stand_in_for_it(self) -> None:
         clean = self.sign(1)

@@ -898,7 +898,8 @@ def trailer_emails(message: str) -> list[str]:
     """The emails of the ``Co-authored-by:`` trailers of a commit message, lower-cased.
 
     Anybody writes a commit message, so each line is read once, with no
-    backtracking; worker/src/authors.ts coAuthorEmails does the same."""
+    backtracking. worker/src/authors.ts coAuthorEmails does the same, and also ends a line at a
+    carriage return and at the two Unicode separators."""
     emails = []
     for line in message.split("\n"):
         if line[: len(TRAILER_KEY)].lower() != TRAILER_KEY:

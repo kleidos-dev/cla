@@ -89,6 +89,13 @@ describe("pure helpers", () => {
       ["Co-authored-by: A <a@x.y>.\nCo-authored-by: A <a @x.y>\nCo-authored-by: A <>", []],
       ["Co-authored-by: A <a@x.y>>\nCo-authored-by: a@x.y>\n Co-authored-by: A <a@x.y>", []],
       ["Co-authored-by:\nA <a@x.y>\nCo-authored-by: A <a@x.y\n>", []],
+      // Any line end ends a trailer here: the recorder, which takes line feeds only, reads none of these.
+      ["x\r\n\r\nCo-authored-by: A <a@x.y>\r\nSigned-off-by: C <c@x.y>\r\n", ["a@x.y"]],
+      ["x\rCo-authored-by: A <a@x.y>\rSigned-off-by: C <c@x.y>", ["a@x.y"]],
+      ["x\u2028Co-authored-by: A <a@x.y>\u2028Signed-off-by: C <c@x.y>", ["a@x.y"]],
+      ["x\u2029Co-authored-by: A <a@x.y>\u2029Signed-off-by: C <c@x.y>", ["a@x.y"]],
+      // Nothing but blanks and tabs may follow the email.
+      ...["\v", "\f", "\x85", "\xa0"].map((end) => [`Co-authored-by: A <a@x.y>${end}`, []] as const),
     ] as const)
       expect(coAuthorEmails(message), message).toEqual(emails);
   });

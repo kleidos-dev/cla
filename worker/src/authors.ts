@@ -52,7 +52,8 @@ export function parseNoreply(email: string | null): Account | null {
 /**
  * The emails of the `Co-authored-by:` trailers of a commit message, lower-cased.
  * Anybody writes a commit message, so each line is read once, with no
- * backtracking; registry/cla.py trailer_emails does the same.
+ * backtracking. registry/cla.py trailer_emails does the same, with a line feed
+ * as the only end of a line.
  */
 export function coAuthorEmails(message: string): string[] {
   const out: string[] = [];
