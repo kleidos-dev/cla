@@ -670,7 +670,8 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
  * Worker hands the account it read and the signer's own token to
  * record.yml, which asks GitHub whose token it is before it records
  * anything and then deletes the grant, so a Worker that lies can record
- * nobody but the account signing in at that moment. The session forgets
+ * nobody but an account that authorized the sign-in app and whose
+ * authorization was not deleted since (SECURITY.md). The session forgets
  * the token at once: a reload or a second click cannot hand it over again.
  */
 async function agreeBySignin(lang: Lang, env: ConfiguredEnv, bot: Bot, keys: Keys, session: Session, t: Target, signing: Signing, back: { href: string; label: string }): Promise<Response> {
