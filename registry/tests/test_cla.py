@@ -20,13 +20,17 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cla
 
+#: A made-up served repository, whichever ones registry/config.json serves.
+REPO = "kleidos-dev/cla-sandbox"
 SIGNIN_CLIENT_ID = "Iv23liSIGNINTEST0001"
 SIGNIN_SECRET = "signin-secret-value"
+_LIVE = cla.load_config()
 #: registry/config.json pinned to version 1's comment flow, whichever version is current there,
 #: so that switching the live register to version 2 leaves these tests as they are.
 CONFIG = {
-    **cla.load_config(),
+    **_LIVE,
     "app_id": 4242,
+    "served_repositories": {**_LIVE["served_repositories"], REPO: {"auto_approve": True}},
     "current_version": 1,
     "accepted_versions": [1],
     "signin_client_id": None,
@@ -39,7 +43,6 @@ CONFIG_V2 = {
     "accepted_versions": [1, 2],
     "signin_client_id": SIGNIN_CLIENT_ID,
 }
-REPO = "kleidos-dev/cla-sandbox"
 REGISTRY = "kleidos-dev/cla"
 FIXTURES = Path(__file__).parent / "fixtures"
 
