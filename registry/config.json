@@ -25,14 +25,14 @@
     },
     "2": {
       "path": "agreements/v2",
-      "set_sha256": "d75b87066fb47a8d976a454b2fc4c7220be59ad9a592f1b0f2d72cfe19f23682",
+      "set_sha256": "a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408",
       "files": {
         "individual.md": "2f891b84eb51b0a9e00df166381f7aaea44a10b55f7c742fd27f6ef2e7dac056",
         "entity.md": "711d5a98426a6e63c2f4d0747c8f56815cf58540eddf6664f7751fa6363c2d35",
-        "addendum.md": "6a063cf16132e696df3353147aac1b5b1d8cf30f09197592f3072d3c6403319f"
+        "addendum.md": "daaeca9d2e1d716e41dd5fe80e13aae69dd6c238fc8b0c09bb11843afdf83aca"
       },
       "flow": "signin",
-      "sentence": "I have read and I accept the Kleidos Contributor Agreement, version 2 (SHA-256 d75b87066fb4), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute."
+      "sentence": "I have read and I accept the Kleidos Contributor Agreement, version 2 (SHA-256 a05d5ba2c12c), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute."
     }
   },
   "served_repositories": {

@@ -9,6 +9,10 @@
 locale = "en-us"
 # <<< kleidos-quality typos
 
+# SHA-256 digests and their 12-character prefixes (the acceptance
+# sentences quote one) are hex, not words.
+extend-ignore-re = ["\\b[0-9a-f]{12}(?:[0-9a-f]{52})?\\b"]
+
 [default.extend-words]
 # The binding agreement texts spell the noun "licence" and the verb
 # "authorise" the British way (agreements/v1/addendum.md is frozen and

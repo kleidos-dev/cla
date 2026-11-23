@@ -15,7 +15,7 @@ Kleidos is published under the GNU GPL, version 3 or later. Every contributor ac
 
 Each version is made of two texts accepted together, in a single act. **English is the binding language**; the Spanish texts are for information. The version signed today is the one `registry/config.json` names as `current_version`.
 
-**Version 2** ([`agreements/v2/`](agreements/v2/)) is published and **not current yet**: it is a draft for the owner's legal review. It differs from version 1 only in the Addendum, clause 1.5 (you accept by signing in at cla.kleidos.dev and confirming the sentence, and nothing is posted in your name; or, if the site is down, by posting the sentence yourself) and a new clause 1.6 (an entry that names you and that you did not make is looked into with you and removed if it cannot be confirmed). Its set digest is `d75b87066fb47a8d976a454b2fc4c7220be59ad9a592f1b0f2d72cfe19f23682`. It becomes current with one change of `registry/config.json` (`current_version: 2`, `accepted_versions: [1, 2]`), with no deploy; signatures under version 1 stay valid.
+**Version 2** ([`agreements/v2/`](agreements/v2/)) is published and **not current yet**: it is a draft for the owner's legal review. It differs from version 1 only in the Addendum, clause 1.5 (you accept by signing in at cla.kleidos.dev and confirming the sentence, and nothing is posted in your name; or, if the site is down, by posting the sentence yourself) and a new clause 1.6 (an entry that names you and that you did not make is looked into with you and removed if it cannot be confirmed). Its set digest is `a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408`. It becomes current with one change of `registry/config.json` (`current_version: 2`, `accepted_versions: [1, 2]`), with no deploy; signatures under version 1 stay valid.
 
 Version 1:
 
@@ -57,7 +57,7 @@ Under version 1 (the flow live until version 2 is current):
 4. Back on the page (step 2 of 2), read the summary, open the full text if you want, tick the box and click **I agree and sign**. The acceptance sentence is posted on the pull request under your account; that comment is your signature. The app's permission is revoked at once, and a confirmation page shows the register entry once it is recorded.
 5. Within a minute the register records it, the bot's comment turns to "accepted" and `📝 CLA` turns green. Where the repository lets the app start an outside contributor's checks, the waiting checks start by themselves; elsewhere a maintainer starts them, and the comment says which. Later pull requests, in any Kleidos repository, are green from the start, and the bot posts no comment on them.
 
-Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1 (version 2's is the same with `version 2 (SHA-256 d75b87066fb4)`, and is in `registry/config.json`):
+Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1 (version 2's is the same with `version 2 (SHA-256 a05d5ba2c12c)`, and is in `registry/config.json`):
 
 ```text
 I have read and I accept the Kleidos Contributor Agreement, version 1 (SHA-256 89c1d46b9b10), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.
@@ -84,7 +84,7 @@ The register is public, on the branch [`signatures`](https://github.com/kleidos-
   "login_at_signing": "alice",
   "agreement": "kleidos-ca",
   "version": 2,
-  "set_sha256": "d75b87066fb47a8d976a454b2fc4c7220be59ad9a592f1b0f2d72cfe19f23682",
+  "set_sha256": "a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408",
   "sentence_sha256": "…",
   "accepted_at": "2026-12-01T10:22:58Z",
   "method": "signin",
