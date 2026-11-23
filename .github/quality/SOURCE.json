@@ -1,8 +1,8 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "1.1.0",
-  "commit": "76ecdbbacb7c3ed96a1ec42b65044e9557c42743",
+  "version": "2.0.0",
+  "commit": "30f0dc69833e0917c7865eb93770237fedacff59",
   "profiles": [
     "base",
     "python",
@@ -14,7 +14,7 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "1d0c76cf0cac264e4ac349ee1cd586cf409b447d1a423330ae4ed29b8662adbf"
+      "sha256": "e4c64a911e8aebcb9e2ea365e82e208d3210287fe1f2a4835eae8d6c2012986a"
     },
     {
       "path": ".github/quality/md_nowrap.py",
@@ -24,7 +24,7 @@
     {
       "path": ".github/quality/spdx_headers.py",
       "source_path": "quality/spdx_headers.py",
-      "sha256": "1c226f7a139a845b8d6371f5c2a24a9d5a8b5323d2d5cc25ee9d6deb2099cdf7"
+      "sha256": "e2be4ebf2e3814fe7a178e4d7cbf4922458fbf5439d1ef4f07006ddec0c4a97d"
     },
     {
       "path": ".github/quality/markdownlint.jsonc",
@@ -44,7 +44,7 @@
     {
       "path": ".github/quality/mypy_groups.py",
       "source_path": "quality/mypy_groups.py",
-      "sha256": "258580727e03fd65fec16936e265b76cc8e078828ee8787c488d156810bff2ca"
+      "sha256": "c3cd276857c2dfa6803b0a2bb9d4fa2560e8b7adb5acbdd963bf1721b6cdf351"
     },
     {
       "path": ".github/zizmor.yml",
@@ -79,7 +79,7 @@
       "id": "pre-commit-actions",
       "path": ".pre-commit-config.yaml",
       "source_path": ".pre-commit-config.yaml",
-      "sha256": "1e051ee2656fa46c9b822a86b135bb57d312565a15d9c4766078c2149200bd27"
+      "sha256": "4a69401255516b6198894fae2b0e1d98e61f0e821b1f546f4048f22a51d15ad7"
     },
     {
       "id": "mypy",
