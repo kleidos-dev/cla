@@ -11,22 +11,13 @@ import { who } from "../src/texts";
 import { parseSignPath, sentenceFor } from "../src/web";
 import { commit } from "./fakegh";
 import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
+import { htmlWords } from "./readhtml";
 import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-
-function decode(s: string): string {
-  return s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => must(({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e]));
-}
-
-/** The words a reader sees, from the HTML. */
-function htmlWords(html: string): string[] {
-  const blocks = html.replace(/<\/?(?:p|li|ul|ol|h[1-6]|section|br)\b[^>]*>/g, " ");
-  return decode(blocks.replace(/<[^>]+>/g, "")).split(/\s+/).filter(Boolean);
-}
 
 /** The words of the Markdown source, its syntax removed independently of the renderer. */
 function sourceWords(md: string): string[] {
@@ -62,7 +53,7 @@ describe("agreement texts", () => {
     for (const [v, files] of Object.entries(AGREEMENTS)) for (const [name, src] of Object.entries(files)) texts.push([`v${v}/${name}`, src]);
     for (const [name, src] of texts) {
       if (!name.endsWith(".md")) continue;
-      expect(htmlWords(renderMarkdown(src)), name).toEqual(sourceWords(src));
+      expect(htmlWords(renderMarkdown(src).html), name).toEqual(sourceWords(src));
     }
   });
 
@@ -72,7 +63,7 @@ describe("agreement texts", () => {
     expect(renderInline('[x](https://a.example/"onmouseover=1)')).not.toContain('"onmouseover');
     expect(renderInline("**bold** and *em* and `code<`")).toBe("<strong>bold</strong> and <em>em</em> and <code>code&lt;</code>");
     expect(renderInline("\\*\\*literal\\*\\*")).toBe("**literal**");
-    expect(renderMarkdown("# T\n\n- a\n   - b\n- c\n\n1. x\n2. y")).toBe("<h1>T</h1>\n<ul>\n<li>\na\n<ul>\n<li>\nb\n</li>\n</ul>\n</li>\n<li>\nc\n</li>\n</ul>\n<ol>\n<li>\nx\n</li>\n<li>\ny\n</li>\n</ol>");
+    expect(renderMarkdown("# T\n\n- a\n   - b\n- c\n\n1. x\n2. y").html).toBe("<h1>T</h1>\n<ul>\n<li>\na\n<ul>\n<li>\nb\n</li>\n</ul>\n</li>\n<li>\nc\n</li>\n</ul>\n<ol>\n<li>\nx\n</li>\n<li>\ny\n</li>\n</ol>");
   });
 });
 
