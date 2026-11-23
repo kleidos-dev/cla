@@ -103,7 +103,11 @@ interface Conversion {
   client_secret: string;
   webhook_secret: string;
   pem: string;
-  html_url?: string;
+}
+
+/** Text of GitHub's answer as visible ASCII, cut short: it can neither end a line of the terminal nor forge, hide or recolor one. */
+function printable(s: string): string {
+  return s.replace(/[^\x20-\x7e]/g, "?").slice(0, 200);
 }
 
 async function exchange(code: string): Promise<Conversion> {
@@ -112,9 +116,13 @@ async function exchange(code: string): Promise<Conversion> {
     headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "kleidos-cla-setup" },
   });
   if (res.status !== 201) throw new Error(`GitHub answered ${res.status} to the manifest conversion`);
-  const c = (await res.json()) as Partial<Conversion>;
-  for (const k of ["id", "slug", "client_id", "client_secret", "webhook_secret", "pem"] as const) {
-    if (!c[k]) throw new Error(`the conversion has no ${k}`);
+  // The parser's own error quotes the text it could not read, which holds the secrets.
+  const c = (await res.json().catch(() => {
+    throw new Error("the conversion is not JSON");
+  })) as Partial<Conversion>;
+  if (typeof c.id !== "number" || !Number.isSafeInteger(c.id) || c.id <= 0) throw new Error("the conversion has no id");
+  for (const k of ["slug", "client_id", "client_secret", "webhook_secret", "pem"] as const) {
+    if (typeof c[k] !== "string" || !c[k]) throw new Error(`the conversion has no ${k}`);
   }
   return c as Conversion;
 }
@@ -185,7 +193,7 @@ async function main(): Promise<number> {
         try {
           const c = await exchange(code);
           if (c.owner?.id !== ORG_ID || c.slug !== SLUG) {
-            console.error(`Refused: GitHub returned an app that is not ${SLUG} of ${ORG} (slug ${JSON.stringify(c.slug)}, owner id ${c.owner?.id ?? "none"}). Nothing was stored; if you created an app by mistake, delete it on GitHub.`);
+            console.error(`Refused: GitHub returned an app that is not ${SLUG} of ${ORG} (slug ${printable(c.slug)}, owner id ${printable(String(c.owner?.id ?? "none"))}). Nothing was stored; if you created an app by mistake, delete it on GitHub.`);
             page(res, 502, "<p>Refused: this is not the kleidos-cla app of kleidos-dev. Nothing was stored. See the terminal.</p>");
             finish(4);
             return;
@@ -209,15 +217,16 @@ async function main(): Promise<number> {
               console.error(`wrangler secret put ${name} failed (exit ${r.code}); its output is not shown, as it could echo the value.`);
             }
           }
-          console.log(`\nGitHub App created: ${c.slug} (app id ${c.id}${c.html_url ? `, ${c.html_url}` : ""}).`);
+          const id = printable(String(c.id));
+          console.log(`\nGitHub App created: ${SLUG} (app id ${id}, ${WEB}/apps/${SLUG}).`);
           console.log(`Stored in the Worker ${WORKER}: ${stored.join(", ") || "nothing"}.`);
           if (failed.length) {
             console.error(`NOT stored: ${failed.join(", ")}. The values are gone: on the app's settings page generate a new private key, reset the client secret or change the webhook secret as needed, and put them with \`npx wrangler secret put <NAME>\` in worker/.`);
           }
-          console.log(`\nNext:\n  1. Install it on ${ORG}, only on kleidos-dev/cla: ${WEB}/apps/${c.slug}/installations/new`);
+          console.log(`\nNext:\n  1. Install it on ${ORG}, only on kleidos-dev/cla: ${WEB}/apps/${SLUG}/installations/new`);
           console.log(`  2. On the app's page, check: "Expire user authorization tokens" on, "Enable Device Flow" off.`);
-          console.log(`  3. The app id for the rulesets' required check (integration_id) is ${c.id}.`);
-          console.log(`  4. In registry/config.json set "app_id": ${c.id}, and add the bot account to "exempt": gh api users/${c.slug}%5Bbot%5D --jq .id`);
+          console.log(`  3. The app id for the rulesets' required check (integration_id) is ${id}.`);
+          console.log(`  4. In registry/config.json set "app_id": ${id}, and add the bot account to "exempt": gh api users/${SLUG}%5Bbot%5D --jq .id`);
           page(res, failed.length ? 500 : 200, `<h1>${failed.length ? "Created, but not every secret was stored" : "Done"}</h1><p>Stored: ${escapeHtml(stored.join(", ") || "nothing")}.</p>${failed.length ? `<p>Not stored: ${escapeHtml(failed.join(", "))}. See the terminal.</p>` : "<p>You can close this tab and go back to the terminal.</p>"}`);
           finish(failed.length ? 1 : 0);
         } catch (e) {

@@ -42,6 +42,27 @@ interface Mock {
   owner: { id: number; login: string };
   publicPem: string;
   secrets: { client_secret: string; webhook_secret: string; pem: string };
+  /** Fields that replace the answer's own, or the whole body of the answer. */
+  answer: Record<string, unknown> | string;
+}
+
+/** What a hostile answer tries on the terminal: a line of its own, colors, an 8-bit control sequence, a line separator, reversed text. */
+const FORGED = "x\r\nForged line \u001b[8m \u009b2J \u2028 \u202e";
+
+/** Runs `check` while GitHub answers the conversion with `answer`. */
+async function answering(m: Mock, answer: Mock["answer"], check: () => Promise<void>): Promise<void> {
+  m.answer = answer;
+  try {
+    await check();
+  } finally {
+    m.answer = {};
+  }
+}
+
+/** Nothing of GitHub's answer made a line of its own, and no character of the output is other than visible ASCII. */
+function assertPlain(out: string): void {
+  assert.doesNotMatch(out, /[^\n\x20-\x7e]/);
+  assert.doesNotMatch(out, /^Forged line/m);
 }
 
 function body(req: IncomingMessage): Promise<string> {
@@ -63,6 +84,7 @@ async function mockGitHub(): Promise<Mock> {
     owner: { id: 357318718, login: "kleidos-dev" },
     publicPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
     secrets: { client_secret: `cs_${randomBytes(20).toString("hex")}`, webhook_secret: `wh_${randomBytes(20).toString("hex")}`, pem },
+    answer: {},
   };
   m.server = createServer((req, res) => {
     void (async () => {
@@ -83,7 +105,7 @@ async function mockGitHub(): Promise<Mock> {
       if (req.method === "POST" && url.pathname === "/app-manifests/abc123def456/conversions") {
         m.conversions++;
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: 4242, slug: "kleidos-cla", owner: m.owner, client_id: "Iv23liMOCK", html_url: "https://github.com/apps/kleidos-cla", ...m.secrets }));
+        res.end(typeof m.answer === "string" ? m.answer : JSON.stringify({ id: 4242, slug: "kleidos-cla", owner: m.owner, client_id: "Iv23liMOCK", html_url: "https://github.com/apps/kleidos-cla", ...m.secrets, ...m.answer }));
         return;
       }
       res.writeHead(404).end();
@@ -285,6 +307,41 @@ describe("create-github-app.ts", () => {
     } finally {
       mock.owner = { id: 357318718, login: "kleidos-dev" };
     }
+  });
+
+  it("nothing of GitHub's answer makes a line of its own on the terminal", async () => {
+    for (const answer of [{ slug: FORGED }, { owner: { id: FORGED } }, { id: FORGED }, { id: "4242" }, { id: -1 }, { client_secret: 7 }])
+      await answering(mock, answer, async () => {
+        const r = await runScript(mock);
+        assert.equal(r.code, 4, r.out);
+        assertPlain(r.out);
+        assert.match(r.out, /Nothing was stored/);
+        assert.equal(r.calls.filter((c) => c.args[1] === "put").length, 0);
+      });
+    await answering(mock, { html_url: FORGED }, async () => {
+      const r = await runScript(mock);
+      assert.equal(r.code, 0, r.out);
+      assertPlain(r.out);
+      assert.match(r.out, /app id 4242, http:\/\/127\.0\.0\.1:\d+\/apps\/kleidos-cla\)/);
+    });
+  });
+
+  it("what is shown of GitHub's answer is cut short", async () => {
+    for (const answer of [{ slug: "s".repeat(5000) }, { owner: { id: "s".repeat(5000) } }])
+      await answering(mock, answer, async () => {
+        const r = await runScript(mock);
+        assert.equal(r.code, 4, r.out);
+        assert.equal(/s{100,}/.exec(r.out)?.[0].length, 200, r.out);
+      });
+  });
+
+  it("an answer that is not JSON is not quoted", async () => {
+    await answering(mock, `{"client_secret": ${mock.secrets.client_secret}`, async () => {
+      const r = await runScript(mock);
+      assert.equal(r.code, 4, r.out);
+      assert.match(r.out, /the conversion is not JSON/);
+      assert.ok(!r.out.includes(mock.secrets.client_secret.slice(0, 8)), r.out);
+    });
   });
 
   it("a failing wrangler exits non-zero and names what was not stored", async () => {

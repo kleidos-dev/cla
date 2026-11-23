@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGREEMENTS, NOTICES, checkIntegrity, filesOf } from "../src/agreement";
 import { coAuthorEmails, commitAuthors, parseNoreply } from "../src/authors";
+import type { ConfiguredEnv } from "../src/env";
+import { GitHub, nextLink } from "../src/github";
 import { CSP } from "../src/html";
 import { log } from "../src/log";
 import { renderInline, renderMarkdown } from "../src/markdown";
@@ -12,7 +14,7 @@ import { parseSignPath, sentenceFor } from "../src/web";
 import { commit } from "./fakegh";
 import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
 import { htmlWords } from "./readhtml";
-import { must } from "../src/util";
+import { b64urlDecode, b64urlEncode, must, stripEnd } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -77,6 +79,70 @@ describe("pure helpers", () => {
     const bob = { id: 2, login: "bob", type: "User" as const };
     const c = commit({ id: 1, login: "alice", type: "User" }, { coAuthors: [bob] });
     expect(commitAuthors(c).accounts.map((a) => a.login)).toEqual(["alice", "bob"]);
+  });
+
+  it("reads the trailers of a message line by line", () => {
+    // registry/tests/test_cla.py, Trailers, holds the recorder's side of these.
+    for (const [message, emails] of [
+      ["CO-AUTHORED-BY: \t A <x> B <b@x.y> \t \nSigned-off-by: C <c@x.y>", ["b@x.y"]],
+      ["Co-authored-by: <a@x.y>\nCo-authored-by: A <b@x.y", ["a@x.y"]],
+      ["Co-authored-by: A <a@x.y>.\nCo-authored-by: A <a @x.y>\nCo-authored-by: A <>", []],
+      ["Co-authored-by: A <a@x.y>>\nCo-authored-by: a@x.y>\n Co-authored-by: A <a@x.y>", []],
+      ["Co-authored-by:\nA <a@x.y>\nCo-authored-by: A <a@x.y\n>", []],
+      // Any line end ends a trailer here: the recorder, which takes line feeds only, reads none of these.
+      ["x\r\n\r\nCo-authored-by: A <a@x.y>\r\nSigned-off-by: C <c@x.y>\r\n", ["a@x.y"]],
+      ["x\rCo-authored-by: A <a@x.y>\rSigned-off-by: C <c@x.y>", ["a@x.y"]],
+      ["x\u2028Co-authored-by: A <a@x.y>\u2028Signed-off-by: C <c@x.y>", ["a@x.y"]],
+      ["x\u2029Co-authored-by: A <a@x.y>\u2029Signed-off-by: C <c@x.y>", ["a@x.y"]],
+      // Nothing but blanks and tabs may follow the email.
+      ...["\v", "\f", "\x85", "\xa0"].map((end) => [`Co-authored-by: A <a@x.y>${end}`, []] as const),
+    ] as const)
+      expect(coAuthorEmails(message), message).toEqual(emails);
+  });
+
+  it("a hostile commit message takes no time", () => {
+    // A commit message is its author's to write, so reading one takes no more than its length.
+    const start = Date.now();
+    for (const message of [" ".repeat(3000), `${" \t<a> ".repeat(1000)}x`, "<".repeat(3000), "\nCo-authored-by: ".repeat(1000)]) expect(coAuthorEmails(`Co-authored-by: ${message}`)).toEqual([]);
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
+  it("no header or text takes more than its length", () => {
+    const n = 100_000;
+    const start = Date.now();
+    expect(nextLink(`${"<".repeat(4 * n)}>`)).toBeNull();
+    expect(stripEnd(`${"=".repeat(n)}x`, "=")).toHaveLength(n + 1);
+    expect(renderMarkdown(`# a${" ".repeat(3000)}b`).html).toHaveLength(3011);
+    expect(renderMarkdown(`- ${" ".repeat(n)}a\u2028b`).html).toHaveLength(n + 12);
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
+
+  it("strips the end of a string and nothing else of it", () => {
+    for (const [s, chars, out] of [["a==", "=", "a"], ["=a=b", "=", "=a=b"], ["==", "=", ""], ["", "=", ""], ["a \t ", " \t", "a"]] as const) expect(stripEnd(s, chars)).toBe(out);
+    for (let n = 0; n < 6; n++) {
+      const bytes = new Uint8Array(n).fill(0xfb);
+      const text = b64urlEncode(bytes);
+      expect(text).toMatch(/^[A-Za-z0-9_-]*$/);
+      expect(b64urlDecode(text)).toEqual(bytes);
+    }
+  });
+
+  it("follows GitHub's next page and no other link", () => {
+    const page = (n: number, rel: string) => `<https://api.github.com/x?page=${n}>; rel="${rel}"`;
+    expect(nextLink([page(1, "prev"), page(3, "next"), page(9, "last"), page(1, "first")].join(", "))).toBe("https://api.github.com/x?page=3");
+    expect(nextLink(`${page(2, "next")}, ${page(9, "last")}`)).toBe("https://api.github.com/x?page=2");
+    for (const link of [null, "", page(1, "prev"), '<https://evil.example/x>; rel="next"', '<https://api.github.com.evil.example/x>; rel="next"', '<>; rel="next"', 'https://api.github.com/x; rel="next"']) expect(nextLink(link), link ?? "no header").toBeNull();
+  });
+
+  it("asks for one token per set of repositories and permissions, whatever order names them", async () => {
+    const w = await world();
+    for (const r of ["kleidos-dev/b", "kleidos-dev/C", "kleidos-dev/a"]) w.gh.addRepo(r);
+    const gh = new GitHub(w.env as ConfiguredEnv);
+    const token = await gh.token(["kleidos-dev/b", "kleidos-dev/C", "kleidos-dev/a", "kleidos-dev/b"], { metadata: "read", checks: "write" });
+    expect(await gh.token(["kleidos-dev/a", "kleidos-dev/b", "kleidos-dev/C"], { checks: "write", metadata: "read" })).toBe(token);
+    // Code units, so that no locale changes it: capitals first.
+    expect(must(w.gh.tokens.get(token)).repos).toEqual(["C", "a", "b"]);
+    expect(await gh.token(["kleidos-dev/a", "kleidos-dev/b", "kleidos-dev/C"], { checks: "read", metadata: "read" })).not.toBe(token);
   });
 
   it("parses queue messages defensively", () => {

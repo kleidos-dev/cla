@@ -38,7 +38,8 @@ Usage::
 payload (``$GITHUB_EVENT_PATH``, ``inputs.signin_token``), never from the
 command line or the environment, and the sign-in app's client secret from
 ``SIGNIN_CLIENT_SECRET``.
-    python3 -I registry/cla.py verify [--since SHA] [--marker-out FILE] [--merged-since YYYY-MM-DD]
+    python3 -I registry/cla.py verify [--since SHA] [--marker-out .verify/next] \
+        [--merged-since YYYY-MM-DD]
 """
 
 from __future__ import annotations
@@ -75,7 +76,8 @@ LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[b
 NOREPLY_RE = re.compile(
     r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I
 )
-TRAILER_RE = re.compile(r"^co-authored-by:[ \t]*(.*?)[ \t]*<([^<>\s]+)>[ \t]*$", re.I | re.M)
+TRAILER_KEY = "co-authored-by:"
+TRAILER_EMAIL_RE = re.compile(r"[^<>\s]+")
 RECORD_PATH_RE = re.compile(
     r"^(signatures/individual/[1-9]\d*\.(?:json|tsr)|coverage/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/[1-9]\d*\.json)$"
 )
@@ -167,6 +169,24 @@ def load_entities(root: Path = ROOT) -> list[dict[str, Any]]:
     if not isinstance(entities, list):
         raise Refused("registry/entities.json holds no list of entities")
     return entities
+
+
+#: Where the roots of the time-stamping services are pinned.
+TSA_ROOTS = ROOT / "registry" / "tsa"
+
+
+def pinned_roots(config: dict[str, Any]) -> list[Path]:
+    """The time-stamping roots registry/config.json names, each a file of registry/tsa/.
+
+    Resolved first, so that no absolute path, ``..`` or symbolic link makes
+    a file kept anywhere else a trusted root."""
+    roots = []
+    for name in (config.get("timestamping") or {}).get("roots", []):
+        path = (ROOT / name).resolve()
+        if path.parent != TSA_ROOTS or not path.is_file():
+            raise RuntimeError(f"{name!r} is not a root pinned in registry/tsa/")
+        roots.append(path)
+    return roots
 
 
 def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
@@ -448,7 +468,8 @@ def verify_tsr(
     """None when a time-stamp response verifies.
 
     That is: it is granted, it is over ``digest_hex`` (and the query's
-    nonce), and its signature chains to a pinned root at the time it states.
+    nonce), and its signature chains to one of ``roots`` (``pinned_roots``)
+    at the time it states.
 
     With ``qualified``, the token must also carry ETSI's best-practices
     policy and the qualified statement (esi4-qtstStatement-1). Certificate
@@ -470,34 +491,18 @@ def verify_tsr(
     with tempfile.TemporaryDirectory() as d:
         resp = Path(d) / "r.tsr"
         resp.write_bytes(tsr)
-        cafile = Path(d) / "roots.pem"
-        cafile.write_text(
-            "".join(
-                (ROOT / r).read_text("ascii") if not r.is_absolute() else r.read_text("ascii")
-                for r in roots
-            ),
-            "ascii",
-        )
-        args = [
-            "ts",
-            "-verify",
-            "-in",
-            str(resp),
-            "-CAfile",
-            str(cafile),
-            "-attime",
-            str(int(when.timestamp())),
-        ]
+        args = ["ts", "-verify", "-in", str(resp), "-attime", str(int(when.timestamp()))]
         if query is not None:
             q = Path(d) / "q.tsq"
             q.write_bytes(query)
             args += ["-queryfile", str(q)]
         else:
             args += ["-digest", digest_hex]
-        out = _openssl(args)
-    if out.returncode != 0 or "Verification: OK" not in out.stdout:
-        return "the time-stamp token does not verify"
-    return None
+        for root in roots:
+            out = _openssl([*args, "-CAfile", str(root)])
+            if out.returncode == 0 and "Verification: OK" in out.stdout:
+                return None
+    return "the time-stamp token does not verify"
 
 
 class Stamper:
@@ -523,9 +528,7 @@ class TSAStamper(Stamper):
         ts = config.get("timestamping")
         if not isinstance(ts, dict) or not ts.get("url"):
             return None
-        return cls(
-            ts["url"], [Path(r) for r in ts.get("roots", [])], bool(ts.get("qualified")), **kw
-        )
+        return cls(ts["url"], pinned_roots(config), bool(ts.get("qualified")), **kw)
 
     def stamp(self, digest_hex: str) -> bytes | None:
         for attempt in range(2):
@@ -891,6 +894,23 @@ def parse_noreply(email: str | None) -> tuple[int, str] | None:
     return (int(m.group(1)), m.group(2)) if m else None
 
 
+def trailer_emails(message: str) -> list[str]:
+    """The emails of the ``Co-authored-by:`` trailers of a commit message, lower-cased.
+
+    Anybody writes a commit message, so each line is read once, with no
+    backtracking. worker/src/authors.ts coAuthorEmails does the same, and also ends a line at a
+    carriage return and at the two Unicode separators."""
+    emails = []
+    for line in message.split("\n"):
+        if line[: len(TRAILER_KEY)].lower() != TRAILER_KEY:
+            continue
+        _name, bracket, address = line[len(TRAILER_KEY) :].rstrip(" \t").rpartition("<")
+        email = address.removesuffix(">")
+        if bracket and email != address and TRAILER_EMAIL_RE.fullmatch(email):
+            emails.append(email.lower())
+    return emails
+
+
 def pr_authors(
     ctx: Context, repo: str, pr: dict[str, Any]
 ) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
@@ -940,11 +960,10 @@ def pr_authors(
                     unknown += 1
             if c["authors"]["totalCount"] > len(c["authors"]["nodes"]):
                 unknown += 1
-            for m in TRAILER_RE.finditer(c["message"]):
-                email = m.group(2).lower()
-                if email in listed:
+            for address in trailer_emails(c["message"]):
+                if address in listed:
                     continue
-                if nr := parse_noreply(email):
+                if nr := parse_noreply(address):
                     add(nr[0], nr[1], "Bot" if nr[1].endswith("[bot]") else "User", date)
                 else:
                     unknown += 1
@@ -1393,9 +1412,7 @@ def tsr_problem(root: Path, config: dict[str, Any], sha: str, gid: str) -> str |
     except subprocess.CalledProcessError:
         return "a token with no record"
     ts = config.get("timestamping") or {}
-    return verify_tsr(
-        token, sha256(record), [Path(r) for r in ts.get("roots", [])], bool(ts.get("qualified"))
-    )
+    return verify_tsr(token, sha256(record), pinned_roots(config), bool(ts.get("qualified")))
 
 
 @dataclass
@@ -1424,7 +1441,15 @@ def verify_history(
     cross-checked against the comment and the run they cite (``witness``)."""
     findings: list[Finding] = []
     log = (
-        git(root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", ref, "--")
+        git(
+            root,
+            "log",
+            "--reverse",
+            "--format=%H%x00%P%x00%an%x00%s",
+            "--end-of-options",
+            ref,
+            "--",
+        )
         .strip()
         .splitlines()
     )
@@ -1537,6 +1562,16 @@ def verify_coverage(
     return findings
 
 
+#: What ``verify --ref`` may name, and the full name git reads: a short one could also be a tag's,
+#: which git would prefer.
+REFS = {
+    f"origin/{BRANCH}": f"refs/remotes/origin/{BRANCH}",
+    BRANCH: f"refs/heads/{BRANCH}",
+}
+#: What ``verify --marker-out`` may name, and the file it writes.
+MARKERS = {".verify/next": ROOT / ".verify" / "next"}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1552,9 +1587,10 @@ def main(argv: list[str] | None = None) -> int:
     v = sub.add_parser("verify")
     v.add_argument("--since")
     v.add_argument("--merged-since")
-    v.add_argument("--ref", default=f"origin/{BRANCH}")
+    v.add_argument("--ref", choices=tuple(REFS), default=f"origin/{BRANCH}")
     v.add_argument(
         "--marker-out",
+        choices=tuple(MARKERS),
         help="where to write the last commit whose records were cross-checked, "
         "for the next run's --since",
     )
@@ -1612,9 +1648,12 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         return 0
 
+    marker = MARKERS[args.marker_out] if args.marker_out else None
+    if marker and marker.resolve() != marker:
+        ap.error(f"{args.marker_out} is reached through a symbolic link")
     facts = commit_facts(gh, registry, BRANCH)
     verified = verify_history(
-        ROOT, config, args.ref, args.since, facts.get, GitHubWitness(gh, registry), registry
+        ROOT, config, REFS[args.ref], args.since, facts.get, GitHubWitness(gh, registry), registry
     )
     findings = verified.findings
     findings += verify_workflows(gh, registry)
@@ -1622,8 +1661,8 @@ def main(argv: list[str] | None = None) -> int:
         findings += verify_coverage(
             gh, config, registry, max(args.merged_since, config.get("coverage_from", ""))
         )
-    if args.marker_out and verified.checked_through and not findings:
-        Path(args.marker_out).write_text(verified.checked_through + "\n", "utf-8")
+    if marker and verified.checked_through and not findings:
+        marker.write_text(verified.checked_through + "\n", "utf-8")
     for f in findings:
         print(f"problem: {f}")
     print(

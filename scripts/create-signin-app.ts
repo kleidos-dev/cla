@@ -124,9 +124,13 @@ interface Conversion {
   owner?: { id?: number; login?: string } | null;
   client_id: string;
   client_secret: string;
-  html_url?: string;
   permissions?: Record<string, string>;
   events?: string[];
+}
+
+/** Text of GitHub's answer as visible ASCII, cut short: it can neither end a line of the terminal nor forge, hide or recolor one. */
+function printable(s: string): string {
+  return s.replace(/[^\x20-\x7e]/g, "?").slice(0, 200);
 }
 
 async function exchange(code: string): Promise<Conversion> {
@@ -136,21 +140,26 @@ async function exchange(code: string): Promise<Conversion> {
   });
   if (res.status !== 201) throw new Error(`GitHub answered ${res.status} to the manifest conversion`);
   // The private key and the webhook secret in the answer are never read: only these fields are kept.
-  const all = (await res.json()) as Record<string, unknown>;
+  // The parser's own error quotes the text it could not read, which holds the secrets.
+  const all = (await res.json().catch(() => {
+    throw new Error("the conversion is not JSON");
+  })) as Record<string, unknown>;
   const str = (k: string): string => {
     const v = all[k];
     if (typeof v !== "string" || !v) throw new Error(`the conversion has no ${k}`);
     return v;
   };
-  if (typeof all.id !== "number") throw new Error("the conversion has no id");
+  if (typeof all.id !== "number" || !Number.isSafeInteger(all.id) || all.id <= 0) throw new Error("the conversion has no id");
+  const clientId = str("client_id");
+  // The recorder's own rule (registry/cla.py, CLIENT_ID_RE): it refuses any other id.
+  if (!/^[A-Za-z0-9.]{16,40}$/.test(clientId)) throw new Error("the conversion has no valid client_id");
   const owner = all.owner as Conversion["owner"] | undefined;
   return {
     id: all.id,
     slug: str("slug"),
     owner: owner ?? null,
-    client_id: str("client_id"),
+    client_id: clientId,
     client_secret: str("client_secret"),
-    ...(typeof all.html_url === "string" ? { html_url: all.html_url } : {}),
     ...(all.permissions && typeof all.permissions === "object" ? { permissions: all.permissions as Record<string, string> } : {}),
     ...(Array.isArray(all.events) ? { events: all.events as string[] } : {}),
   };
@@ -169,7 +178,7 @@ async function ensureEnvironment(): Promise<boolean> {
   if (list.code !== 0) return false;
   const names = list.out.trim().split(",").filter(Boolean);
   if (names.some((n) => n !== "main:branch")) {
-    console.error(`The environment ${ENVIRONMENT} of ${REGISTRY} allows other branches than main (${names.join(", ")}): remove them in its settings, then run this script again.`);
+    console.error(`The environment ${ENVIRONMENT} of ${REGISTRY} allows other branches than main (${printable(names.join(", "))}): remove them in its settings, then run this script again.`);
     return false;
   }
   if (names.length === 0) {
@@ -246,13 +255,13 @@ async function main(): Promise<number> {
         try {
           const c = await exchange(code);
           if (c.owner?.id !== ORG_ID || c.slug !== SLUG) {
-            console.error(`Refused: GitHub returned an app that is not ${SLUG} of ${ORG} (slug ${JSON.stringify(c.slug)}, owner id ${c.owner?.id ?? "none"}). Nothing was stored; if you created an app by mistake, delete it on GitHub.`);
+            console.error(`Refused: GitHub returned an app that is not ${SLUG} of ${ORG} (slug ${printable(c.slug)}, owner id ${printable(String(c.owner?.id ?? "none"))}). Nothing was stored; if you created an app by mistake, delete it on GitHub.`);
             page(res, 502, "<p>Refused: this is not the sign-in app of kleidos-dev. Nothing was stored. See the terminal.</p>");
             finish(4);
             return;
           }
           const granted = Object.keys(c.permissions ?? {}).length + (c.events ?? []).length;
-          if (granted > 0) console.error(`Warning: GitHub gave the app permissions or events (${JSON.stringify(c.permissions ?? {})}, ${JSON.stringify(c.events ?? [])}): remove them on its settings page.`);
+          if (granted > 0) console.error(`Warning: GitHub gave the app permissions or events (${printable(JSON.stringify([c.permissions ?? {}, c.events ?? []]))}): remove them on its settings page.`);
           const stored: string[] = [];
           const failed: string[] = [];
           const values: Record<(typeof WORKER_SECRETS)[number], string> = { SIGNIN_CLIENT_ID: c.client_id, SIGNIN_CLIENT_SECRET: c.client_secret };
@@ -270,13 +279,13 @@ async function main(): Promise<number> {
             failed.push(`SIGNIN_CLIENT_SECRET (environment ${ENVIRONMENT} of ${REGISTRY})`);
             console.error(`gh secret set failed (exit ${set.code}); its output is not shown, as it could echo the value.`);
           }
-          console.log(`\nGitHub App created: ${c.slug} (app id ${c.id}${c.html_url ? `, ${c.html_url}` : ""}).`);
+          console.log(`\nGitHub App created: ${SLUG} (app id ${printable(String(c.id))}, ${WEB}/apps/${SLUG}).`);
           console.log(`Stored: ${stored.join(", ") || "nothing"}.`);
           if (failed.length) {
             console.error(`NOT stored: ${failed.join(", ")}. The secret is gone: on the app's settings page generate a new client secret and put it with \`npx wrangler secret put SIGNIN_CLIENT_SECRET\` in worker/ and \`gh secret set SIGNIN_CLIENT_SECRET --env ${ENVIRONMENT} --repo ${REGISTRY}\`, both reading it from standard input.`);
           }
           console.log(`\nThe client id (public): ${c.client_id}`);
-          console.log(`\nNext:\n  1. On ${WEB}/organizations/${ORG}/settings/apps/${c.slug}: "Expire user authorization tokens" on, "Enable Device Flow" off, webhook inactive, no permission and no event; under "Private keys" delete the key GitHub generated (nothing uses it).`);
+          console.log(`\nNext:\n  1. On ${WEB}/organizations/${ORG}/settings/apps/${SLUG}: "Expire user authorization tokens" on, "Enable Device Flow" off, webhook inactive, no permission and no event; under "Private keys" delete the key GitHub generated (nothing uses it).`);
           console.log(`  2. Do not install it anywhere: signing in needs no installation.`);
           console.log(`  3. In registry/config.json set "signin_client_id": "${c.client_id}" (a signed commit on main). The site signs in with this app only once a version whose flow is "signin" is current.`);
           page(res, failed.length ? 500 : 200, `<h1>${failed.length ? "Created, but not every secret was stored" : "Done"}</h1><p>Stored: ${escapeHtml(stored.join(", ") || "nothing")}.</p>${failed.length ? `<p>Not stored: ${escapeHtml(failed.join(", "))}. See the terminal.</p>` : "<p>You can close this tab and go back to the terminal.</p>"}`);

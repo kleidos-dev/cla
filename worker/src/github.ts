@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 import type { ConfiguredEnv } from "./env";
 import { allowedAccounts } from "./env";
-import { b64urlDecode, b64urlEncode, must, nowSeconds, utf8 } from "./util";
+import { b64urlDecode, b64urlEncode, byCodeUnits, must, nowSeconds, stripEnd, utf8 } from "./util";
 
 export const API = "https://api.github.com";
 export const WEB = "https://github.com";
@@ -68,7 +68,7 @@ export function resetGitHubCaches(): void {
 function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
   const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, "");
   if (pem.includes("BEGIN RSA PRIVATE KEY")) throw new Error("APP_PRIVATE_KEY must be PKCS#8");
-  const bytes = b64urlDecode(body.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, ""));
+  const bytes = b64urlDecode(stripEnd(body.replaceAll("+", "-").replaceAll("/", "_"), "="));
   if (!bytes) throw new Error("APP_PRIVATE_KEY is not PEM");
   return bytes;
 }
@@ -167,8 +167,8 @@ export class GitHub {
     for (const r of repos.slice(1)) {
       if ((await this.installationFor(r)) !== installation) throw new NotAllowedError("repositories_span_installations");
     }
-    const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort();
-    const key = `${installation}|${names.join(",")}|${JSON.stringify(Object.entries(permissions).sort())}`;
+    const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort(byCodeUnits);
+    const key = `${installation}|${names.join(",")}|${JSON.stringify(Object.entries(permissions).sort((a, b) => byCodeUnits(a.join(), b.join())))}`;
     const now = nowSeconds();
     const hit = state.tokens.get(key);
     if (hit && hit.expires - 300 > now) return hit.token;
@@ -209,7 +209,7 @@ export class GitHub {
 export function nextLink(link: string | null): string | null {
   if (!link) return null;
   for (const part of link.split(",")) {
-    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    const m = /^\s*<([^<>]+)>\s*;\s*rel="next"/.exec(part);
     if (m && must(m[1]).startsWith(`${API}/`)) return must(m[1]);
   }
   return null;

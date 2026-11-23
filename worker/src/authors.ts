@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { isLogin, must } from "./util";
+import { isLogin, must, stripEnd } from "./util";
 
 export interface Account {
   id: number;
@@ -32,7 +32,11 @@ export interface CommitAuthors {
 }
 
 const NOREPLY = /^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$/i;
-const TRAILER = /^co-authored-by:[ \t]*(.*?)[ \t]*<([^<>\s]+)>[ \t]*$/gim;
+const TRAILER_KEY = "co-authored-by:";
+/** A trailer's email with its closing bracket. */
+const TRAILER_EMAIL = /^[^<>\s]+>$/;
+/** What `^` and `$` take as the end of a line. */
+const LINE_END = /[\n\r\u2028\u2029]/;
 
 /** `<id>+<login>@users.noreply.github.com`, GitHub's own no-reply address, names the account. */
 export function parseNoreply(email: string | null): Account | null {
@@ -45,10 +49,21 @@ export function parseNoreply(email: string | null): Account | null {
   return { id, login, type: login.endsWith("[bot]") ? "Bot" : "User" };
 }
 
-/** The emails of the `Co-authored-by:` trailers of a commit message, lower-cased. */
+/**
+ * The emails of the `Co-authored-by:` trailers of a commit message, lower-cased.
+ * Anybody writes a commit message, so each line is read once, with no
+ * backtracking. registry/cla.py trailer_emails does the same, with a line feed
+ * as the only end of a line.
+ */
 export function coAuthorEmails(message: string): string[] {
   const out: string[] = [];
-  for (const m of message.matchAll(TRAILER)) out.push(must(m[2]).toLowerCase());
+  for (const line of message.split(LINE_END)) {
+    if (line.slice(0, TRAILER_KEY.length).toLowerCase() !== TRAILER_KEY) continue;
+    const bracket = line.lastIndexOf("<");
+    if (bracket < 0) continue;
+    const address = stripEnd(line.slice(bracket + 1), " \t");
+    if (TRAILER_EMAIL.test(address)) out.push(address.slice(0, -1).toLowerCase());
+  }
   return out;
 }
 

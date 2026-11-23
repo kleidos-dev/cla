@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { must } from "./util";
+import { must, stripEnd } from "./util";
 /**
  * A small Markdown renderer for the subset the agreement texts and notices
  * use: headings, paragraphs (soft line breaks kept as <br>), nested bullet
@@ -182,6 +182,25 @@ interface ListFrame {
   indent: number;
 }
 
+/** What ends a line inside one of the source's lines, which are cut at line feeds only: such a line is neither a heading nor a list item. */
+const LINE_END = /[\u2028\u2029]/;
+
+/** A heading line: its level, and its text without the number signs that may close it. */
+function headingLine(line: string): { level: number; text: string } | null {
+  const mark = /^#{1,6}(?=\s)/.exec(line);
+  if (!mark) return null;
+  const text = stripEnd(line.slice(mark[0].length).trim(), "#").trimEnd();
+  return LINE_END.test(text) ? null : { level: mark[0].length, text };
+}
+
+/** A list item's first line: how far its marker is indented, its list's tag and its text. */
+function listItemLine(line: string): { indent: number; tag: ListFrame["tag"]; text: string } | null {
+  const m = /^(\s*)([-*+]|\d{1,3}\.)(?=\s)/.exec(line);
+  if (!m) return null;
+  const text = line.slice(m[0].length).trimStart();
+  return LINE_END.test(text) ? null : { indent: must(m[1]).length, tag: /\d/.test(must(m[2])) ? "ol" : "ul", text };
+}
+
 /** Block Markdown to HTML, and its headings when idPrefix gives them ids. */
 export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered {
   const shift = opts.headingShift ?? 0;
@@ -214,11 +233,11 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
       closePara();
       continue;
     }
-    const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    const h = headingLine(line);
     if (h) {
       closeLists(0);
-      const level = Math.min(6, must(h[1]).length + shift);
-      const nodes = parseInline(must(h[2]), opts);
+      const level = Math.min(6, h.level + shift);
+      const nodes = parseInline(h.text, opts);
       const html = inlineHtml(nodes);
       let attr = "";
       if (opts.idPrefix !== undefined && level >= 2 && level <= 5) {
@@ -229,11 +248,10 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
       out.push(`<h${level}${attr}>${html}</h${level}>`);
       continue;
     }
-    const li = /^(\s*)([-*+]|\d{1,3}\.)\s+(.*)$/.exec(line);
+    const li = listItemLine(line);
     if (li) {
       closePara();
-      const indent = must(li[1]).length;
-      const tag = /\d/.test(must(li[2])) ? "ol" : "ul";
+      const { indent, tag, text } = li;
       while (lists.length && must(lists[lists.length - 1]).indent > indent) {
         if (itemOpen) out.push("</li>");
         out.push(`</${must(lists.pop()).tag}>`);
@@ -252,7 +270,7 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
       }
       out.push("<li>");
       itemOpen = true;
-      para.push(must(li[3]));
+      para.push(text);
       continue;
     }
     if (lists.length && /^\s+/.test(line)) {
