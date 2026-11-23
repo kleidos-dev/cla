@@ -65,7 +65,7 @@ export function nowSeconds(): number {
 /**
  * The characters either JavaScript's or Python's `\s` counts as white
  * space, spelled out: the recorder (registry/cla.py, WHITESPACE) uses the
- * same list, so both sides normalise a comment to the same string.
+ * same list, so both sides normalize a comment to the same string.
  */
 // eslint-disable-next-line no-control-regex -- U+001C to U+001F are white space to Python, so they are listed on purpose.
 const WHITESPACE = /[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
@@ -115,4 +115,18 @@ export async function readCapped(req: Request, max: number): Promise<Uint8Array<
     at += c.byteLength;
   }
   return out;
+}
+
+/** A decoded value before its fields are checked: each one may be missing or of any type. */
+export type Unchecked<T> = { [K in keyof T]?: unknown };
+
+/**
+ * The value, which the caller knows is there (a capture group its regular
+ * expression always fills, an element a length check proved, a key a lookup
+ * table always holds); throws when that knowledge is wrong instead of
+ * letting `undefined` travel on.
+ */
+export function must<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error("a value the code relies on is missing");
+  return value;
 }

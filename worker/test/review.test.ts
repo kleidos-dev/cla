@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cron, makeBot } from "../src/bot";
 import type { ConfiguredEnv } from "../src/env";
 import { allowedAccounts, isConfigured } from "../src/env";
-import { normalizeSentence } from "../src/util";
+import { must, normalizeSentence } from "../src/util";
 import { APP_ID, BOT_ID, ORG_ID, commit, sha } from "./fakegh";
 import type { FakePr } from "./fakegh";
 import type { World } from "./helpers";
@@ -74,7 +74,7 @@ describe("the .github/ exception and the head are pinned to one commit", () => {
     expect(run.approved).toBe(false);
     w.gh.onRequest = null;
     await drain(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     expect(w.gh.check(SANDBOX, a)).toBeUndefined();
   });
 
@@ -85,7 +85,7 @@ describe("the .github/ exception and the head are pinned to one commit", () => {
     const run = heldRun(w, pr);
     w.gh.failNext = { match: /GET \/repos\/.+\/compare\//, status: 404 };
     await opened(w, pr);
-    const check = w.gh.check(SANDBOX, pr.head.sha)!;
+    const check = must(w.gh.check(SANDBOX, pr.head.sha));
     expect(check.conclusion).toBe("success");
     expect(check.summary).toContain("could not be checked automatically");
     expect(check.summary).not.toContain("changes files under");
@@ -113,14 +113,14 @@ describe("who must sign", () => {
     const many = (n: number, last = alice) => [...Array.from({ length: n - 1 }, () => commit(alice)), commit(last)];
     const p101 = openPr(w, alice, { commits: many(101, bob) });
     await opened(w, p101);
-    expect(w.gh.check(SANDBOX, p101.head.sha)!.title).toBe("1 signature needed");
+    expect(must(w.gh.check(SANDBOX, p101.head.sha)).title).toBe("1 signature needed");
     const p250 = openPr(w, alice, { commits: many(250) });
     await opened(w, p250);
-    expect(w.gh.check(SANDBOX, p250.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, p250.head.sha)).conclusion).toBe("success");
     // Commit 251 is bob's and GitHub never lists it.
     const p251 = openPr(w, alice, { commits: many(251, bob) });
     await opened(w, p251);
-    const check = w.gh.check(SANDBOX, p251.head.sha)!;
+    const check = must(w.gh.check(SANDBOX, p251.head.sha));
     expect(check.conclusion).toBe("action_required");
     expect(check.summary).toContain("Too many commits");
   });
@@ -130,7 +130,7 @@ describe("who must sign", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(alice), commit(bob, { merge: true })] });
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.title).toBe("1 signature needed");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).title).toBe("1 signature needed");
   });
 
   it("the opener is dated by the pull request's creation, as the recorder does", async () => {
@@ -139,7 +139,7 @@ describe("who must sign", () => {
     const pr = openPr(w, bob, { commits: [commit(bob, { date: "2026-11-05T10:00:00Z" })] });
     pr.created_at = "2026-11-06T09:00:00Z";
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
   });
 
   it("a twin pull request on the same head blocks the check only while it is open", async () => {
@@ -147,14 +147,14 @@ describe("who must sign", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice);
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     const twin = openPr(w, mallory, { commits: pr.commits });
     twin.head.sha = pr.head.sha;
     await opened(w, twin);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     twin.state = "closed";
     await opened(w, twin, "closed");
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
   });
 
   it("a record whose last commit is not the recorder's, or that is malformed, does not count", async () => {
@@ -163,16 +163,16 @@ describe("who must sign", () => {
     w.gh.forgedRecords.add(alice.id);
     const pr = openPr(w, alice);
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
 
     await w.gh.signDirectly(bob);
-    const rec = JSON.parse(w.gh.files.get(`signatures:signatures/individual/${bob.id}.json`)!) as Record<string, unknown>;
+    const rec = JSON.parse(must(w.gh.files.get(`signatures:signatures/individual/${bob.id}.json`))) as Record<string, unknown>;
     rec.accepted_at = "**now** [x](https://evil.example)";
     w.gh.setFile("signatures", `signatures/individual/${bob.id}.json`, JSON.stringify(rec));
     const pr2 = openPr(w, bob);
     await opened(w, pr2);
-    expect(w.gh.check(SANDBOX, pr2.head.sha)!.conclusion).toBe("action_required");
-    expect(w.gh.botComments(SANDBOX, pr2.number)[0]!.body).not.toContain("evil.example");
+    expect(must(w.gh.check(SANDBOX, pr2.head.sha)).conclusion).toBe("action_required");
+    expect(must(w.gh.botComments(SANDBOX, pr2.number)[0]).body).not.toContain("evil.example");
   });
 
   it("one recorder run per account and evaluation, however many acceptances it posted", async () => {
@@ -189,19 +189,19 @@ describe("texts", () => {
     const w = await world();
     const pr = openPr(w, alice, { repo: REGISTRY });
     await opened(w, pr);
-    const needed = w.gh.botComments(REGISTRY, pr.number)[0]!.body;
+    const needed = must(w.gh.botComments(REGISTRY, pr.number)[0]).body;
     expect(needed).toContain("Sign it once and a maintainer starts the checks of this pull request");
     expect(spanishIn(needed)).toBeNull();
     expect(needed).not.toContain("start by themselves");
     await w.gh.signDirectly(alice);
     await opened(w, pr, "reopened");
-    const accepted = w.gh.botComments(REGISTRY, pr.number)[0]!.body;
+    const accepted = must(w.gh.botComments(REGISTRY, pr.number)[0]).body;
     expect(accepted).toContain("**Contributor Agreement signed.**");
     expect(accepted).toContain("a maintainer starts its checks");
     expect(accepted).toContain("started by a maintainer, not automatically");
     expect(accepted).not.toContain("run by themselves");
     expect(spanishIn(accepted)).toBeNull();
-    expect(w.gh.check(REGISTRY, pr.head.sha)!.summary).toContain("started by a maintainer");
+    expect(must(w.gh.check(REGISTRY, pr.head.sha)).summary).toContain("started by a maintainer");
   });
 
   it("the Spanish pages carry Spanish chrome, and English parts are marked", async () => {
@@ -223,7 +223,7 @@ describe("texts", () => {
     expect(html).not.toContain(">Register and source<");
   });
 
-  it("the TypeScript and Python normalisations agree on the shared vectors", () => {
+  it("the TypeScript and Python normalizations agree on the shared vectors", () => {
     for (const v of vectors.vectors) expect(normalizeSentence(v.in), JSON.stringify(v.in)).toBe(v.out);
   });
 });
@@ -252,7 +252,7 @@ describe("signing", () => {
       const { pr, path, b, form } = await signedIn(w);
       expect((await b.post("/agree", { ...form, accept: "yes" })).status).toBe(303);
       await drain(w);
-      const c = w.gh.comments.find((x) => x.pr === pr.number && x.user.id === alice.id)!;
+      const c = must(w.gh.comments.find((x) => x.pr === pr.number && x.user.id === alice.id));
       if (how === "edited") c.updated_at = "2099-01-01T00:00:00Z";
       else w.gh.comments = w.gh.comments.filter((x) => x !== c);
       const res = await b.get(path);
@@ -268,7 +268,7 @@ describe("signing", () => {
   it("a second submission confirms the first acceptance and posts nothing more", async () => {
     const w = await world();
     const { pr, path, b, form } = await signedIn(w);
-    const cookie = b.jar.get("__Host-cla")!;
+    const cookie = must(b.jar.get("__Host-cla"));
     expect((await b.post("/agree", { ...form, accept: "yes" })).status).toBe(303);
     // The same form again, with the session it was posted with (the grant is now revoked).
     b.jar.set("__Host-cla", cookie);
@@ -330,7 +330,7 @@ describe("webhook and cron", () => {
     const pr = openPr(w, alice);
     await webhook(w, "pull_request", prEvent(pr, "opened"));
     await webhook(w, "pull_request", prEvent(pr, "opened"), { signature: await sign("wrong", "{}") });
-    expect(w.limiters.RL_WEBHOOK!.keys).toEqual(["installation:1", "ip:unknown"]);
+    expect(must(w.limiters.RL_WEBHOOK).keys).toEqual(["installation:1", "ip:unknown"]);
   });
 
   it("a Record run that lands after the last delayed re-check turns the check green at once", async () => {
@@ -340,11 +340,11 @@ describe("webhook and cron", () => {
     const c = { id: w.gh.next(), repo: SANDBOX, pr: pr.number, body: CONFIG.versions["1"].sentence, user: alice, created_at: new Date().toISOString().slice(0, 19) + "Z", updated_at: new Date().toISOString().slice(0, 19) + "Z", via_app: true };
     w.gh.comments.push(c);
     await w.gh.record(c.id);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     const run = { event: "workflow_dispatch", path: ".github/workflows/record.yml", head_branch: "main", conclusion: "success", display_title: `Record sign ${SANDBOX}#${pr.number} ${c.id}` };
     await webhook(w, "workflow_run", { action: "completed", workflow_run: run, repository: { full_name: REGISTRY, owner: { id: ORG_ID } }, installation: { id: 1 } });
     await drain(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
   });
 
   it("a check re-run on a fork pull request (no pull_requests in the payload) re-evaluates it", async () => {

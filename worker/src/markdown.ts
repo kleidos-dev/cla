@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { must } from "./util";
 /**
  * A small Markdown renderer for the subset the agreement texts and notices
  * use: headings, paragraphs (soft line breaks kept as <br>), nested bullet
@@ -9,7 +10,7 @@
  * rendering can neither drop nor change one.
  */
 export function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  return s.replace(/[&<>"']/g, (c) => must(({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]));
 }
 
 export interface RenderOptions {
@@ -41,9 +42,9 @@ export function renderInline(src: string, opts: RenderOptions = {}): string {
   };
   while (i < src.length) {
     const rest = src.slice(i);
-    const ch = src[i]!;
-    if (ch === "\\" && i + 1 < src.length && ESCAPABLE.test(src[i + 1]!)) {
-      text += src[i + 1]!;
+    const ch = must(src[i]);
+    if (ch === "\\" && i + 1 < src.length && ESCAPABLE.test(must(src[i + 1]))) {
+      text += must(src[i + 1]);
       i += 2;
       continue;
     }
@@ -51,7 +52,7 @@ export function renderInline(src: string, opts: RenderOptions = {}): string {
       const m = /^`([^`]+)`/.exec(rest);
       if (m) {
         flush();
-        out += `<code>${escapeHtml(m[1]!)}</code>`;
+        out += `<code>${escapeHtml(must(m[1]))}</code>`;
         i += m[0].length;
         continue;
       }
@@ -60,8 +61,8 @@ export function renderInline(src: string, opts: RenderOptions = {}): string {
       const m = /^\[((?:\\.|[^\]\\])*)\]\(([^()\s]+)\)/.exec(rest);
       if (m) {
         flush();
-        const href = safeHref(m[2]!, opts);
-        const label = m[1]!;
+        const href = safeHref(must(m[2]), opts);
+        const label = must(m[1]);
         if (label.length > 0) out += href ? `<a href="${escapeHtml(href)}">${renderInline(label, opts)}</a>` : renderInline(label, opts);
         i += m[0].length;
         continue;
@@ -85,7 +86,7 @@ export function renderInline(src: string, opts: RenderOptions = {}): string {
         continue;
       }
     }
-    if (ch === "h" && (i === 0 || /[\s(]/.test(src[i - 1]!))) {
+    if (ch === "h" && (i === 0 || /[\s(]/.test(must(src[i - 1])))) {
       const m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(rest);
       if (m) {
         flush();
@@ -126,7 +127,7 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
     closePara();
     while (lists.length > toDepth) {
       if (itemOpen) out.push("</li>");
-      out.push(`</${lists.pop()!.tag}>`);
+      out.push(`</${must(lists.pop()).tag}>`);
       itemOpen = lists.length > 0;
     }
   };
@@ -139,18 +140,18 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
     const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
     if (h) {
       closeLists(0);
-      const level = Math.min(6, h[1]!.length + shift);
-      out.push(`<h${level}>${renderInline(h[2]!, opts)}</h${level}>`);
+      const level = Math.min(6, must(h[1]).length + shift);
+      out.push(`<h${level}>${renderInline(must(h[2]), opts)}</h${level}>`);
       continue;
     }
     const li = /^(\s*)([-*+]|\d{1,3}\.)\s+(.*)$/.exec(line);
     if (li) {
       closePara();
-      const indent = li[1]!.length;
-      const tag = /\d/.test(li[2]!) ? "ol" : "ul";
-      while (lists.length && lists[lists.length - 1]!.indent > indent) {
+      const indent = must(li[1]).length;
+      const tag = /\d/.test(must(li[2])) ? "ol" : "ul";
+      while (lists.length && must(lists[lists.length - 1]).indent > indent) {
         if (itemOpen) out.push("</li>");
-        out.push(`</${lists.pop()!.tag}>`);
+        out.push(`</${must(lists.pop()).tag}>`);
         itemOpen = true;
       }
       const top = lists[lists.length - 1];
@@ -160,13 +161,13 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): string {
       } else {
         if (itemOpen) out.push("</li>");
         if (top.tag !== tag) {
-          out.push(`</${lists.pop()!.tag}>`, `<${tag}>`);
+          out.push(`</${must(lists.pop()).tag}>`, `<${tag}>`);
           lists.push({ tag, indent });
         }
       }
       out.push("<li>");
       itemOpen = true;
-      para.push(li[3]!);
+      para.push(must(li[3]));
       continue;
     }
     if (lists.length && /^\s+/.test(line)) {

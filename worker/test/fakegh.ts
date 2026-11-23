@@ -8,7 +8,7 @@
  */
 import type { CommitNode } from "../src/authors";
 import type { SignatureRecord } from "../src/registry";
-import { b64urlDecode, b64urlEncode, sha256Hex, utf8 } from "../src/util";
+import { b64urlDecode, b64urlEncode, must, sha256Hex, utf8 } from "../src/util";
 
 export const ORG_ID = 357318718;
 export const APP_ID = 1234567;
@@ -99,11 +99,12 @@ export class FakeGitHub {
   failNext: { match: RegExp; status: number; headers?: Record<string, string> } | null = null;
   private seq = 1000;
 
-  async init(publicKey: CryptoKey): Promise<void> {
+  init(publicKey: CryptoKey): Promise<void> {
     this.publicKey = publicKey;
     this.installations.set(1, { account: ORG_ID });
     this.addRepo(REGISTRY);
     this.addRepo("kleidos-dev/cla-sandbox");
+    return Promise.resolve();
   }
 
   next(): number {
@@ -125,8 +126,8 @@ export class FakeGitHub {
 
   /** What record.yml does after re-reading the comment: write the record on the signatures branch. */
   async record(commentId: number, version = 1, setSha256?: string): Promise<SignatureRecord> {
-    const c = this.comments.find((x) => x.id === commentId)!;
-    const config = JSON.parse(this.files.get("main:registry/config.json")!) as { versions: Record<string, { set_sha256: string }> };
+    const c = must(this.comments.find((x) => x.id === commentId));
+    const config = JSON.parse(must(this.files.get("main:registry/config.json"))) as { versions: Record<string, { set_sha256: string }> };
     const rec: SignatureRecord = {
       schema: 1,
       kind: "individual",
@@ -134,7 +135,7 @@ export class FakeGitHub {
       login_at_signing: c.user.login,
       agreement: "kleidos-ca",
       version,
-      set_sha256: setSha256 ?? config.versions[String(version)]!.set_sha256,
+      set_sha256: setSha256 ?? must(config.versions[String(version)]).set_sha256,
       accepted_at: c.created_at,
       method: c.via_app ? "web" : "comment",
       evidence: {
@@ -167,29 +168,29 @@ export class FakeGitHub {
   private async verifyJwt(auth: string | null): Promise<boolean> {
     const m = auth ? /^Bearer ([^.]+)\.([^.]+)\.([^.]+)$/.exec(auth) : null;
     if (!m) return false;
-    const sig = b64urlDecode(m[3]!);
+    const sig = b64urlDecode(must(m[3]));
     if (!sig) return false;
     const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", this.publicKey, sig, utf8(`${m[1]}.${m[2]}`));
     if (!ok) return false;
-    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(m[2]!)!)) as { iss: string; exp: number };
+    const payload = JSON.parse(new TextDecoder().decode(must(b64urlDecode(must(m[2]))))) as { iss: string; exp: number };
     return payload.iss === String(APP_ID) && payload.exp > Date.now() / 1000;
   }
 
   private tokenOf(auth: string | null): Token | null {
     const m = auth ? /^Bearer (gh[su]_[A-Za-z0-9_-]+)$/.exec(auth) : null;
     if (!m) return null;
-    const t = this.tokens.get(m[1]!);
+    const t = this.tokens.get(must(m[1]));
     return t && !t.revoked ? t : null;
   }
 
   private can(t: Token | null, repo: string, perm: string, level: "read" | "write"): boolean {
     if (!t) return false;
     if (t.kind === "user") return this.repos.get(repo)?.id === t.repositoryId && perm === "pull_requests";
-    return Boolean(t.repos?.includes(repo.split("/")[1]!) && (LEVEL[t.permissions?.[perm] ?? ""] ?? 0) >= LEVEL[level]!);
+    return Boolean(t.repos?.includes(must(repo.split("/")[1])) && (LEVEL[t.permissions?.[perm] ?? ""] ?? 0) >= must(LEVEL[level]));
   }
 
   private prJson(p: FakePr) {
-    const repo = this.repos.get(p.repo)!;
+    const repo = must(this.repos.get(p.repo));
     return {
       number: p.number,
       state: p.state,
@@ -249,7 +250,7 @@ export class FakeGitHub {
     // App endpoints, JWT
     if ((m = /^\/repos\/([^/]+\/[^/]+)\/installation$/.exec(p))) {
       if (!(await this.verifyJwt(auth))) return json({ message: "Bad credentials" }, 401);
-      const r = this.repos.get(m[1]!);
+      const r = this.repos.get(must(m[1]));
       return r ? json({ id: r.installation, account: { id: r.account } }) : json({ message: "Not Found" }, 404);
     }
     if ((m = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(p))) {
@@ -296,7 +297,7 @@ export class FakeGitHub {
     if (p === "/user") {
       const t = this.tokenOf(auth);
       if (!t || t.kind !== "user") return json({ message: "Bad credentials" }, 401);
-      return json({ id: t.user!.id, login: t.user!.login, type: t.user!.type });
+      return json({ id: must(t.user).id, login: must(t.user).login, type: must(t.user).type });
     }
     if (p === "/graphql") {
       const t = this.tokenOf(auth);
@@ -314,7 +315,7 @@ export class FakeGitHub {
 
     // Repository endpoints, installation or user token
     if (!(m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(p))) return json({ message: "Not Found" }, 404);
-    const repo = m[1]!;
+    const repo = must(m[1]);
     const rest = m[2] ?? "";
     const t = this.tokenOf(auth);
     if (!this.repos.has(repo)) return json({ message: "Not Found" }, 404);
@@ -322,7 +323,7 @@ export class FakeGitHub {
 
     if (rest === "" && req.method === "GET") {
       if (!this.can(t, repo, "metadata", "read") && !this.can(t, repo, "pull_requests", "read") && !this.can(t, repo, "contents", "read")) return json({ message: "Not Found" }, 404);
-      const r = this.repos.get(repo)!;
+      const r = must(this.repos.get(repo));
       return json({ id: r.id, full_name: repo, private: r.private });
     }
     if ((m = /^\/contents\/(.+)$/.exec(rest))) {
@@ -360,7 +361,7 @@ export class FakeGitHub {
     }
     if ((m = /^\/pulls\/(\d+)\/files$/.exec(rest))) {
       if (!this.can(t, repo, "pull_requests", "read")) return json({ message: "Forbidden" }, 403);
-      return json(this.pulls.get(`${repo}#${m[1]}`)!.files);
+      return json(must(this.pulls.get(`${repo}#${m[1]}`)).files);
     }
     if ((m = /^\/issues\/(\d+)\/comments$/.exec(rest))) {
       const n = Number(m[1]);
@@ -373,19 +374,19 @@ export class FakeGitHub {
       if (!pr) return json({ message: "Not Found" }, 404);
       if (pr.locked && t.kind === "user") return json({ message: "locked" }, 403);
       const now = new Date().toISOString().slice(0, 19) + "Z";
-      const user = t.kind === "user" ? t.user! : { id: BOT_ID, login: "kleidos-cla[bot]", type: "Bot" as const };
+      const user = t.kind === "user" ? must(t.user) : { id: BOT_ID, login: "kleidos-cla[bot]", type: "Bot" as const };
       const c: FakeComment = { id: this.next(), repo, pr: n, body: String(data.body), user, created_at: now, updated_at: now, via_app: true };
       this.comments.push(c);
       return json(this.commentJson(c), 201);
     }
     if ((m = /^\/issues\/comments\/(\d+)$/.exec(rest)) && req.method === "GET") {
       if (!this.can(t, repo, "pull_requests", "read")) return json({ message: "Forbidden" }, 403);
-      const c = this.comments.find((x) => x.id === Number(m![1]) && x.repo === repo);
+      const c = this.comments.find((x) => x.id === Number(must(m)[1]) && x.repo === repo);
       return c ? json(this.commentJson(c)) : json({ message: "Not Found" }, 404);
     }
     if ((m = /^\/issues\/comments\/(\d+)$/.exec(rest)) && req.method === "PATCH") {
       if (!this.can(t, repo, "pull_requests", "write") || t.kind !== "installation") return json({ message: "Forbidden" }, 403);
-      const c = this.comments.find((x) => x.id === Number(m![1]));
+      const c = this.comments.find((x) => x.id === Number(must(m)[1]));
       if (!c) return json({ message: "Not Found" }, 404);
       c.body = String(data.body);
       c.updated_at = new Date(Date.now() + 1000).toISOString().slice(0, 19) + "Z";
@@ -393,7 +394,7 @@ export class FakeGitHub {
     }
     if ((m = /^\/commits\/([0-9a-f]{40})\/check-runs$/.exec(rest))) {
       if (!this.can(t, repo, "checks", "read")) return json({ message: "Forbidden" }, 403);
-      const runs = this.checkRuns.filter((r) => r.repo === repo && r.head_sha === m![1] && r.name === url.searchParams.get("check_name"));
+      const runs = this.checkRuns.filter((r) => r.repo === repo && r.head_sha === must(m)[1] && r.name === url.searchParams.get("check_name"));
       return json({ check_runs: runs.map((r) => ({ id: r.id, conclusion: r.conclusion, app: { id: r.app_id } })) });
     }
     if (rest === "/check-runs" && req.method === "POST") {
@@ -404,7 +405,7 @@ export class FakeGitHub {
     }
     if ((m = /^\/check-runs\/(\d+)$/.exec(rest)) && req.method === "PATCH") {
       if (!this.can(t, repo, "checks", "write")) return json({ message: "Forbidden" }, 403);
-      const r = this.checkRuns.find((x) => x.id === Number(m![1]))!;
+      const r = must(this.checkRuns.find((x) => x.id === Number(must(m)[1])));
       const out = data.output as { title: string; summary: string };
       Object.assign(r, { conclusion: String(data.conclusion), title: out.title, summary: out.summary });
       return json({});
@@ -415,12 +416,12 @@ export class FakeGitHub {
     }
     if ((m = /^\/git\/trees\/([0-9a-f]{40})$/.exec(rest))) {
       if (!this.can(t, repo, "contents", "read")) return json({ message: "Forbidden" }, 403);
-      const tree = this.githubTreeOf(m[1]!);
+      const tree = this.githubTreeOf(must(m[1]));
       return json({ sha: m[1], truncated: false, tree: [{ path: "README.md", mode: "100644", type: "blob", sha: "1".repeat(40) }, ...(tree ? [{ path: ".github", mode: "040000", type: "tree", sha: tree }] : [])] });
     }
     if ((m = /^\/actions\/runs\/(\d+)\/jobs$/.exec(rest))) {
       if (!this.can(t, repo, "actions", "read")) return json({ message: "Forbidden" }, 403);
-      return json({ jobs: this.runs.find((x) => x.id === Number(m![1]))?.jobs ?? [] });
+      return json({ jobs: this.runs.find((x) => x.id === Number(must(m)[1]))?.jobs ?? [] });
     }
     if (rest === "/actions/runs" && req.method === "GET") {
       if (!this.can(t, repo, "actions", "read")) return json({ message: "Forbidden" }, 403);
@@ -429,7 +430,7 @@ export class FakeGitHub {
     }
     if ((m = /^\/actions\/runs\/(\d+)\/approve$/.exec(rest))) {
       if (!this.can(t, repo, "actions", "write")) return json({ message: "Forbidden" }, 403);
-      const r = this.runs.find((x) => x.id === Number(m![1]))!;
+      const r = must(this.runs.find((x) => x.id === Number(must(m)[1])));
       r.approved = true;
       return json({}, 201);
     }
@@ -438,7 +439,7 @@ export class FakeGitHub {
 
   /** The `.github` tree of a commit: pinned by a test, else the base's, changed when the pull request with that head touches `.github/`. */
   githubTreeOf(sha: string): string | null {
-    if (this.githubTrees.has(sha)) return this.githubTrees.get(sha)!;
+    if (this.githubTrees.has(sha)) return must(this.githubTrees.get(sha));
     const pr = [...this.pulls.values()].find((x) => x.head.sha === sha);
     const touched = pr?.files.some((f) => f.filename.startsWith(".github/") || (f.previous_filename ?? "").startsWith(".github/"));
     return touched ? "8".repeat(40) : BASE_GITHUB_TREE;

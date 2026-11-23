@@ -5,7 +5,7 @@ import { log } from "./log";
 import type { QueueMessage } from "./messages";
 import { isRepoName } from "./messages";
 import { allowedAccounts } from "./env";
-import { clientIp, readCapped, utf8 } from "./util";
+import { clientIp, must, readCapped, utf8 } from "./util";
 
 export const MAX_WEBHOOK_BYTES = 2 * 1024 * 1024;
 const SIG = /^sha256=([0-9a-f]{64})$/;
@@ -27,7 +27,7 @@ function hexToBytes(h: string): Uint8Array<ArrayBuffer> {
 export async function verifySignature(secret: string, header: string | null, body: Uint8Array<ArrayBuffer>): Promise<boolean> {
   const m = header ? SIG.exec(header) : null;
   if (!m) return false;
-  return crypto.subtle.verify("HMAC", await keyFor(secret), hexToBytes(m[1]!), body);
+  return crypto.subtle.verify("HMAC", await keyFor(secret), hexToBytes(must(m[1])), body);
 }
 
 type Payload = Record<string, unknown>;
@@ -89,7 +89,7 @@ export function mapEvent(event: string, p: Payload, o: MapOptions): QueueMessage
         // A Record run that wrote a signature: re-evaluate its pull request now rather than at the next cron.
         if (action !== "completed" || run.conclusion !== "success" || run.path !== ".github/workflows/record.yml" || run.head_branch !== "main") return [];
         const m = typeof run.display_title === "string" ? RECORD_TITLE.exec(run.display_title) : null;
-        return m ? [{ kind: "evaluate", repo: m[1]!, pr: Number(m[2]) }] : [];
+        return m ? [{ kind: "evaluate", repo: must(m[1]), pr: Number(m[2]) }] : [];
       }
       if (run.event !== "pull_request") return [];
       const sha = typeof run.head_sha === "string" && /^[0-9a-f]{40}$/.test(run.head_sha) ? run.head_sha : null;

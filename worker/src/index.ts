@@ -15,6 +15,7 @@ import type { QueueMessage } from "./messages";
 import { parseMessage } from "./messages";
 import { agree, agreementPage, callback, login, logout, privacyPage, setupPage, signPage, signingState } from "./web";
 import { handleWebhook } from "./webhook";
+import { must } from "./util";
 
 const PUBLIC_ROUTES = new Set(["/agreement", "/agreement/entity", "/agreement/es", "/privacy", "/privacy/es", "/healthz", "/robots.txt", "/.well-known/security.txt", "/", "/setup"]);
 
@@ -74,8 +75,8 @@ async function publicRoute(path: string, env: Env, lang: Lang): Promise<Response
       return securityTxt(env);
   }
   const file = /^\/agreement\/v(\d+)\/([A-Za-z0-9.]+)$/.exec(path);
-  if (file && Number(file[1]) === AGREEMENT_VERSION && Object.hasOwn(FILES, file[2]!)) {
-    const name = file[2]!;
+  if (file && Number(file[1]) === AGREEMENT_VERSION && Object.hasOwn(FILES, must(file[2]))) {
+    const name = must(file[2]);
     const h = securityHeaders(new Headers({ "content-type": name.endsWith(".md") ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8", "content-disposition": `attachment; filename="${name}"` }), "public");
     return new Response(FILES[name], { headers: h });
   }

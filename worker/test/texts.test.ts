@@ -10,6 +10,7 @@ import { who } from "../src/texts";
 import { parseSignPath, sentenceFor } from "../src/web";
 import { commit } from "./fakegh";
 import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
+import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -17,7 +18,7 @@ afterEach(() => {
 });
 
 function decode(s: string): string {
-  return s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e]!);
+  return s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => must(({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e]));
 }
 
 /** The words a reader sees, from the HTML. */
@@ -100,7 +101,7 @@ describe("pure helpers", () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((s: string) => void lines.push(s));
     log("x", { repo: "a/b", token: "ghu_secret", email: "a@b.c", reason: "ghs_abc", account: 5 });
-    expect(JSON.parse(lines[0]!)).toEqual({ msg: "x", repo: "a/b", reason: "redacted" });
+    expect(JSON.parse(must(lines[0]))).toEqual({ msg: "x", repo: "a/b", reason: "redacted" });
   });
 });
 
@@ -170,7 +171,7 @@ describe("pages and hygiene", () => {
     expect((await b.get("/nope")).status).toBe(404);
     expect((await b.post("/agreement", {})).status).toBe(405);
     const page = await (await b.get("/agreement")).text();
-    const css = /href="(\/assets\/cla\.[0-9a-f]{12}\.css)"/.exec(page)![1]!;
+    const css = must(must(/href="(\/assets\/cla\.[0-9a-f]{12}\.css)"/.exec(page))[1]);
     expect((await b.get(css)).headers.get("content-type")).toBe("text/css; charset=utf-8");
     expect((await b.get("/assets/cla.000000000000.css")).status).toBe(404);
     expect((await b.get("/robots.txt")).status).toBe(200);

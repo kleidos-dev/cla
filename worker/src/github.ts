@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import type { ConfiguredEnv } from "./env";
 import { allowedAccounts } from "./env";
-import { b64urlDecode, b64urlEncode, nowSeconds, utf8 } from "./util";
+import { b64urlDecode, b64urlEncode, must, nowSeconds, utf8 } from "./util";
 
 export const API = "https://api.github.com";
 export const WEB = "https://github.com";
@@ -32,6 +32,12 @@ export interface Resp<T> {
   status: number;
   data: T;
   headers: Headers;
+}
+
+/** Every item a paginated list returned, typed at the call site like Resp<T>, and whether the page limit cut it. */
+export interface Page<T> {
+  items: T[];
+  truncated: boolean;
 }
 
 type Auth = { token: string } | { basic: [string, string] } | { jwt: true } | { none: true };
@@ -110,7 +116,7 @@ export class GitHub {
     if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
     else if ("jwt" in auth) headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
     else if ("basic" in auth) headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
-    let payload: string | undefined;
+    let payload: string | null = null;
     if (body !== undefined) {
       headers.set("content-type", "application/json");
       payload = JSON.stringify(body);
@@ -156,11 +162,11 @@ export class GitHub {
 
   /** An installation token narrowed to the given repositories (names under the installation's account) and permissions. */
   async token(repos: string[], permissions: Permissions): Promise<string> {
-    const installation = await this.installationFor(repos[0]!);
+    const installation = await this.installationFor(must(repos[0]));
     for (const r of repos.slice(1)) {
       if ((await this.installationFor(r)) !== installation) throw new NotAllowedError("repositories_span_installations");
     }
-    const names = [...new Set(repos.map((r) => r.split("/")[1]!))].sort();
+    const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort();
     const key = `${installation}|${names.join(",")}|${JSON.stringify(Object.entries(permissions).sort())}`;
     const now = nowSeconds();
     const hit = state.tokens.get(key);
@@ -187,7 +193,7 @@ export class GitHub {
   }
 
   /** Follows `Link: rel="next"` up to a page limit; returns every item and whether the list was cut. */
-  async paginate<T>(path: string, auth: Auth, maxPages: number): Promise<{ items: T[]; truncated: boolean }> {
+  async paginate<T>(path: string, auth: Auth, maxPages: number): Promise<Page<T>> {
     const items: T[] = [];
     let url: string | null = path.includes("?") ? `${path}&per_page=100` : `${path}?per_page=100`;
     for (let page = 0; url && page < maxPages; page++) {
@@ -203,7 +209,7 @@ export function nextLink(link: string | null): string | null {
   if (!link) return null;
   for (const part of link.split(",")) {
     const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
-    if (m && m[1]!.startsWith(`${API}/`)) return m[1]!;
+    if (m && must(m[1]).startsWith(`${API}/`)) return must(m[1]);
   }
   return null;
 }

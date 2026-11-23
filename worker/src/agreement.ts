@@ -8,7 +8,7 @@ import sums from "../../agreements/v1/SHA256SUMS";
 import summaryEs from "../../agreements/v1/summary.es.md";
 import privacy from "../../PRIVACY.md";
 import privacyEs from "../../PRIVACY.es.md";
-import { sha256Hex } from "./util";
+import { must, sha256Hex } from "./util";
 
 /** The version this Worker was built with; its texts are bundled from agreements/v1/. */
 export const AGREEMENT_VERSION = 1;
@@ -51,9 +51,9 @@ export function checkIntegrity(): Promise<Integrity> {
         ok = false;
         continue;
       }
-      const text = Object.hasOwn(FILES, m[2]!) ? FILES[m[2]!] : undefined;
+      const text = Object.hasOwn(FILES, must(m[2])) ? FILES[must(m[2])] : undefined;
       const actual = text === undefined ? "" : await sha256Hex(text);
-      files[m[2]!] = actual;
+      files[must(m[2])] = actual;
       if (actual !== m[1]) ok = false;
     }
     for (const required of ["individual.md", "entity.md", "addendum.md"]) if (!(required in files)) ok = false;

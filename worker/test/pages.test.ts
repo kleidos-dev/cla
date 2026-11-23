@@ -10,6 +10,7 @@ import { fromAcceptLanguage } from "../src/i18n";
 import { BOT_ID, commit } from "./fakegh";
 import type { World } from "./helpers";
 import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, spanishIn, webhook, world } from "./helpers";
+import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -39,7 +40,7 @@ describe("the edge", () => {
     const w = await world();
     const { path } = await setup(w);
     const b = new Browser(w, alice);
-    const css = /href="(\/assets\/cla\.[0-9a-f]+\.css)"/.exec(await (await b.get("/agreement")).text())![1]!;
+    const css = must(must(/href="(\/assets\/cla\.[0-9a-f]+\.css)"/.exec(await (await b.get("/agreement")).text()))[1]);
     for (const p of [path, `${path}?lang=es`, "/agreement", "/agreement?lang=es", "/agreement/entity", "/privacy", "/privacy?lang=es", "/agreement/es", css, "/assets/mark.svg", "/assets/fonts/kleidos-mono.woff2", "/button/v2/needed-0-1.svg", "/healthz"]) {
       const r = await b.get(p);
       expect(r.headers.get("cache-control"), p).toMatch(/(^|, )no-transform$/);
@@ -75,7 +76,7 @@ describe("the comment's button", () => {
   it("each state has its own immutable URL, and the comment moves to the new one when the state changes", async () => {
     const w = await world();
     const { pr } = await setup(w, [commit(alice), commit(bob)]);
-    const first = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
+    const first = must(w.gh.botComments(SANDBOX, pr.number)[0]).body;
     expect(first).toContain(`(https://cla.kleidos.dev/button/v2/needed-0-2.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     expect(first).toContain("Still to sign: @alice, [bob](https://github.com/bob).");
     await w.gh.signDirectly(bob);
@@ -83,11 +84,11 @@ describe("the comment's button", () => {
     await drain(w);
     const second = w.gh.botComments(SANDBOX, pr.number);
     expect(second).toHaveLength(1);
-    expect(second[0]!.body).toContain("[![Sign the Kleidos Contributor Agreement: 1 of 2 authors signed](https://cla.kleidos.dev/button/v2/partial-1-2.svg)]");
+    expect(must(second[0]).body).toContain("[![Sign the Kleidos Contributor Agreement: 1 of 2 authors signed](https://cla.kleidos.dev/button/v2/partial-1-2.svg)]");
     await w.gh.signDirectly(alice);
     await webhook(w, "pull_request", prEvent(pr, "reopened"));
     await drain(w);
-    const third = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
+    const third = must(w.gh.botComments(SANDBOX, pr.number)[0]).body;
     expect(third).toContain("[![Kleidos Contributor Agreement signed by all 2 authors](https://cla.kleidos.dev/button/v2/signed-2-2.svg)]");
     expect(third).toContain("Register entries: [alice](https://github.com/kleidos-dev/cla/blob/");
     expect(third.startsWith("<!-- kleidos-cla:v1 -->\n")).toBe(true);
@@ -116,11 +117,11 @@ describe("the comment's button", () => {
   it("is in English only: no Spanish in the title or in the drawings of any state", () => {
     for (const [state, signed, total] of [["needed", 0, 2], ["partial", 1, 2], ["signed", 2, 2], ["none", 0, 0]] as const) {
       const svg = buttonSvg(state, signed, total);
-      const title = /<title id="t">([^<]+)<\/title>/.exec(svg)![1]!;
+      const title = must(must(/<title id="t">([^<]+)<\/title>/.exec(svg))[1]);
       expect(title, state).toBe(`${buttonAlt(state, signed, total)}.`);
       expect(spanishIn(svg), state).toBeNull();
       // One line of words: a single outline path between the frame and the chip.
-      const words = svg.slice(svg.indexOf('rx="9.5"/>') + 10).split(/<rect /)[0]!;
+      const words = must(svg.slice(svg.indexOf('rx="9.5"/>') + 10).split(/<rect /)[0]);
       expect(words.match(/<path /g), state).toHaveLength(1);
     }
     for (const f of [neededSvg, signedSvg, noneSvg]) expect(spanishIn(f)).toBeNull();
@@ -140,7 +141,7 @@ describe("the comment's button", () => {
   });
 
   it("draws the count from the glyph table: a longer count makes a wider button, the words stay the same", () => {
-    const width = (svg: string) => Number(/width="(\d+)"/.exec(svg)![1]);
+    const width = (svg: string) => Number(must(/width="(\d+)"/.exec(svg))[1]);
     const short = buttonSvg("needed", 0, 2);
     expect(width(short)).toBe(277);
     expect(width(buttonSvg("signed", 2, 2))).toBe(282);
@@ -233,8 +234,8 @@ describe("the sign flow in Spanish", () => {
     expect(start).not.toContain("Acuerdo de licencia no exclusiva");
 
     const login = await b.get(`/auth/login?return=${encodeURIComponent(path)}&lang=es`);
-    const authorize = new URL(login.headers.get("location")!);
-    const code = w.gh.issueCode(alice, authorize.searchParams.get("code_challenge")!);
+    const authorize = new URL(must(login.headers.get("location")));
+    const code = w.gh.issueCode(alice, must(authorize.searchParams.get("code_challenge")));
     // Back from GitHub with an English browser: the transaction remembers the page's language.
     const back = await b.get(`/auth/callback?code=${code}&state=${authorize.searchParams.get("state")}`, { "accept-language": "en" });
     expect(back.headers.get("location")).toBe(`${path}?lang=es`);
@@ -251,7 +252,7 @@ describe("the sign flow in Spanish", () => {
 
     const posted = await b.post("/agree", { ...form, accept: "yes" });
     expect(posted.headers.get("location")).toBe(`${path}?lang=es`);
-    const c = w.gh.comments.find((x) => x.pr === pr.number && x.user.id === alice.id)!;
+    const c = must(w.gh.comments.find((x) => x.pr === pr.number && x.user.id === alice.id));
     expect(c.body).toBe(SENTENCE);
     const done = await (await b.get(`${path}?lang=es`)).text();
     expect(done).toContain("Hecho · Firmado");

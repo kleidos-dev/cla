@@ -3,6 +3,7 @@ import type { Lang } from "./i18n";
 import { isLang } from "./i18n";
 import type { Keys } from "./keys";
 import { open, seal } from "./keys";
+import type { Unchecked } from "./util";
 import { isLogin, nowSeconds } from "./util";
 
 export const SESSION_COOKIE = "__Host-cla";
@@ -62,10 +63,10 @@ export function clearCookie(name: string): string {
 export async function readSession(req: Request, keys: Keys): Promise<Session | null> {
   const raw = readCookie(req, SESSION_COOKIE);
   if (!raw) return null;
-  const v = (await open(keys.session, SESSION_COOKIE, raw)) as Session | null;
+  const v = (await open(keys.session, SESSION_COOKIE, raw)) as Unchecked<Session> | null;
   if (!v || v.v !== 1 || typeof v.sid !== "string" || typeof v.id !== "number" || !isLogin(v.login) || typeof v.exp !== "number") return null;
   if (v.exp <= nowSeconds()) return null;
-  return v;
+  return v as Session;
 }
 
 export async function sessionCookie(keys: Keys, s: Session): Promise<string> {
@@ -75,10 +76,10 @@ export async function sessionCookie(keys: Keys, s: Session): Promise<string> {
 export async function readTransaction(req: Request, keys: Keys): Promise<OAuthTransaction | null> {
   const raw = readCookie(req, OAUTH_COOKIE);
   if (!raw) return null;
-  const v = (await open(keys.oauth, OAUTH_COOKIE, raw)) as OAuthTransaction | null;
+  const v = (await open(keys.oauth, OAUTH_COOKIE, raw)) as Unchecked<OAuthTransaction> | null;
   if (!v || v.v !== 1 || typeof v.state !== "string" || typeof v.verifier !== "string" || typeof v.return !== "string" || typeof v.exp !== "number" || (v.lang !== undefined && !isLang(v.lang))) return null;
   if (v.exp <= nowSeconds()) return null;
-  return v;
+  return v as OAuthTransaction;
 }
 
 export async function transactionCookie(keys: Keys, t: OAuthTransaction): Promise<string> {

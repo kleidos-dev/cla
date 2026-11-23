@@ -5,7 +5,7 @@ import type { GitHub } from "./github";
 import { GitHubError } from "./github";
 import type { Config, Registry, SignatureRecord } from "./registry";
 import { coveringEntity, recordValid } from "./registry";
-import { normalizeSentence } from "./util";
+import { must, normalizeSentence } from "./util";
 
 export const CHECK_NAME = "📝 CLA";
 export const MARKER = "<!-- kleidos-cla:v1 -->";
@@ -170,7 +170,7 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
     }
     const entity = dates.map((d) => coveringEntity(entities, config, account.id, d));
     if (entity.every((e) => e !== null)) {
-      entityCovered.push({ account, entity: entity[0]!.name });
+      entityCovered.push({ account, entity: must(entity[0]).name });
       continue;
     }
     if (account.type !== "User") {

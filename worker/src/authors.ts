@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { isLogin } from "./util";
+import { isLogin, must } from "./util";
 
 export interface Account {
   id: number;
@@ -38,8 +38,8 @@ export function parseNoreply(email: string | null): Account | null {
   if (!email) return null;
   const m = NOREPLY.exec(email.trim());
   if (!m) return null;
-  const id = Number.parseInt(m[1]!, 10);
-  const login = m[2]!;
+  const id = Number.parseInt(must(m[1]), 10);
+  const login = must(m[2]);
   if (!Number.isSafeInteger(id) || id <= 0 || !isLogin(login)) return null;
   return { id, login, type: login.endsWith("[bot]") ? "Bot" : "User" };
 }
@@ -47,7 +47,7 @@ export function parseNoreply(email: string | null): Account | null {
 /** The emails of the `Co-authored-by:` trailers of a commit message, lower-cased. */
 export function coAuthorEmails(message: string): string[] {
   const out: string[] = [];
-  for (const m of message.matchAll(TRAILER)) out.push(m[2]!.toLowerCase());
+  for (const m of message.matchAll(TRAILER)) out.push(must(m[2]).toLowerCase());
   return out;
 }
 

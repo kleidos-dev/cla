@@ -5,7 +5,7 @@ import { resetGitHubCaches } from "../src/github";
 import { handleFetch, handleQueue } from "../src/index";
 import type { QueueMessage } from "../src/messages";
 import { resetRegistryCache } from "../src/registry";
-import { b64urlEncode, hex, utf8 } from "../src/util";
+import { b64urlEncode, hex, must, utf8 } from "../src/util";
 import type { FakePr, User } from "./fakegh";
 import { APP_ID, CLIENT_ID, CLIENT_SECRET, FakeGitHub, ORG_ID, REGISTRY, commit, sha } from "./fakegh";
 import configJson from "../../registry/config.json";
@@ -22,20 +22,22 @@ export interface Sent {
 
 export class FakeQueue {
   sent: Sent[] = [];
-  async send(body: QueueMessage, opts?: { delaySeconds?: number }): Promise<void> {
+  send(body: QueueMessage, opts?: { delaySeconds?: number }): Promise<void> {
     this.sent.push({ body: structuredClone(body), ...(opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : {}) });
+    return Promise.resolve();
   }
-  async sendBatch(msgs: { body: QueueMessage }[]): Promise<void> {
+  sendBatch(msgs: { body: QueueMessage }[]): Promise<void> {
     for (const m of msgs) this.sent.push({ body: structuredClone(m.body) });
+    return Promise.resolve();
   }
 }
 
 export class FakeLimiter {
   allow = true;
   keys: string[] = [];
-  async limit(o: { key: string }): Promise<{ success: boolean }> {
+  limit(o: { key: string }): Promise<{ success: boolean }> {
     this.keys.push(o.key);
-    return { success: this.allow };
+    return Promise.resolve({ success: this.allow });
   }
 }
 
@@ -91,13 +93,12 @@ export async function world(opts: { configure?: boolean } = {}): Promise<World> 
 export async function drain(w: World, max = 50): Promise<QueueMessage[]> {
   const ran: QueueMessage[] = [];
   for (let i = 0; i < max && w.queue.sent.length; i++) {
-    const { body } = w.queue.sent.shift()!;
+    const { body } = must(w.queue.sent.shift());
     ran.push(body);
-    let acked = false;
-    let retried: number | undefined;
-    const msg = { id: String(i), timestamp: new Date(), body, attempts: 1, ack: () => (acked = true), retry: (o?: { delaySeconds?: number }) => (retried = o?.delaySeconds ?? 0) };
+    const outcome: { acked: boolean; retried?: number } = { acked: false };
+    const msg = { id: String(i), timestamp: new Date(), body, attempts: 1, ack: () => (outcome.acked = true), retry: (o?: { delaySeconds?: number }) => (outcome.retried = o?.delaySeconds ?? 0) };
     await handleQueue({ queue: "kleidos-cla", messages: [msg], ackAll: () => undefined, retryAll: () => undefined } as unknown as MessageBatch<QueueMessage>, w.env);
-    if (!acked && retried === undefined) throw new Error("message neither acked nor retried");
+    if (!outcome.acked && outcome.retried === undefined) throw new Error("message neither acked nor retried");
   }
   return ran;
 }
@@ -156,9 +157,9 @@ export class Browser {
   keep(res: Response): void {
     for (const c of res.headers.getSetCookie()) {
       const [pair] = c.split(";");
-      const i = pair!.indexOf("=");
-      const name = pair!.slice(0, i);
-      const value = pair!.slice(i + 1);
+      const i = must(pair).indexOf("=");
+      const name = must(pair).slice(0, i);
+      const value = must(pair).slice(i + 1);
       if (/Max-Age=0/.test(c) || value === "") this.jar.delete(name);
       else this.jar.set(name, value);
     }
@@ -187,8 +188,8 @@ export class Browser {
   async signIn(signPath: string): Promise<{ authorize: URL; callback: Response; callbackUrl: string }> {
     const login = await this.get(`/auth/login?return=${encodeURIComponent(signPath)}`);
     if (login.status !== 302) throw new Error(`login answered ${login.status}`);
-    const authorize = new URL(login.headers.get("location")!);
-    const code = this.w.gh.issueCode(this.user, authorize.searchParams.get("code_challenge")!);
+    const authorize = new URL(must(login.headers.get("location")));
+    const code = this.w.gh.issueCode(this.user, must(authorize.searchParams.get("code_challenge")));
     const callbackUrl = `/auth/callback?code=${code}&state=${authorize.searchParams.get("state")}`;
     const callback = await this.get(callbackUrl);
     return { authorize, callback, callbackUrl };
@@ -198,7 +199,7 @@ export class Browser {
   static form(html: string): Record<string, string> {
     const out: Record<string, string> = {};
     const agree = /<form[^>]*action="\/agree[^"]*"[^>]*>([\s\S]*?)<\/form>/.exec(html)?.[1] ?? "";
-    for (const m of agree.matchAll(/<input type="hidden" name="([a-z0-9_]+)" value="([^"]*)">/g)) out[m[1]!] = m[2]!.replaceAll("&amp;", "&");
+    for (const m of agree.matchAll(/<input type="hidden" name="([a-z0-9_]+)" value="([^"]*)">/g)) out[must(m[1])] = must(m[2]).replaceAll("&amp;", "&");
     return out;
   }
 }

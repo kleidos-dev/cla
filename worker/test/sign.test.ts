@@ -5,6 +5,7 @@ import type { User } from "./fakegh";
 import type { World } from "./helpers";
 import { handleFetch } from "../src/index";
 import { Browser, CONFIG, ORIGIN, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
+import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -81,7 +82,7 @@ describe("web signing", () => {
     const agreed = await b.post("/agree", { ...form, accept: "yes" });
     expect(agreed.status).toBe(303);
     expect(agreed.headers.get("location")).toBe(`${path}?lang=en`);
-    const acceptance = w.gh.comments.find((c) => c.repo === SANDBOX && c.pr === pr.number && c.user.id === alice.id)!;
+    const acceptance = must(w.gh.comments.find((c) => c.repo === SANDBOX && c.pr === pr.number && c.user.id === alice.id));
     expect(acceptance.body).toBe(SENTENCE);
     expect(acceptance.via_app).toBe(true);
     expect(w.gh.revokedGrants.length).toBeGreaterThan(0);
@@ -98,15 +99,15 @@ describe("web signing", () => {
 
     await drain(w, 1);
     expect(w.gh.dispatches).toEqual([{ kind: "sign", repo: SANDBOX, pr: String(pr.number), comment_id: String(acceptance.id) }]);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     await w.gh.record(acceptance.id);
     await drain(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     const bot = w.gh.botComments(SANDBOX, pr.number);
     expect(bot).toHaveLength(1);
-    expect(bot[0]!.body).toContain("**Contributor Agreement signed.**");
-    expect(bot[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
-    expect(bot[0]!.body).toContain(`/blob/${w.gh.recordCommits.get(alice.id)}/signatures/individual/123456.json`);
+    expect(must(bot[0]).body).toContain("**Contributor Agreement signed.**");
+    expect(must(bot[0]).body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(must(bot[0]).body).toContain(`/blob/${w.gh.recordCommits.get(alice.id)}/signatures/individual/123456.json`);
     expect(run.approved).toBe(true);
 
     const done = await b.get(path);
@@ -121,7 +122,7 @@ describe("web signing", () => {
     const w = await world();
     await w.gh.signDirectly(alice);
     const { pr, path } = await setup(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     expect(w.gh.botComments(SANDBOX, pr.number)).toHaveLength(0);
     const b = new Browser(w, alice);
     const { html } = await signedInPage(b, path);
@@ -174,7 +175,7 @@ describe("web signing", () => {
     expect((await a.post("/agree", form, { "sec-fetch-site": "cross-site" })).status).toBe(403);
     expect((await a.post("/agree", form, { "content-type": "application/json" })).status).toBe(400);
     expect((await a.post("/agree", { ...form, pad: "x".repeat(5000) })).status).toBe(400);
-    const good = a.jar.get("__Host-cla")!;
+    const good = must(a.jar.get("__Host-cla"));
     a.jar.set("__Host-cla", good.slice(0, -2) + (good.endsWith("A") ? "BB" : "AA"));
     expect((await a.post("/agree", form)).status).toBe(401);
     a.jar.set("__Host-cla", good.slice(0, 40));
@@ -198,8 +199,8 @@ describe("web signing", () => {
     const { path } = await setup(w);
     const a = new Browser(w, alice);
     const login = await a.get(`/auth/login?return=${encodeURIComponent(path)}`);
-    const authorize = new URL(login.headers.get("location")!);
-    const code = w.gh.issueCode(alice, authorize.searchParams.get("code_challenge")!);
+    const authorize = new URL(must(login.headers.get("location")));
+    const code = w.gh.issueCode(alice, must(authorize.searchParams.get("code_challenge")));
     // A stray redirect (a wrong state, or a cross-site ?error=) refuses, but leaves the sign-in in progress intact.
     const wrong = await a.get(`/auth/callback?code=${code}&state=${"x".repeat(43)}`);
     expect(wrong.status).toBe(400);
@@ -220,9 +221,9 @@ describe("web signing", () => {
 
     const replay = new Browser(w, alice);
     const login2 = await replay.get(`/auth/login?return=${encodeURIComponent(path)}`);
-    const saved = replay.jar.get("__Host-cla-oauth")!;
-    const auth2 = new URL(login2.headers.get("location")!);
-    const code2 = w.gh.issueCode(alice, auth2.searchParams.get("code_challenge")!);
+    const saved = must(replay.jar.get("__Host-cla-oauth"));
+    const auth2 = new URL(must(login2.headers.get("location")));
+    const code2 = w.gh.issueCode(alice, must(auth2.searchParams.get("code_challenge")));
     const url2 = `/auth/callback?code=${code2}&state=${auth2.searchParams.get("state")}`;
     expect((await replay.get(url2)).status).toBe(303);
     replay.jar.clear();
@@ -233,8 +234,8 @@ describe("web signing", () => {
 
     const late = new Browser(w, alice);
     const login3 = await late.get(`/auth/login?return=${encodeURIComponent(path)}`);
-    const auth3 = new URL(login3.headers.get("location")!);
-    const code3 = w.gh.issueCode(alice, auth3.searchParams.get("code_challenge")!);
+    const auth3 = new URL(must(login3.headers.get("location")));
+    const code3 = w.gh.issueCode(alice, must(auth3.searchParams.get("code_challenge")));
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 601 * 1000);
     expect((await late.get(`/auth/callback?code=${code3}&state=${auth3.searchParams.get("state")}`)).status).toBe(400);
   });
@@ -244,7 +245,7 @@ describe("web signing", () => {
     const { path } = await setup(w);
     const a = new Browser(w, alice);
     const login = await a.get(`/auth/login?return=${encodeURIComponent(path)}`);
-    const state = new URL(login.headers.get("location")!).searchParams.get("state");
+    const state = new URL(must(login.headers.get("location"))).searchParams.get("state");
     const r = await a.get(`/auth/callback?error=access_denied&state=${state}`);
     expect(r.status).toBe(400);
     expect(await r.text()).toContain("Authorization cancelled");
@@ -290,9 +291,9 @@ describe("web signing", () => {
     const { path } = await setup(w);
     const a = new Browser(w, alice);
     const form = { ...Browser.form((await signedInPage(a, path)).html), accept: "yes" };
-    w.limiters.RL_AGREE_ACCOUNT!.allow = false;
+    must(w.limiters.RL_AGREE_ACCOUNT).allow = false;
     expect((await a.post("/agree", form)).status).toBe(429);
-    expect(w.limiters.RL_AGREE_ACCOUNT!.keys).toEqual(["123456"]);
+    expect(must(w.limiters.RL_AGREE_ACCOUNT).keys).toEqual(["123456"]);
   });
 
   it("signing pauses on version skew between the registry and this deployment, checks keep working", async () => {
@@ -303,7 +304,7 @@ describe("web signing", () => {
     cfg.accepted_versions = [1, 2];
     w.gh.setFile("main", "registry/config.json", JSON.stringify(cfg));
     const { pr, path } = await setup(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     const a = new Browser(w, alice);
     const { html } = await signedInPage(a, path);
     expect(html).toContain("signing is paused");
@@ -316,7 +317,7 @@ describe("web signing", () => {
     const a = new Browser(w, alice);
     const { html } = await signedInPage(a, path);
     expect((await a.post("/auth/logout", { csrf: "nope" })).status).toBe(403);
-    const csrf = /action="\/auth\/logout"><input type="hidden" name="csrf" value="([^"]+)"/.exec(html)![1]!;
+    const csrf = must(must(/action="\/auth\/logout"><input type="hidden" name="csrf" value="([^"]+)"/.exec(html))[1]);
     const before = w.gh.revokedGrants.length;
     const r = await a.post("/auth/logout", { csrf });
     expect(r.status).toBe(303);

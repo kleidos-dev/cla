@@ -5,6 +5,7 @@ import type { ConfiguredEnv } from "../src/env";
 import { ORG_ID, commit, sha } from "./fakegh";
 import type { World } from "./helpers";
 import { SANDBOX, drain, openPr, prEvent, spanishIn, webhook, world } from "./helpers";
+import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -35,22 +36,22 @@ describe("evaluation", () => {
     const pr = openPr(w, alice);
     const run = heldRun(w, pr);
     await opened(w, pr);
-    const check = w.gh.check(SANDBOX, pr.head.sha)!;
+    const check = must(w.gh.check(SANDBOX, pr.head.sha));
     expect(check.conclusion).toBe("action_required");
     expect(check.title).toBe("1 signature needed");
     expect(check.details_url).toBe(`https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number}`);
     expect(check.external_id).toMatch(new RegExp(`^\\d+#${pr.number}$`));
     const [comment] = w.gh.botComments(SANDBOX, pr.number);
-    expect(comment!.body.startsWith("<!-- kleidos-cla:v1 -->\n**Contributor Agreement needed.** ")).toBe(true);
-    expect(comment!.body).toContain("Still to sign: @alice.");
+    expect(must(comment).body.startsWith("<!-- kleidos-cla:v1 -->\n**Contributor Agreement needed.** ")).toBe(true);
+    expect(must(comment).body).toContain("Still to sign: @alice.");
     // The button: its image URL names the state and the count, wrapped in the sign link, with alt text.
-    expect(comment!.body).toContain(`[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v2/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(must(comment).body).toContain(`[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v2/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     // The privacy notice is one link away, not a paragraph in the comment.
-    expect(comment!.body).toContain("[Privacy](https://cla.kleidos.dev/privacy)");
-    expect(comment!.body).not.toContain("**Your data.**");
+    expect(must(comment).body).toContain("[Privacy](https://cla.kleidos.dev/privacy)");
+    expect(must(comment).body).not.toContain("**Your data.**");
     // English only: one line, the button, one line of links; Spanish is on the pages it links to.
-    expect(spanishIn(comment!.body)).toBeNull();
-    expect(comment!.body).toBe(
+    expect(spanishIn(must(comment).body)).toBeNull();
+    expect(must(comment).body).toBe(
       [
         "<!-- kleidos-cla:v1 -->",
         "**Contributor Agreement needed.** Sign it once and the checks of this pull request start; it covers every Kleidos repository. Still to sign: @alice.",
@@ -71,8 +72,8 @@ describe("evaluation", () => {
     const run = heldRun(w, pr);
     const other = heldRun(w, pr, "mallory/cla-sandbox");
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.title).toBe("Contributor Agreement accepted");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).title).toBe("Contributor Agreement accepted");
     expect(w.gh.botComments(SANDBOX, pr.number)).toHaveLength(0);
     expect(run.approved).toBe(true);
     expect(other.approved).toBe(false);
@@ -82,7 +83,7 @@ describe("evaluation", () => {
     const w = await world();
     const pr = openPr(w, dependabot, { commits: [commit(dependabot), commit(owner)] });
     await opened(w, pr);
-    const check = w.gh.check(SANDBOX, pr.head.sha)!;
+    const check = must(w.gh.check(SANDBOX, pr.head.sha));
     expect(check.conclusion).toBe("success");
     expect(check.title).toBe("No signature needed");
     expect(check.summary).toContain("`dependabot[bot]` (id 49699333) is on the Kleidos exemption list");
@@ -94,8 +95,8 @@ describe("evaluation", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(alice), commit(bob), commit(carol), commit(owner)] });
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.title).toBe("2 signatures needed");
-    const body = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).title).toBe("2 signatures needed");
+    const body = must(w.gh.botComments(SANDBOX, pr.number)[0]).body;
     expect(body).toContain("**Contributor Agreement: 1 of 3 signed.** @alice has signed; still to sign: [bob](https://github.com/bob), [carol](https://github.com/carol).");
     expect(spanishIn(body)).toBeNull();
     expect(body).toContain("/button/v2/partial-1-3.svg");
@@ -105,12 +106,12 @@ describe("evaluation", () => {
     await w.gh.signDirectly(bob);
     await w.gh.signDirectly(carol);
     await opened(w, pr, "reopened");
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     const updated = w.gh.botComments(SANDBOX, pr.number);
     expect(updated).toHaveLength(1);
-    expect(updated[0]!.body).toContain("**Contributor Agreement signed.**");
-    expect(updated[0]!.body).toContain("/button/v2/signed-3-3.svg");
-    expect(spanishIn(updated[0]!.body)).toBeNull();
+    expect(must(updated[0]).body).toContain("**Contributor Agreement signed.**");
+    expect(must(updated[0]).body).toContain("/button/v2/signed-3-3.svg");
+    expect(spanishIn(must(updated[0]).body)).toBeNull();
   });
 
   it("the comment a pull request already has is edited to the green state, never a second one", async () => {
@@ -118,15 +119,15 @@ describe("evaluation", () => {
     const pr = openPr(w, alice);
     await opened(w, pr);
     const [first] = w.gh.botComments(SANDBOX, pr.number);
-    expect(first!.body).toContain("/button/v2/needed-0-1.svg");
+    expect(must(first).body).toContain("/button/v2/needed-0-1.svg");
     await w.gh.signDirectly(alice);
     await opened(w, pr, "synchronize");
     const after = w.gh.botComments(SANDBOX, pr.number);
     expect(after).toHaveLength(1);
-    expect(after[0]!.id).toBe(first!.id);
-    expect(after[0]!.body).toContain("**Contributor Agreement signed.**");
-    expect(after[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
-    expect(spanishIn(after[0]!.body)).toBeNull();
+    expect(must(after[0]).id).toBe(must(first).id);
+    expect(must(after[0]).body).toContain("**Contributor Agreement signed.**");
+    expect(must(after[0]).body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(spanishIn(must(after[0]).body)).toBeNull();
     expect(w.gh.requests.filter((r) => r.method === "POST" && r.url.endsWith(`/issues/${pr.number}/comments`))).toHaveLength(1);
   });
 
@@ -136,7 +137,7 @@ describe("evaluation", () => {
     await opened(w, first);
     await w.gh.signDirectly(alice);
     await opened(w, first, "synchronize");
-    expect(w.gh.check(SANDBOX, first.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, first.head.sha)).conclusion).toBe("success");
     const pr = openPr(w, alice);
     await opened(w, pr);
     // A later push and a cron pass are evaluations too; none of them writes a comment.
@@ -144,7 +145,7 @@ describe("evaluation", () => {
     await opened(w, pr, "synchronize");
     await cron(makeBot(w.env as ConfiguredEnv));
     await drain(w);
-    const check = w.gh.check(SANDBOX, pr.head.sha)!;
+    const check = must(w.gh.check(SANDBOX, pr.head.sha));
     expect(check.conclusion).toBe("success");
     expect(check.title).toBe("Contributor Agreement accepted");
     expect(w.gh.comments.filter((c) => c.repo === SANDBOX && c.pr === pr.number)).toHaveLength(0);
@@ -156,20 +157,20 @@ describe("evaluation", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(alice, { coAuthors: [bob] })] });
     await opened(w, pr);
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
+    expect(must(w.gh.botComments(SANDBOX, pr.number)[0]).body).toContain("still to sign: [bob](https://github.com/bob).");
 
     const pr2 = openPr(w, alice, { commits: [commit(alice, { coAuthors: [{ email: "someone@example.org" }] })] });
     await opened(w, pr2);
-    const body = w.gh.botComments(SANDBOX, pr2.number)[0]!.body;
+    const body = must(w.gh.botComments(SANDBOX, pr2.number)[0]).body;
     expect(body).toMatch(/\*\*Cannot tell who wrote commit `[0-9a-f]{7}`\.\*\*/);
     expect(body).not.toContain("someone@example.org");
-    expect(w.gh.check(SANDBOX, pr2.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr2.head.sha)).conclusion).toBe("action_required");
 
     const c = commit(alice, { coAuthors: [bob] });
     c.authors.nodes = c.authors.nodes.slice(0, 1);
     const pr3 = openPr(w, alice, { commits: [c] });
     await opened(w, pr3);
-    expect(w.gh.botComments(SANDBOX, pr3.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
+    expect(must(w.gh.botComments(SANDBOX, pr3.number)[0]).body).toContain("still to sign: [bob](https://github.com/bob).");
   });
 
   it("an automation account that is not on the list fails closed", async () => {
@@ -177,8 +178,8 @@ describe("evaluation", () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(alice), commit(strangeBot)] });
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("names `some-bot[bot]` as an author. An automation account cannot sign");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
+    expect(must(w.gh.botComments(SANDBOX, pr.number)[0]).body).toContain("names `some-bot[bot]` as an author. An automation account cannot sign");
   });
 
   it("a fork pull request: only runs from the pull request's own fork are approved, and only while the head is unchanged", async () => {
@@ -207,15 +208,15 @@ describe("evaluation", () => {
     const pr = openPr(w, alice);
     await opened(w, pr);
     const first = pr.head.sha;
-    expect(w.gh.check(SANDBOX, first)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, first)).conclusion).toBe("success");
     pr.commits.push(commit(bob));
     pr.head.sha = sha();
     const run = heldRun(w, pr);
     await opened(w, pr, "synchronize");
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
-    expect(w.gh.check(SANDBOX, first)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, first)).conclusion).toBe("success");
     expect(run.approved).toBe(false);
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("still to sign: [bob](https://github.com/bob).");
+    expect(must(w.gh.botComments(SANDBOX, pr.number)[0]).body).toContain("still to sign: [bob](https://github.com/bob).");
   });
 
   it("a pull request that changes .github/ (or renames out of it) is never approved automatically", async () => {
@@ -225,8 +226,8 @@ describe("evaluation", () => {
       const pr = openPr(w, alice, { files });
       const run = heldRun(w, pr);
       await opened(w, pr);
-      expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
-      expect(w.gh.check(SANDBOX, pr.head.sha)!.summary).toContain("changes files under `.github/`");
+      expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
+      expect(must(w.gh.check(SANDBOX, pr.head.sha)).summary).toContain("changes files under `.github/`");
       expect(run.approved).toBe(false);
       expect(w.queue.sent.filter((s) => s.body.kind === "release")).toHaveLength(0);
     }
@@ -238,7 +239,7 @@ describe("evaluation", () => {
     const pr = openPr(w, alice, { repo: "kleidos-dev/cla" });
     const run = heldRun(w, pr);
     await opened(w, pr);
-    expect(w.gh.check("kleidos-dev/cla", pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check("kleidos-dev/cla", pr.head.sha)).conclusion).toBe("success");
     expect(run.approved).toBe(false);
   });
 
@@ -247,8 +248,8 @@ describe("evaluation", () => {
     w.gh.setFile("main", "registry/entities.json", JSON.stringify({ schema: 1, entities: [{ slug: "example", name: "Example GmbH", version: 1, set_sha256: "89c1d46b9b1048508d9acdba113620b08a45c57d7e067ee41dd2b816a839a61e", signed_at: "2026-11-01", covered: [{ github_id: carol.id, from: "2026-11-01" }] }] }));
     const pr = openPr(w, carol);
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.summary).toContain("covered by the agreement of Example GmbH");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).summary).toContain("covered by the agreement of Example GmbH");
   });
 
   it("a record of a version that is not accepted, or with another digest, does not count", async () => {
@@ -258,17 +259,17 @@ describe("evaluation", () => {
     await w.gh.record(c.id, 1, "0".repeat(64));
     const pr = openPr(w, alice);
     await opened(w, pr);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
   });
 
   it("a typed acceptance comment is recorded: the recorder is dispatched once it is old enough", async () => {
     const w = await world();
     const pr = openPr(w, alice);
-    const config = JSON.parse(w.gh.files.get("main:registry/config.json")!) as { versions: { "1": { sentence: string } } };
+    const config = JSON.parse(must(w.gh.files.get("main:registry/config.json"))) as { versions: { "1": { sentence: string } } };
     w.gh.comments.push({ id: w.gh.next(), repo: SANDBOX, pr: pr.number, body: `  ${config.versions["1"].sentence.replace(/ /g, "  ")}\n`, user: alice, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-01T10:00:00Z", via_app: false });
     await opened(w, pr);
     expect(w.gh.dispatches).toEqual([expect.objectContaining({ kind: "sign", repo: SANDBOX, pr: String(pr.number) })]);
-    expect(w.gh.botComments(SANDBOX, pr.number)[0]!.body).toContain("acceptance was posted but is not in the register yet");
+    expect(must(w.gh.botComments(SANDBOX, pr.number)[0]).body).toContain("acceptance was posted but is not in the register yet");
   });
 
   it("a merged pull request dispatches the coverage record", async () => {
@@ -288,7 +289,7 @@ describe("evaluation", () => {
     expect(w.gh.checkRuns).toHaveLength(0);
     w.gh.installations.set(9, { account: 4242 });
     w.gh.addRepo("stranger/repo", { installation: 9, account: 4242 });
-    const cfg = JSON.parse(w.gh.files.get("main:registry/config.json")!) as { served_repositories: Record<string, unknown> };
+    const cfg = JSON.parse(must(w.gh.files.get("main:registry/config.json"))) as { served_repositories: Record<string, unknown> };
     cfg.served_repositories["stranger/repo"] = { auto_approve: true };
     w.gh.setFile("main", "registry/config.json", JSON.stringify(cfg));
     const pr2 = openPr(w, alice, { repo: "stranger/repo" });
@@ -302,7 +303,7 @@ describe("evaluation", () => {
     await webhook(w, "pull_request", prEvent(pr, "opened"));
     w.gh.failNext = { match: /GET \/repos\/.+\/pulls\/\d+$/, status: 403, headers: { "retry-after": "42" } };
     const { handleQueue } = await import("../src/index");
-    const body = w.queue.sent.shift()!.body;
+    const body = must(w.queue.sent.shift()).body;
     let retried: number | undefined;
     await handleQueue({ messages: [{ body, attempts: 1, ack: () => undefined, retry: (o: { delaySeconds: number }) => (retried = o.delaySeconds) }] } as never, w.env);
     expect(retried).toBe(42);
@@ -326,6 +327,6 @@ describe("evaluation", () => {
     expect(w.gh.redelivered).toEqual([1]);
     await drain(w);
     expect(w.gh.deletedInstallations).toEqual([66]);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
   });
 });

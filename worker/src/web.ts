@@ -17,7 +17,7 @@ import type { Config, SignatureRecord } from "./registry";
 import { recordValid } from "./registry";
 import type { Session } from "./session";
 import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, SESSION_TTL, clearCookie, readSession, readTransaction, sessionCookie, transactionCookie } from "./session";
-import { b64urlEncode, clientIp, isLogin, normalizeSentence, nowSeconds, randomB64url, readCapped, safeEqual, utf8 } from "./util";
+import { b64urlEncode, clientIp, isLogin, must, normalizeSentence, nowSeconds, randomB64url, readCapped, safeEqual, utf8 } from "./util";
 
 export const MAX_FORM_BYTES = 4096;
 const SIGN_PATH = /^\/sign\/([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100})\/([1-9][0-9]{0,9})$/;
@@ -111,8 +111,8 @@ function rendered(src: string, prefix: string): { html: string; headings: Headin
  */
 function agreementTexts(lang: Lang, kind: "individual" | "entity", prefix: string): { html: string; parts: [Heading[], Heading[]] } {
   const spanish = lang === "es";
-  const ca = rendered(spanish && kind === "individual" ? FILES["individual.es.md"]! : FILES[`${kind}.md`]!, `${prefix}ca`);
-  const ad = rendered(spanish ? FILES["addendum.es.md"]! : FILES["addendum.md"]!, `${prefix}ad`);
+  const ca = rendered(spanish && kind === "individual" ? must(FILES["individual.es.md"]) : must(FILES[`${kind}.md`]), `${prefix}ca`);
+  const ad = rendered(spanish ? must(FILES["addendum.es.md"]) : must(FILES["addendum.md"]), `${prefix}ad`);
   const caLang = spanish && kind === "individual" ? "es" : "en";
   const label = spanish ? ["Acuerdo", "Anexo"] : ["Contributor Agreement", "Addendum"];
   return {
@@ -303,7 +303,8 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
   const lang = pickLang(req, new URL(req.url));
   const st0 = S[lang].status;
   if (!(await env.RL_SIGN.limit({ key: clientIp(req) })).success) return messagePage(lang, 429, "tooManySign");
-  let replaced: string | null = null;
+  // Set from inside the guarded callback, so a list (a let would be narrowed to its initial null).
+  const replaced: string[] = [];
   const r = await guard(lang, async () => {
     const st = await servedTarget(bot, path);
     if (!st) return messagePage(lang, 404, "noTarget");
@@ -338,7 +339,7 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       // The acceptance comment was edited or deleted, so the recorder will refuse it: say so and let the signer sign again.
       const rest: Session = { ...session };
       delete rest.pending;
-      replaced = await sessionCookie(keys, rest);
+      replaced.push(await sessionCookie(keys, rest));
       notice = alertCard(st0.edited);
     }
     const s = await signerStatus(bot, config, t, session);
@@ -360,7 +361,7 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       case "signed": {
         await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr });
         const entry = `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/signatures/signatures/individual/${session.id}.json">${st0.entry}</a>`;
-        return page(statusBody(lang, t, st0.signedTitle, `${st0.signed(s.record!.version, escapeHtml(s.record!.accepted_at.slice(0, 10)))} ${entry}.`, "done", who), { title: st0.signedTitle, lang, path: t.path });
+        return page(statusBody(lang, t, st0.signedTitle, `${st0.signed(must(s.record).version, escapeHtml(must(s.record).accepted_at.slice(0, 10)))} ${entry}.`, "done", who), { title: st0.signedTitle, lang, path: t.path });
       }
       case "not_author":
         return page(statusBody(lang, t, st0.nothingTitle, st0.notAuthor(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
@@ -373,7 +374,7 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       }
     }
   });
-  if (replaced) r.headers.append("set-cookie", replaced);
+  for (const c of replaced) r.headers.append("set-cookie", c);
   return r;
 }
 
@@ -572,13 +573,13 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
     const already = (assessed: Assessment) => assessed.acceptances.find((x) => x.account === session.id && !x.edited);
     const earlier = already(s.a);
     if (earlier) {
-      await revokeGrant(env, bot, session.token!);
+      await revokeGrant(env, bot, must(session.token));
       return confirm({ id: earlier.commentId, html_url: earlier.commentUrl, created_at: earlier.createdAt }, false);
     }
     const sentence = sentenceFor(AGREEMENT_VERSION, signing.setSha256);
     let posted: { id: number; html_url: string; created_at: string };
     try {
-      posted = (await bot.gh.request<{ id: number; html_url: string; created_at: string }>("POST", `/repos/${t.repo}/issues/${t.pr}/comments`, { token: session.token! }, { body: sentence })).data;
+      posted = (await bot.gh.request<{ id: number; html_url: string; created_at: string }>("POST", `/repos/${t.repo}/issues/${t.pr}/comments`, { token: must(session.token) }, { body: sentence })).data;
     } catch (e) {
       if (e instanceof GitHubError && (e.kind === "unauthorized" || e.kind === "forbidden" || e.kind === "not_found")) {
         log("agree refused", { reason: "github_" + e.kind, repo: t.repo, pr: t.pr });
@@ -589,7 +590,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
       }
       throw e;
     }
-    await revokeGrant(env, bot, session.token!);
+    await revokeGrant(env, bot, must(session.token));
     log("signed", { repo: t.repo, pr: t.pr });
     return confirm(posted, true);
   });
@@ -610,7 +611,7 @@ export async function agreementPage(kind: "individual" | "entity", lang: Lang, e
   const texts = agreementTexts(lang, kind, "");
   const spanish = lang === "es";
   const summaryEs = spanish
-    ? `<details class="fold"><summary><span>${g.partSummary}<small>${g.partSummarySub}</small></span></summary><div class="fold-body"><div class="prose">${rendered(FILES["summary.es.md"]!, "re").html}</div></div></details>`
+    ? `<details class="fold"><summary><span>${g.partSummary}<small>${g.partSummarySub}</small></span></summary><div class="fold-body"><div class="prose">${rendered(must(FILES["summary.es.md"]), "re").html}</div></div></details>`
     : "";
   const banner = g.banner ? `<div class="banner">${g.banner}</div>` : "";
   const intro = entity ? `<div class="card"><p>${g.entityNote}</p></div>${g.entityOnlyEnglish ? `\n<p class="note">${g.entityOnlyEnglish}</p>` : ""}` : `<p class="note">${g.how} ${g.entity}</p>`;

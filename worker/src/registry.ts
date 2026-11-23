@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import type { GitHub } from "./github";
 import { GitHubError } from "./github";
+import type { Unchecked } from "./util";
 import { nowSeconds } from "./util";
 
 export interface VersionInfo {
@@ -115,7 +116,7 @@ export function resetRegistryCache(): void {
 
 function isConfig(v: unknown): v is Config {
   if (typeof v !== "object" || v === null) return false;
-  const c = v as Partial<Config>;
+  const c = v as Unchecked<Config>;
   return (
     c.schema === 1 &&
     typeof c.current_version === "number" &&
@@ -125,7 +126,7 @@ function isConfig(v: unknown): v is Config {
     typeof c.served_repositories === "object" &&
     c.served_repositories !== null &&
     Array.isArray(c.exempt) &&
-    c.exempt.every((e) => typeof e?.id === "number")
+    (c.exempt as unknown[]).every((e) => typeof (e as { id?: unknown } | null)?.id === "number")
   );
 }
 

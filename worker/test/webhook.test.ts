@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APP_ID, ORG_ID } from "./fakegh";
 import { SANDBOX, drain, openPr, prEvent, sign, webhook, world } from "./helpers";
+import { must } from "../src/util";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -58,7 +59,7 @@ describe("webhook signature", () => {
     const w = await world();
     const { handleFetch } = await import("../src/index");
     expect((await handleFetch(new Request("https://cla.kleidos.dev/webhook"), w.env)).status).toBe(405);
-    w.limiters.RL_WEBHOOK!.allow = false;
+    must(w.limiters.RL_WEBHOOK).allow = false;
     expect((await webhook(w, "ping", {})).status).toBe(429);
   });
 
@@ -104,11 +105,11 @@ describe("webhook signature", () => {
     const delivery = "3f1c2a90-aaaa-bbbb-cccc-000000000001";
     expect((await webhook(w, "pull_request", payload, { delivery })).status).toBe(202);
     await drain(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("action_required");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("action_required");
     await w.gh.signDirectly(alice);
     expect((await webhook(w, "pull_request", payload, { delivery })).status).toBe(202);
     await drain(w);
-    expect(w.gh.check(SANDBOX, pr.head.sha)!.conclusion).toBe("success");
+    expect(must(w.gh.check(SANDBOX, pr.head.sha)).conclusion).toBe("success");
     expect(w.gh.checkRuns.filter((r) => r.head_sha === pr.head.sha)).toHaveLength(1);
     expect(w.gh.botComments(SANDBOX, pr.number)).toHaveLength(1);
   });
