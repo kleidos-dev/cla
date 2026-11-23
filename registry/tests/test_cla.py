@@ -22,7 +22,15 @@ import cla
 
 SIGNIN_CLIENT_ID = "Iv23liSIGNINTEST0001"
 SIGNIN_SECRET = "signin-secret-value"
-CONFIG = {**cla.load_config(), "app_id": 4242}
+#: registry/config.json pinned to version 1's comment flow, whichever version is current there,
+#: so that switching the live register to version 2 leaves these tests as they are.
+CONFIG = {
+    **cla.load_config(),
+    "app_id": 4242,
+    "current_version": 1,
+    "accepted_versions": [1],
+    "signin_client_id": None,
+}
 SENTENCE = CONFIG["versions"]["1"]["sentence"]
 #: Version 2 current and the sign-in app configured: the state the switch to version 2 makes.
 CONFIG_V2 = {

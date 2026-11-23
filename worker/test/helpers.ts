@@ -14,15 +14,24 @@ import configJson from "../../registry/config.json";
 export const ORIGIN = "https://cla.kleidos.dev";
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const SANDBOX = "kleidos-dev/cla-sandbox";
+type ClientId = (typeof configJson)["signin_client_id"];
+
 /**
- * The register's configuration as the tests use it: registry/config.json,
- * with the owner on the exemption list whatever its state (his exemption
- * is lifted for an end-to-end test now and then; the flows tested here do
- * not depend on that).
+ * The register's configuration as the tests use it: registry/config.json
+ * (its texts, digests, repositories and exemptions), pinned to version 1's
+ * comment flow whichever version is current there, so that switching the
+ * live register to version 2 leaves these tests as they are; CONFIG_V2 is
+ * the version 2 world. The owner is on the exemption list whatever its
+ * state (his exemption is lifted for an end-to-end test now and then; the
+ * flows tested here do not depend on that).
  */
-export const CONFIG: typeof configJson = configJson.exempt.some((e) => e.id === 28966312)
-  ? configJson
-  : { ...configJson, exempt: [{ id: 28966312, login: "jmrplens", why: "the project owner" }, ...configJson.exempt] };
+export const CONFIG: typeof configJson = {
+  ...configJson,
+  current_version: 1,
+  accepted_versions: [1],
+  signin_client_id: null as unknown as ClientId,
+  exempt: configJson.exempt.some((e) => e.id === 28966312) ? configJson.exempt : [{ id: 28966312, login: "jmrplens", why: "the project owner" }, ...configJson.exempt],
+};
 
 export interface Sent {
   body: QueueMessage;
@@ -71,10 +80,10 @@ export interface World {
 
 /**
  * The register switched to version 2: current, accepted with version 1,
- * and the sign-in app named. What the one-line switch of registry/config.json
- * makes, once the owner approves the text.
+ * and the sign-in app named: what the switch of registry/config.json makes
+ * (registry/README.md, "A new version of the agreement").
  */
-export const CONFIG_V2: typeof CONFIG = { ...CONFIG, current_version: 2, accepted_versions: [1, 2], signin_client_id: SIGNIN_CLIENT_ID as unknown as null };
+export const CONFIG_V2: typeof CONFIG = { ...CONFIG, current_version: 2, accepted_versions: [1, 2], signin_client_id: SIGNIN_CLIENT_ID as unknown as ClientId };
 
 /**
  * `signinSecrets` puts the sign-in app's two secrets in the Worker (what
