@@ -39,6 +39,27 @@ interface Mock {
   owner: { id: number; login: string };
   slug: string;
   secrets: { client_secret: string; webhook_secret: string; pem: string };
+  /** Fields that replace the answer's own, or the whole body of the answer. */
+  answer: Record<string, unknown> | string;
+}
+
+/** What a hostile answer tries on the terminal: a line of its own, colors, an 8-bit control sequence, a line separator, reversed text. */
+const FORGED = "x\r\nForged line \u001b[8m \u009b2J \u2028 \u202e";
+
+/** Runs `check` while GitHub answers the conversion with `answer`. */
+async function answering(m: Mock, answer: Mock["answer"], check: () => Promise<void>): Promise<void> {
+  m.answer = answer;
+  try {
+    await check();
+  } finally {
+    m.answer = {};
+  }
+}
+
+/** Nothing of GitHub's answer made a line of its own, and no character of the output is other than visible ASCII. */
+function assertPlain(out: string): void {
+  assert.doesNotMatch(out, /[^\n\x20-\x7e]/);
+  assert.doesNotMatch(out, /^Forged line/m);
 }
 
 function body(req: IncomingMessage): Promise<string> {
@@ -59,6 +80,7 @@ async function mockGitHub(): Promise<Mock> {
     slug: "kleidos-cla-sign-in",
     // The conversion of any GitHub App also returns a private key and a webhook secret: the script must drop both.
     secrets: { client_secret: `cs_${randomBytes(20).toString("hex")}`, webhook_secret: `wh_${randomBytes(20).toString("hex")}`, pem: `-----BEGIN RSA PRIVATE KEY-----\n${randomBytes(48).toString("base64")}\n-----END RSA PRIVATE KEY-----\n` },
+    answer: {},
   };
   m.server = createServer((req, res) => {
     void (async () => {
@@ -79,7 +101,7 @@ async function mockGitHub(): Promise<Mock> {
       if (req.method === "POST" && url.pathname === "/app-manifests/abc123def456/conversions") {
         m.conversions++;
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: 4343, slug: m.slug, owner: m.owner, client_id: "Iv23liSIGNINMOCK0001", html_url: `https://github.com/apps/${m.slug}`, permissions: {}, events: [], ...m.secrets }));
+        res.end(typeof m.answer === "string" ? m.answer : JSON.stringify({ id: 4343, slug: m.slug, owner: m.owner, client_id: "Iv23liSIGNINMOCK0001", html_url: `https://github.com/apps/${m.slug}`, permissions: {}, events: [], ...m.secrets, ...m.answer }));
         return;
       }
       res.writeHead(404).end();
@@ -251,6 +273,34 @@ describe("create-signin-app.ts", () => {
     } finally {
       mock.slug = "kleidos-cla-sign-in";
     }
+  });
+
+  it("nothing of GitHub's answer makes a line of its own on the terminal", async () => {
+    for (const answer of [{ slug: FORGED }, { owner: { id: FORGED } }, { id: FORGED }, { id: -1 }, { client_id: `Iv23liSIGNINMOCK${FORGED}` }, { client_id: "Iv23liSIGNINMOCK\n" }])
+      await answering(mock, answer, async () => {
+        const r = await runScript(mock);
+        assert.equal(r.code, 4, r.out);
+        assertPlain(r.out);
+        assert.match(r.out, /Nothing was stored/);
+        assert.equal(r.wrangler.filter((c) => c.args[1] === "put").length, 0);
+        assert.equal(r.gh.filter((c) => c.args[0] === "secret").length, 0);
+      });
+    await answering(mock, { html_url: FORGED, permissions: { [FORGED]: "write" }, events: [FORGED] }, async () => {
+      const r = await runScript(mock);
+      assert.equal(r.code, 0, r.out);
+      assertPlain(r.out);
+      assert.match(r.out, /Warning: GitHub gave the app permissions or events/);
+      assert.match(r.out, /app id 4343, http:\/\/127\.0\.0\.1:\d+\/apps\/kleidos-cla-sign-in\)/);
+    });
+  });
+
+  it("an answer that is not JSON is not quoted", async () => {
+    await answering(mock, `{"client_secret": ${mock.secrets.client_secret}`, async () => {
+      const r = await runScript(mock);
+      assert.equal(r.code, 4, r.out);
+      assert.match(r.out, /the conversion is not JSON/);
+      assert.ok(!r.out.includes(mock.secrets.client_secret.slice(0, 8)), r.out);
+    });
   });
 
   it("a failing gh secret set exits non-zero, names what was not stored and echoes nothing", async () => {
