@@ -40,6 +40,7 @@ for (const [version, info] of Object.entries(config.versions)) {
   if (set !== info.set_sha256) fail(`v${version}: set digest ${set}, config.json says ${info.set_sha256}`);
   const sentence = `I have read and I accept the Kleidos Contributor Agreement, version ${version} (SHA-256 ${set.slice(0, 12)}), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.`;
   if (info.sentence !== sentence) fail(`v${version}: the sentence in config.json is not the one built from the digest`);
+  if (info.flow !== "comment" && info.flow !== "signin") fail(`v${version}: flow must be "comment" or "signin"`);
   if (!failed) console.log(`check-agreement: v${version} ok, set SHA-256 ${set}`);
 }
 if (!config.accepted_versions.includes(config.current_version)) fail("current_version is not an accepted version");

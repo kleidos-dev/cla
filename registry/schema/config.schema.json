@@ -18,7 +18,7 @@
         "^[1-9][0-9]*$": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["path", "set_sha256", "files", "sentence"],
+          "required": ["path", "set_sha256", "files", "flow", "sentence"],
           "properties": {
             "path": { "type": "string", "pattern": "^agreements/v[1-9][0-9]*$" },
             "set_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -28,6 +28,7 @@
               "required": ["individual.md", "entity.md", "addendum.md"],
               "patternProperties": { "^[a-z]+\\.md$": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
             },
+            "flow": { "enum": ["comment", "signin"], "description": "How the site takes the acceptance: comment, kleidos-cla posts the sentence as the signer (version 1); signin, the signer signs in with the identity-only app, the recorder checks that sign-in with GitHub and nothing is posted (version 2 on). A sentence typed by hand is accepted under either" },
             "sentence": { "type": "string", "minLength": 1 }
           }
         }

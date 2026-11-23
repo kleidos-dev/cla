@@ -49,7 +49,7 @@ SPDX-License-Identifier = "MIT"
 # third-party material under CC BY-SA 4.0. The project's own terms are in
 # the separate addendum.md, not in these files.
 [[annotations]]
-path = ["agreements/v1/individual.md", "agreements/v1/entity.md"]
+path = ["agreements/v1/individual.md", "agreements/v1/entity.md", "agreements/v2/individual.md", "agreements/v2/entity.md"]
 precedence = "override"
 SPDX-FileCopyrightText = "Contributor Agreements, https://contributoragreements.org/"
 SPDX-License-Identifier = "CC-BY-SA-4.0"
@@ -59,7 +59,7 @@ SPDX-License-Identifier = "CC-BY-SA-4.0"
 # under the same licence. Not part of the set SHA256SUMS lists: it binds
 # nothing.
 [[annotations]]
-path = ["agreements/v1/individual.es.md"]
+path = ["agreements/v1/individual.es.md", "agreements/v2/individual.es.md"]
 precedence = "override"
 SPDX-FileCopyrightText = [
   "Contributor Agreements, https://contributoragreements.org/ (original text)",
@@ -91,3 +91,4 @@ path = ["worker/src/assets/fonts/*.woff2"]
 precedence = "override"
 SPDX-FileCopyrightText = "2022 The Mona Sans Project Authors (https://github.com/github/mona-sans), with Reserved Font Name \"Mona\""
 SPDX-License-Identifier = "OFL-1.1"
+
