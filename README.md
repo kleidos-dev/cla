@@ -13,7 +13,11 @@ Kleidos is published under the GNU GPL, version 3 or later. Every contributor ac
 
 ## The agreement
 
-Version 1 is made of two texts accepted together, in a single act. **English is the binding language**; the Spanish texts are for information.
+Each version is made of two texts accepted together, in a single act. **English is the binding language**; the Spanish texts are for information. The version signed today is the one `registry/config.json` names as `current_version`.
+
+**Version 2** ([`agreements/v2/`](agreements/v2/)) is published and **not current yet**: it is a draft for the owner's legal review. It differs from version 1 only in the Addendum, clause 1.5 (you accept by signing in at cla.kleidos.dev and confirming the sentence, and nothing is posted in your name; or, if the site is down, by posting the sentence yourself) and a new clause 1.6 (an entry that names you and that you did not make is looked into with you and removed if it cannot be confirmed). Its set digest is `d75b87066fb47a8d976a454b2fc4c7220be59ad9a592f1b0f2d72cfe19f23682`. It becomes current with one change of `registry/config.json` (`current_version: 2`, `accepted_versions: [1, 2]`), with no deploy; signatures under version 1 stay valid.
+
+Version 1:
 
 | File | What it is |
 | --- | --- |
@@ -35,13 +39,25 @@ Check it yourself with `sha256sum -c SHA256SUMS && sha256sum SHA256SUMS` inside 
 
 ## How to sign
 
+From version 2 on (the flow the site uses once version 2 is current):
+
+1. Open your pull request in any Kleidos repository.
+2. The bot `kleidos-cla` posts a short comment, in English, with a **Sign the agreement** button, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
+3. The button opens `cla.kleidos.dev/sign/<owner>/<repo>/<number>` (step 1 of 2): what the agreement is, who still has to sign, and **Sign in with GitHub to sign**. Signing in only tells the site which GitHub account you are. GitHub asks you to authorize **Kleidos CLA sign-in**, a separate app of kleidos-dev with no permission at all: it gets nothing beyond what is public anyway, it cannot post, and it is never installed anywhere.
+4. Back on the page (step 2 of 2), read the summary, open the full text if you want, tick the box with the acceptance sentence and click **I agree and sign**. That confirmation is your signature. Nothing is posted anywhere in your name: the site hands your account id and your sign-in token to this repository's job `record.yml`, which asks GitHub itself whose token it is, records your acceptance with GitHub's date and time and a qualified time stamp, and deletes the app's authorization from your account.
+5. Within a minute the confirmation page shows your register entry, the bot's comment turns to "accepted" and `📝 CLA` turns green. Where the repository lets the app start an outside contributor's checks, the waiting checks start by themselves; elsewhere a maintainer starts them, and the comment says which. Later pull requests, in any Kleidos repository, are green from the start, and the bot posts no comment on them: you sign once per account.
+
+If the site is down, you can post the acceptance sentence yourself as a new comment on your pull request, alone and unedited; the register records it the same way (`method: "comment"`).
+
+Under version 1 (the flow live until version 2 is current):
+
 1. Open your pull request in any Kleidos repository.
 2. The bot `kleidos-cla` posts a short comment, in English, with a **Sign the agreement** button that shows how many authors have signed, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
 3. The button opens `cla.kleidos.dev/sign/<owner>/<repo>/<number>` (step 1 of 2): what the agreement is, who still has to sign, and **Sign in with GitHub to sign**. Signing in is not signing. GitHub asks you to authorize the app `kleidos-cla`; it reads your account id and login and, when you click "I agree and sign", posts one comment on that pull request for you. The full text is always at [cla.kleidos.dev/agreement](https://cla.kleidos.dev/agreement) ([en español](https://cla.kleidos.dev/agreement?lang=es), informative).
 4. Back on the page (step 2 of 2), read the summary, open the full text if you want, tick the box and click **I agree and sign**. The acceptance sentence is posted on the pull request under your account; that comment is your signature. The app's permission is revoked at once, and a confirmation page shows the register entry once it is recorded.
 5. Within a minute the register records it, the bot's comment turns to "accepted" and `📝 CLA` turns green. Where the repository lets the app start an outside contributor's checks, the waiting checks start by themselves; elsewhere a maintainer starts them, and the comment says which. Later pull requests, in any Kleidos repository, are green from the start, and the bot posts no comment on them.
 
-Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1:
+Each author of a pull request signs with their own account: the opener, every commit author and every `Co-authored-by:` co-author. The sentence is, for version 1 (version 2's is the same with `version 2 (SHA-256 d75b87066fb4)`, and is in `registry/config.json`):
 
 ```text
 I have read and I accept the Kleidos Contributor Agreement, version 1 (SHA-256 89c1d46b9b10), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.
@@ -58,7 +74,34 @@ If the site is down, you can post that sentence yourself as a new comment on you
 
 ## What is stored, and where
 
-The register is public, on the branch [`signatures`](https://github.com/kleidos-dev/cla/tree/signatures) of this repository, one file per signer, `signatures/individual/<github id>.json`:
+The register is public, on the branch [`signatures`](https://github.com/kleidos-dev/cla/tree/signatures) of this repository. It stays here, public, on purpose: being public is what lets anyone check each entry, its GitHub-signed commit, the run that wrote it and its time stamp, without trusting the maintainer or the site, and the privacy notice says so before anyone signs. One file per signer, `signatures/individual/<github id>.json`. A signature made by signing in (version 2 on) is schema 2:
+
+```json
+{
+  "schema": 2,
+  "kind": "individual",
+  "github_id": 123456,
+  "login_at_signing": "alice",
+  "agreement": "kleidos-ca",
+  "version": 2,
+  "set_sha256": "d75b87066fb47a8d976a454b2fc4c7220be59ad9a592f1b0f2d72cfe19f23682",
+  "sentence_sha256": "…",
+  "accepted_at": "2026-12-01T10:22:58Z",
+  "method": "signin",
+  "evidence": {
+    "authorized_at": "2026-12-01T10:22:31Z",
+    "signin_client_id": "Iv23li…",
+    "context_pr_url": "https://github.com/kleidos-dev/boards/pull/42",
+    "site_commit": "…",
+    "lang": "en"
+  },
+  "recorded_at": "2026-12-01T10:23:02Z",
+  "recorder_run_id": 1,
+  "recorder_commit": "…"
+}
+```
+
+Both times are GitHub's, not the site's: `accepted_at` is the `Date` of GitHub's answer when `record.yml` checked your sign-in token, and `authorized_at` is the time GitHub says that token was created (when you clicked "Authorize"). `sentence_sha256` is the hash of the sentence beside the box you ticked; `site_commit` is the commit of this repository the page was built from, so the exact page can be rebuilt; the pull request is context, not the signature. An acceptance comment (version 1 through the app, or typed by hand under any version) is schema 1:
 
 ```json
 {
@@ -82,9 +125,17 @@ The register is public, on the branch [`signatures`](https://github.com/kleidos-
 }
 ```
 
-and one file per merged pull request, `coverage/<owner>/<repo>/<number>.json`, with the merge commit, the date and the account ids it covers: the per-contribution record of Addendum 4.2. The schemas are in [`registry/schema/`](registry/schema/).
+Beside each signature, `signatures/individual/<github id>.tsr` is an RFC 3161 time-stamp token over the SHA-256 of that file, from a **qualified** time-stamping service: Sectigo (Europe) SL, `http://timestamp.sectigo.com/qualified`, on the Spanish trusted list (the EU list of trusted lists points to it) as a qualified time-stamp service, granted since 2021-05-05. A qualified time stamp is presumed to give the date and the integrity of what it covers (eIDAS art. 41.2; LEC art. 326.4). It is written in the same commit as the entry; when the service does not answer, the entry is written without it and a daily run adds it. The service receives only that hash (and the address of GitHub's runner). Check a token yourself:
 
-**Never stored, anywhere:** your real name, email, postal address, IP address, browser, avatar, tokens. The email of your commits is read only to find your GitHub account. The site sets one cookie, strictly necessary, for at most an hour while you sign; there are no analytics and nothing from third parties.
+```sh
+openssl ts -verify -digest "$(sha256sum 123456.json | cut -d' ' -f1)" -in 123456.tsr -CAfile registry/tsa/sectigo-qualified-time-stamping-root-r45.pem
+```
+
+The pinned root is "Sectigo Qualified Time Stamping Root R45", SHA-256 `F8:71:F8:97:6B:40:68:D7:00:D5:F2:81:08:4B:4A:29:EA:F4:B8:F3:57:43:33:0B:A0:62:FA:B4:6F:58:C2:ED`; the service's CA in the trusted list is "Sectigo Qualified Time Stamping CA R35" (SKI `61:00:3F:77:D9:FF:EA:39:D2:91:A5:1C:BE:9D:35:C7:78:5E:A4:67`). Sectigo's policies and practices, which bind whoever relies on its tokens: <https://sectigo.com/eIDASCPS> and <https://sectigo.com/legal>. Its documents do not grant free use in writing ("may charge fees"), and it asks scripts to wait 15 seconds between requests, which the recorder does. If it ever closes, a non-qualified service such as FreeTSA can take its place with a change of `timestamping` in `registry/config.json` (its URL, `qualified: false` and its root under `registry/tsa/`); its tokens prove existence and integrity too, without the presumption of a qualified one.
+
+And one file per merged pull request, `coverage/<owner>/<repo>/<number>.json`, with the merge commit, the date and the account ids it covers: the per-contribution record of Addendum 4.2. The schemas are in [`registry/schema/`](registry/schema/).
+
+**Never stored, anywhere:** your real name, email, postal address, IP address, browser, avatar, tokens. The email of your commits is read only to find your GitHub account. Your sign-in token is handed once to `record.yml` (it is in no log, run name or file) and its grant is deleted as soon as it is checked. The site sets one cookie, strictly necessary, for at most an hour while you sign; there are no analytics and nothing from third parties.
 
 The full privacy notice is [`PRIVACY.md`](PRIVACY.md) ([en español](PRIVACY.es.md)), also at [cla.kleidos.dev/privacy](https://cla.kleidos.dev/privacy). Controller: José M. Requena Plens, <mail@kleidos.dev>. You have the rights of access, rectification, erasure, restriction, objection and portability (GDPR arts. 15 to 22).
 
@@ -94,15 +145,16 @@ The full privacy notice is [`PRIVACY.md`](PRIVACY.md) ([en español](PRIVACY.es.
 pull request ──webhook──▶ Worker (cla.kleidos.dev) ──▶ Queue ──▶ evaluate: who must sign, who has
                                  │                                 ├─ check run 📝 CLA on the head commit
 signer ── sign in with GitHub ──▶│ /sign, /auth, /agree            ├─ the bot's one comment
-          (GitHub App user token,│                                 └─ approve the held fork runs
-           one repository)       └─ posts the sentence AS THE SIGNER
+          (Kleidos CLA sign-in,  │                                 └─ approve the held fork runs
+           no permission at all) └─ posts nothing
                                                     │
-               record.yml (this repository) ◀── dispatch (ids only)
-               re-reads the comment from GitHub, writes one file on `signatures`
+               record.yml (this repository) ◀── dispatch (account id, the signer's sign-in token)
+               asks GitHub whose token it is (Check a token, its own secret), deletes the grant,
+               writes the entry and its qualified time stamp on `signatures`
                verify.yml checks the whole branch after every write and weekly
 ```
 
-- **The Worker never writes the register.** The GitHub App has no contents write at all. The click on "I agree and sign" makes the app post the sentence with the signer's own short-lived user token, so GitHub itself witnesses who signed; this repository's own job then re-reads that comment from GitHub and records it. A compromised Worker could not fabricate a signature for an account that is not authorizing the app at that moment, could not backdate one (`accepted_at` is GitHub's), and could not alter or remove a record.
+- **The Worker never writes the register, and never acts as the signer.** The bot's app has no contents write at all, and from version 2 the sign-in app has no permission at all. On "I agree and sign" the Worker hands the account it read and the signer's own token to `record.yml`, which asks GitHub (`POST /applications/{client_id}/token`, with the sign-in app's client secret, an Actions secret of the environment `signin`, which only `main` can use) whether the token is valid, is of our sign-in app and belongs to that very account, a personal one, signed in within the last two hours; only then does it record, with GitHub's own times, and then it deletes the grant (`DELETE /applications/{client_id}/grant`). So GitHub, not the Worker, vouches for who signed: a compromised Worker could record nobody but the account signing in at that moment (and could not know whether it clicked "I agree"), could not backdate an entry (both times are GitHub's), and could not alter or remove a record. The token cannot be checked again later, since its grant is gone; the qualified time stamp is what keeps the entry checkable. Under version 1, the app `kleidos-cla` posts the sentence with the signer's own short-lived user token and the job re-reads that comment, with the same guarantees.
 - **Every fact is re-read on every event.** Queue messages carry identifiers only; a lost, repeated or replayed webhook only causes a recomputation. Webhooks are checked against their HMAC signature before anything is parsed.
 - **CI waits through GitHub's own fork approval** ("Require approval for all external contributors"). In a repository whose `auto_approve` is true, the app approves the held runs of a pull request once every author has signed, except when its head commit changes anything under `.github/` (read from that commit's own tree against its merge base, so a head that moves cannot change the answer), or when a held run may target a self-hosted runner: those wait for a maintainer. `pull_request_target` is used nowhere.
 - **The merge block** is the required status check `📝 CLA`, pinned to the app in each repository's ruleset.
@@ -117,6 +169,8 @@ The code:
 | [`registry/`](registry/) | `config.json` (served repositories, exemptions by id, accepted versions), `entities.json`, the schemas, and `cla.py`, the recorder and verifier (Python standard library only). |
 | [`.github/workflows/record.yml`](.github/workflows/record.yml), [`verify.yml`](.github/workflows/verify.yml) | The register's only writer, and its checker. |
 | [`scripts/create-github-app.ts`](scripts/create-github-app.ts) | Creates the GitHub App from its manifest and stores its secrets straight into the Worker; run by the owner. |
+| [`scripts/create-signin-app.ts`](scripts/create-signin-app.ts) | Creates the identity-only sign-in app from its manifest (no permission, no event, no webhook) and stores its client id and secret straight into the Worker and the Actions environment `signin`; run by the owner. |
+| [`registry/tsa/`](registry/tsa/) | The pinned root of the qualified time-stamping service. |
 
 ## Setting it up (owner)
 
@@ -127,7 +181,8 @@ Done already: this repository, its `signatures` branch, the Queue `kleidos-cla` 
 3. `node scripts/create-github-app.ts` (from any directory) and open the address it prints. It runs the wrangler pinned in `worker/` (never `npx`) and first checks that `wrangler secret list` reaches the Worker, so the one-time code is never spent on a missing target. It posts the manifest (public app; permissions `metadata: read`, `contents: read`, `pull_requests: write`, `checks: write`, `actions: write`; events `pull_request`, `check_run`, `workflow_run`) to GitHub, checks that the app it gets back is `kleidos-cla` of `kleidos-dev`, and pipes `APP_ID`, `APP_PRIVATE_KEY` (converted to PKCS#8), `CLIENT_ID`, `CLIENT_SECRET`, `WEBHOOK_SECRET` and a new `SESSION_KEY` into `wrangler secret put`. Nothing secret is printed or written to disk.
 4. Install the app on `kleidos-dev`, on selected repositories only (`cla` and `cla-sandbox` first). In `registry/config.json` set `app_id` to the app's id and add its bot account id to the `exempt` list.
 5. After the check has reported once on a repository, require `📝 CLA` there, pinned to the app id.
-6. Keep every other app with write access off `kleidos-dev/cla` (`gh api /orgs/kleidos-dev/installations` after each new app): an app that can push to `main` or `signatures` can change the configuration or write a record, and is part of the register's trust root.
+6. The sign-in app, for version 2: `node scripts/create-signin-app.ts` (from any directory, with `gh` signed in as an owner of kleidos-dev) and open the address it prints. It checks wrangler and gh as the first script does, sets the Actions environment `signin` of this repository to `main` only, posts the manifest (public app, so that anyone can sign in with it; no permission, no event, no webhook, `request_oauth_on_install` false), checks that the app it gets back is `kleidos-cla-sign-in` of `kleidos-dev`, pipes `SIGNIN_CLIENT_ID` and `SIGNIN_CLIENT_SECRET` into `wrangler secret put` and the secret into `gh secret set SIGNIN_CLIENT_SECRET --env signin`, and drops the private key and webhook secret GitHub also returns. Nothing secret is printed or written to disk. On the app's settings page check that user tokens expire, Device Flow is off and the webhook is inactive, and delete the private key; never install the app. Then put its client id (public) in `registry/config.json` as `signin_client_id`. Until a version whose `flow` is `signin` is current, the site does not use it: the live flow stays version 1's.
+7. Keep every other app with write access off `kleidos-dev/cla` (`gh api /orgs/kleidos-dev/installations` after each new app): an app that can push to `main` or `signatures` can change the configuration or write a record, and is part of the register's trust root.
 
 ## Licence
 
