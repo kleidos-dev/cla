@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 José M. Requena Plens <jmrplens@kleidos.dev>
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // End-to-end test of scripts/create-signin-app.ts against a mocked GitHub
 // (both github.com and api.github.com), a fake wrangler and a fake gh. Run

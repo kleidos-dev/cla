@@ -37,7 +37,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class FakeStamper(cla.Stamper):
-    """A time-stamping authority that answers a recognisable token over the digest, or nothing."""
+    """A time-stamping authority that answers a recognizable token over the digest, or nothing."""
 
     def __init__(self, up: bool = True) -> None:
         self.up = up
@@ -1057,7 +1057,7 @@ class Verify(unittest.TestCase):
             self.assertEqual(v.checked_through, last)
 
     def test_a_signin_record_its_run_does_not_vouch_for(self) -> None:
-        cases = {
+        cases: dict[str, dict[str, dict[str, Any]]] = {
             "another commit of main": {"run": {"head_sha": "d" * 40}},
             "another account": {"run": {"display_title": f"Record signin {REPO}#7 999"}},
             "another app": {"config": {**CONFIG_V2, "signin_client_id": "Iv23liSOMEOTHERAPP01"}},
@@ -1070,7 +1070,7 @@ class Verify(unittest.TestCase):
                 rec = self.signin_record(1)
                 rid = rec["recorder_run_id"]
                 if "run" in change:
-                    self.witness.runs[rid] = {**self.witness.runs[rid], **change["run"]}  # type: ignore[dict-item]
+                    self.witness.runs[rid] = {**(self.witness.runs[rid] or {}), **change["run"]}
                 self.commit_as(
                     RECORDER, "sign: 1", {"signatures/individual/1.json": json.dumps(rec)}
                 )

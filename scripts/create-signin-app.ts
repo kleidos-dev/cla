@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-FileCopyrightText: 2026 José M. Requena Plens <jmrplens@kleidos.dev>
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 //
 // Creates the identity-only sign-in app of the Kleidos CLA from its
@@ -137,11 +137,23 @@ async function exchange(code: string): Promise<Conversion> {
   if (res.status !== 201) throw new Error(`GitHub answered ${res.status} to the manifest conversion`);
   // The private key and the webhook secret in the answer are never read: only these fields are kept.
   const all = (await res.json()) as Record<string, unknown>;
-  const c: Partial<Conversion> = { id: all.id as number, slug: all.slug as string, owner: all.owner as Conversion["owner"], client_id: all.client_id as string, client_secret: all.client_secret as string, html_url: all.html_url as string, permissions: all.permissions as Record<string, string>, events: all.events as string[] };
-  for (const k of ["id", "slug", "client_id", "client_secret"] as const) {
-    if (!c[k]) throw new Error(`the conversion has no ${k}`);
-  }
-  return c as Conversion;
+  const str = (k: string): string => {
+    const v = all[k];
+    if (typeof v !== "string" || !v) throw new Error(`the conversion has no ${k}`);
+    return v;
+  };
+  if (typeof all.id !== "number") throw new Error("the conversion has no id");
+  const owner = all.owner as Conversion["owner"] | undefined;
+  return {
+    id: all.id,
+    slug: str("slug"),
+    owner: owner ?? null,
+    client_id: str("client_id"),
+    client_secret: str("client_secret"),
+    ...(typeof all.html_url === "string" ? { html_url: all.html_url } : {}),
+    ...(all.permissions && typeof all.permissions === "object" ? { permissions: all.permissions as Record<string, string> } : {}),
+    ...(Array.isArray(all.events) ? { events: all.events as string[] } : {}),
+  };
 }
 
 function page(res: ServerResponse, status: number, body: string): void {

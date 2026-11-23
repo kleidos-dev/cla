@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-FileCopyrightText: 2026 José M. Requena Plens <jmrplens@kleidos.dev>
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // A stand-in for the gh CLI in the test of create-signin-app.ts: it appends
 // its arguments and standard input to FAKE_GH_LOG, answers the calls the

@@ -17,7 +17,7 @@
 
 [[waiver]]
 tool = "pre-commit"
-what = 'exclude:^agreements/v1/addendum(\.es)?\.md$'
+what = 'exclude:^agreements/v[1-9][0-9]*/addendum(\.es)?\.md$'
 where = ".pre-commit-config.yaml"
-reason = "agreements/v1/addendum.md is a binding text, hashed into agreements/v1/SHA256SUMS, registry/config.json and the acceptance sentence every signer posts, and addendum.es.md is its served translation; neither may change in place (CONTRIBUTING.md: a typo fix is a new version). Their clause lines 5.1 (a) to (e) are separate lines on purpose (the Worker renders soft breaks as line breaks), which md_nowrap reads as hard wraps. The repository's agreement-digests hook (always run, so in every commit and in CI's lint job) proves the bytes never change, and gitleaks' history scan and reuse lint in CI still read both files."
-decided = "agent, reviewed in PR #3"
+reason = "agreements/vN/addendum.md is a binding text (one per published version, v1 and v2 today), hashed into its SHA256SUMS, registry/config.json and the acceptance sentence every signer posts, and addendum.es.md is its served translation; neither may change in place (CONTRIBUTING.md: a typo fix is a new version). Their clause lines 5.1 (a) to (e) are separate lines on purpose (the Worker renders soft breaks as line breaks), which md_nowrap reads as hard wraps. The repository's agreement-digests hook (always run, so in every commit and in CI's lint job) proves the bytes never change, and gitleaks' history scan and reuse lint in CI still read both files."
+decided = "agent, reviewed in PR #3; widened from v1 to every version by the B3 change of 2026-11-23, for the owner to review"

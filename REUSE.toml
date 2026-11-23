@@ -22,7 +22,7 @@ SPDX-License-Identifier = "MIT"
 # .python-version and the agreement's SHA256SUMS. This row is their
 # statement.
 [[annotations]]
-path = ["**/*.json", ".python-version", "agreements/v1/SHA256SUMS"]
+path = ["**/*.json", ".python-version", "agreements/v1/SHA256SUMS", "agreements/v2/SHA256SUMS"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "MIT"
@@ -36,6 +36,9 @@ path = [
   "agreements/v1/addendum.md",
   "agreements/v1/addendum.es.md",
   "agreements/v1/summary.es.md",
+  "agreements/v2/addendum.md",
+  "agreements/v2/addendum.es.md",
+  "agreements/v2/summary.es.md",
   "PRIVACY.md",
   "PRIVACY.es.md",
 ]
@@ -106,5 +109,5 @@ SPDX-License-Identifier = "LicenseRef-Sectigo-Relying-Party"
 [[annotations]]
 path = ["registry/tests/fixtures/sectigo-qualified.data"]
 precedence = "override"
-SPDX-FileCopyrightText = "2026 José M. Requena Plens <jmrplens@kleidos.dev>"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "MIT"

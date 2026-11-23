@@ -6,7 +6,7 @@ default_install_hook_types: [pre-commit, commit-msg]
 # SHA256SUMS and the acceptance sentence: their clause lines (a) to (e)
 # keep the layout they were accepted in, which the no-wrap check reads as
 # hard wraps. The agreement-digests hook below proves they never change.
-exclude: '^agreements/v1/addendum(\.es)?\.md$'
+exclude: '^agreements/v[1-9][0-9]*/addendum(\.es)?\.md$'
 
 repos:
   # >>> kleidos-quality pre-commit-base (synced from kleidos-dev/.github .pre-commit-config.yaml; do not edit)
