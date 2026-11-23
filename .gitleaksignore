@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Fingerprints gitleaks reports and that are not secrets, each with why.
+#
+# README.md, as the first commit of the B3 docs wrote it, gave the SHA-256 fingerprint and the
+# subject key identifier of Sectigo's public time-stamping root and CA in
+# colon form, which the MAC rule reads as addresses; they are public
+# certificate digests, written without separators since.
+7e7ba160269ca0add5858186430f45bcc4b71715:README.md:mac-address:134
