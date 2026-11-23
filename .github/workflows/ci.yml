@@ -43,13 +43,13 @@ concurrency:
 jobs:
   lint:
     name: "🧹 Lint (quality kit)"
-    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     permissions:
       contents: read
 
   reuse:
     name: "⚖️ Licensing (REUSE)"
-    uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     permissions:
       contents: read
 
@@ -57,14 +57,14 @@ jobs:
     name: "🔎 Types (mypy)"
     needs: [lint, reuse]
     # The register's tool and its tests use the standard library only.
-    uses: kleidos-dev/.github/.github/workflows/reusable-mypy.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-mypy.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     permissions:
       contents: read
 
   eslint:
     name: "🔎 ESLint and tsc"
     needs: [lint, reuse]
-    uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     with:
       working-directory: worker
       projects: tsconfig.json ../scripts/tsconfig.json
@@ -75,7 +75,7 @@ jobs:
   register:
     name: "🐍 Register tests"
     needs: [lint, reuse]
-    uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     with:
       install: ""
       run: python -m unittest discover -s registry/tests -v
@@ -86,14 +86,14 @@ jobs:
   osv:
     name: "🛡️ Dependency vulnerabilities (OSV)"
     needs: [lint, reuse]
-    uses: kleidos-dev/.github/.github/workflows/reusable-osv.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-osv.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     permissions:
       contents: read
 
   secrets:
     name: "🔐 Secrets and MAC scan (gitleaks)"
     needs: [lint, reuse]
-    uses: kleidos-dev/.github/.github/workflows/reusable-secrets.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-secrets.yml@30f0dc69833e0917c7865eb93770237fedacff59 # quality-v2.0.0
     permissions:
       contents: read
 

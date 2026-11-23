@@ -18,6 +18,9 @@ commit. This script checks, from the repository's root:
                (ruff, mypy, gitleaks, OSV, Dependabot, CI conventions,
                markdownlint, tsconfig, ESLint, clang-tidy, inline
                suppressions) unless .github/quality/waivers.toml records why
+  pins         every Python target, kit-known action and kit-known hook rev
+               is at the latest stable release this kit knows, unless a
+               "below-latest:" comment beside it and a waiver say why
   waivers      every waiver has a reason, matches a weakening, and is live
 
 Usage:
@@ -30,7 +33,7 @@ pre-commit hook); the CI fetches the kit at the recorded commit and passes
 1 problems found, 2 a usage or setup error, 3 the recorded kit commit is not
 in the --kit-git clone (fetch it).
 
-Python 3.11 or newer; PyYAML (pinned in the kit's quality/requirements-tools.txt).
+Python 3.15 or newer; PyYAML (pinned in the kit's quality/requirements-tools.txt).
 """
 
 from __future__ import annotations
@@ -135,8 +138,54 @@ WAIVABLE_TOOLS = (
     "dependabot",
     "pre-commit",
     "reuse",
+    "pins",
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+
+# The newest stable release of what a repository pins, as this kit release
+# knows it (owner, 2026-11-23: every pin at the latest stable release). They
+# are the kit's own pins: a kit test holds them equal to its .python-version,
+# the actions its workflows pin and the hook revs of its
+# .pre-commit-config.yaml, and the kit's weekly "📦 Pinned versions current"
+# job (quality/latest_releases.py) turns red when upstream has a newer one.
+# A pin below them is reported unless a comment beside it (same line, or the
+# comment lines right above) says why after "below-latest:", and then it is a
+# weakening that needs a waiver (tool = "pins").
+LATEST_PYTHON = (3, 15)
+LATEST_ACTIONS = {
+    "actions/cache": "v6.1.0",
+    "actions/checkout": "v7.0.1",
+    "actions/download-artifact": "v8.0.2",
+    "actions/setup-node": "v7.1.0",
+    "actions/setup-python": "v7.1.0",
+    "actions/upload-artifact": "v7.0.2",
+    "sonarsource/sonarqube-auth-action": "v1.2",
+    "sonarsource/sonarqube-scan-action": "v8.5.0",
+}
+LATEST_HOOKS = {
+    "https://github.com/crate-ci/typos": "v1.52.2",
+    "https://github.com/gitleaks/gitleaks": "v8.30.1",
+    "https://github.com/fsfe/reuse-tool": "v6.3.0",
+    "https://github.com/davidanson/markdownlint-cli2": "v0.24.2",
+    "https://github.com/astral-sh/ruff-pre-commit": "v0.17.6",
+    "https://github.com/rhysd/actionlint": "v1.7.12",
+    "https://github.com/zizmorcore/zizmor-pre-commit": "v1.33.1",
+    "https://github.com/shellcheck-py/shellcheck-py": "v0.11.0.1",
+}
+BELOW_LATEST = re.compile(r"#.*\bbelow-latest:\s*\S")
+VERSION_NUMBER = re.compile(r"\bv?(\d+(?:\.\d+)*)\b")
+PY_DOTTED = re.compile(r"(?<![\d.])(\d+)\.(\d+)(?:\.\d+)?(?![\d.])")
+PY_TARGET = re.compile(r"\bpy(\d)(\d{1,2})\b")
+TOML_PY_KEY = re.compile(
+    r"^\s*(?P<key>target-version|python_version|requires-python)\s*=\s*(?P<value>[^#]*)"
+)
+YAML_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[\w-]+)\s*:\s*(?P<value>[^#]*)")
+# python-version: ${{ matrix.<key> }} makes <key> a Python pin too.
+MATRIX_PY_REF = re.compile(r"python-version\s*:\s*['\"]?\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
+LOWER_BOUND = re.compile(r"(?:>=|~=|===?|>)\s*(\d+\.\d+(?:\.\d+)?)")
+BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*$")
+HOOK_REPO = re.compile(r"^\s*-\s+repo:\s*(['\"]?)(?P<url>[^\s'\"#]+)\1")
+HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 
 MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
 MARK_END = re.compile(r"^[ \t]*# <<< kleidos-quality (?P<id>[a-z0-9-]+)[ \t]*$")
@@ -524,7 +573,7 @@ class Repo:
         try:
             recorded = json.loads((self.root / SOURCE_JSON).read_text(encoding="utf-8"))
             return [str(e["path"]) for e in recorded.get("files", [])]
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        except OSError, ValueError, KeyError, TypeError, AttributeError:
             return []
 
     def commit_check_paths(self) -> list[str]:
@@ -532,7 +581,7 @@ class Repo:
         try:
             data = json.loads((self.root / COMMIT_CHECK_SOURCE).read_text(encoding="utf-8"))
             return [str(e["path"]) for e in data.get("files", [])]
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        except OSError, ValueError, KeyError, TypeError, AttributeError:
             return []
 
     def _agents_copy(self, rel: str) -> bool:
@@ -540,7 +589,7 @@ class Repo:
             return True
         try:
             return AGENTS_COPY_MARK in (self.root / rel).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except OSError, UnicodeDecodeError:
             return False
 
     def path(self, rel: str) -> Path:
@@ -684,7 +733,7 @@ def check_copies(repo: Repo, source: dict[str, Any], kit: Kit | None, report: Re
         if kit is not None:
             try:
                 want = sha256(kit.read(str(entry.get("source_path", ""))))
-            except (FileNotFoundError, OSError):
+            except FileNotFoundError, OSError:
                 report.add("copies", rel, f"the kit has no {entry.get('source_path')}")
                 continue
             if want != digest:
@@ -1411,7 +1460,7 @@ def python_comments(repo: Repo, rel: str) -> list[tuple[int, str]]:
     try:
         tokens = tokenize.generate_tokens(io.StringIO(repo.text(rel)).readline)
         return [(t.start[0], t.string) for t in tokens if t.type == tokenize.COMMENT]
-    except (tokenize.TokenError, SyntaxError, UnicodeDecodeError):
+    except tokenize.TokenError, SyntaxError, UnicodeDecodeError:
         return []
 
 
@@ -1951,6 +2000,217 @@ def check_clang_tidy(repo: Repo, report: Report) -> None:
 
 
 # --------------------------------------------------------------------------
+# Conformance: every pin at the latest stable release (owner, 2026-11-23)
+
+
+def version_tuple(text: str) -> tuple[int, ...] | None:
+    """The first version number in a text (v7.0.1, 1.33.1), as integers."""
+    m = VERSION_NUMBER.search(text)
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def is_below(have: tuple[int, ...], want: tuple[int, ...]) -> bool:
+    """Whether one version is older than another (missing parts count as 0)."""
+    size = max(len(have), len(want))
+    return have + (0,) * (size - len(have)) < want + (0,) * (size - len(want))
+
+
+def reason_beside(lines: list[str], *indexes: int) -> bool:
+    """A "below-latest:" comment on a pin's line or in the comment lines right above one."""
+    for index in indexes:
+        if BELOW_LATEST.search(lines[index]):
+            return True
+        above = index - 1
+        while above >= 0 and lines[above].lstrip().startswith("#"):
+            if BELOW_LATEST.search(lines[above]):
+                return True
+            above -= 1
+    return False
+
+
+def python_versions(value: str) -> list[tuple[str, tuple[int, int]]]:
+    """The Python versions a value names: 3.13, 3.13.5, py313, ">=3.11" (its 3.11)."""
+    found = [(m.group(0), (int(m.group(1)), int(m.group(2)))) for m in PY_TARGET.finditer(value)]
+    found += [(m.group(0), (int(m.group(1)), int(m.group(2)))) for m in PY_DOTTED.finditer(value)]
+    return found
+
+
+def pin_below(report: Report, rel: str, num: int, what: str, latest: str, reasoned: bool) -> None:
+    if reasoned:
+        report.weaken("pins", what, rel)
+        return
+    report.add(
+        "pins",
+        f"{rel}:{num}",
+        f"{what} is below the latest stable release the kit knows ({latest}): move it,"
+        ' or write why beside it (# below-latest: <why>) and waive it (tool = "pins")',
+    )
+
+
+def workflow_job_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    """The line range (start, end) of each job under a workflow's top-level jobs:."""
+    try:
+        top = next(i for i, line in enumerate(lines) if re.match(r"^(['\"]?)jobs\1\s*:", line))
+    except StopIteration:
+        return []
+    starts: list[int] = []
+    indent = None
+    end = len(lines)
+    for i in range(top + 1, len(lines)):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if depth == 0:
+            end = i
+            break
+        if indent is None:
+            indent = depth
+        if depth == indent:
+            starts.append(i)
+    return [(s, nxt) for s, nxt in zip(starts, [*starts[1:], end], strict=True)]
+
+
+def check_python_pins(repo: Repo, report: Report) -> None:
+    """The Python a repository names (.python-version, ruff, mypy, requires-python, CI)."""
+    latest = ".".join(str(n) for n in LATEST_PYTHON)
+
+    def scan(rel: str, lines: list[str], num: int, value: str, key_num: int = 0) -> None:
+        for text, version in python_versions(value):
+            if is_below(version, LATEST_PYTHON):
+                reasoned = reason_beside(lines, num - 1, (key_num or num) - 1)
+                pin_below(report, rel, num, f"python:{text}", latest, reasoned)
+
+    for rel in repo.files:
+        if rel in repo.foreign:
+            continue
+        name = PurePosixPath(rel).name
+        if name not in (".python-version", "pyproject.toml", "ruff.toml", ".ruff.toml") and not (
+            rel.startswith(".github/workflows/") and rel.endswith((".yml", ".yaml"))
+        ):
+            continue
+        try:
+            lines = repo.text(rel).splitlines()
+        except OSError, UnicodeDecodeError:
+            continue
+        if name == ".python-version":
+            for num, line in enumerate(lines, 1):
+                if line.strip() and not line.lstrip().startswith("#"):
+                    scan(rel, lines, num, line.split("#")[0])
+                    break
+            continue
+        if name.endswith(".toml"):
+            for num, line in enumerate(lines, 1):
+                m = TOML_PY_KEY.match(line)
+                if not m:
+                    continue
+                value = m.group("value")
+                if m.group("key") == "requires-python":
+                    # Only the lower bound is a pin (">=3.15,!=3.13.0" excludes 3.13.0).
+                    value = " ".join(LOWER_BOUND.findall(value))
+                scan(rel, lines, num, value)
+            continue
+        # A matrix key is a Python pin only in the job whose python-version reads it.
+        keys_at = [{"python-version"} for _ in lines]
+        for start, end in workflow_job_ranges(lines):
+            refs = set(MATRIX_PY_REF.findall("\n".join(lines[start:end])))
+            for i in range(start, end):
+                keys_at[i] |= refs
+        for num, line in enumerate(lines, 1):
+            m = YAML_KEY.match(line)
+            if not m or m.group("key") not in keys_at[num - 1]:
+                continue
+            value = m.group("value").strip()
+            indent = len(m.group("indent"))
+            if value and not BLOCK_SCALAR.match(value):
+                scan(rel, lines, num, value)
+                continue
+            if value:
+                # A literal or folded scalar (| or >): its text is the lines below
+                # indented deeper than the key itself (after any "- " before it).
+                column = m.start("key")
+                for text_num in range(num + 1, len(lines) + 1):
+                    text = lines[text_num - 1]
+                    if text.strip() and len(text) - len(text.lstrip()) <= column:
+                        break
+                    scan(rel, lines, text_num, text.split("#")[0], key_num=num)
+                continue
+            # A block list under the key: its items, deeper than the key.
+            for item_num in range(num + 1, len(lines) + 1):
+                item = lines[item_num - 1]
+                stripped = item.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if len(item) - len(item.lstrip()) < indent or not stripped.startswith("- "):
+                    break
+                scan(rel, lines, item_num, stripped[2:].split("#")[0])
+
+
+def check_action_pins(repo: Repo, report: Report) -> None:
+    """Every action the kit knows, pinned at its latest release (the version comment)."""
+    for rel in workflow_files(repo):
+        if rel in repo.foreign:
+            continue
+        lines = repo.text(rel).splitlines()
+        for num, line in enumerate(lines, 1):
+            m = USES_LINE.match(line)
+            if not m or KIT_USES.search(line):
+                continue
+            ref = m.group("ref")
+            action = "/".join(ref.split("@")[0].split("/")[:2]).lower()
+            latest = LATEST_ACTIONS.get(action)
+            have = version_tuple(m.group("comment") or "")
+            want = version_tuple(latest or "")
+            if latest is None or have is None or want is None or not is_below(have, want):
+                continue
+            shown = (m.group("comment") or "").strip("# ").split()[0]
+            reasoned = reason_beside(lines, num - 1)
+            pin_below(report, rel, num, f"action:{action}@{shown}", latest, reasoned)
+
+
+def check_hook_pins(repo: Repo, report: Report) -> None:
+    """Every hook repository the kit knows, at its latest release (frozen comment or rev)."""
+    rel = ".pre-commit-config.yaml"
+    if not repo.exists(rel):
+        return
+    lines = repo.text(rel).splitlines()
+    url, repo_index = "", 0
+    for num, line in enumerate(lines, 1):
+        m = HOOK_REPO.match(line)
+        if m:
+            url, repo_index = m.group("url").lower().removesuffix(".git"), num - 1
+            continue
+        m = HOOK_REV.match(line)
+        if not m or url not in LATEST_HOOKS:
+            continue
+        comment = m.group("comment") or ""
+        rev = m.group("rev")
+        named = comment.split("frozen:", 1)[1] if "frozen:" in comment else rev
+        latest = LATEST_HOOKS[url]
+        if SHA40.match(named.strip()):
+            report.add(
+                "pins",
+                f"{rel}:{num}",
+                f"hook:{url} pins a commit and names no release: add its tag"
+                f" (# frozen: vX.Y.Z), so it can be held to {latest}",
+            )
+            continue
+        have, want = version_tuple(named), version_tuple(latest)
+        if have is None or want is None or not is_below(have, want):
+            continue
+        shown = named.strip().split()[0]
+        reasoned = reason_beside(lines, num - 1, repo_index)
+        pin_below(report, rel, num, f"hook:{url}@{shown}", latest, reasoned)
+
+
+def check_pins(repo: Repo, report: Report) -> None:
+    check_python_pins(repo, report)
+    check_action_pins(repo, report)
+    check_hook_pins(repo, report)
+
+
+# --------------------------------------------------------------------------
 # Waivers
 
 
@@ -2130,6 +2390,7 @@ def run(
     check_markdownlint(repo, kit, report)
     check_reuse(repo, report)
     check_typos(repo, report)
+    check_pins(repo, report)
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (sync.py --write seeds an empty one)")
     if "python" in profiles:

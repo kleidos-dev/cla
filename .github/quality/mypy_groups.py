@@ -30,7 +30,7 @@ and appends a table to GITHUB_STEP_SUMMARY. Exit status: 0 every run
 clean, 1 mypy found errors, 2 a bad declaration, mypy missing, or a run
 mypy could not finish (a duplicate module, an unreadable root).
 
-Python 3.11 or newer; standard library only (mypy comes from the PATH).
+Python 3.15 or newer; standard library only (mypy comes from the PATH).
 """
 
 from __future__ import annotations

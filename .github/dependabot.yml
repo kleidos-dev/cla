@@ -22,7 +22,10 @@ updates:
     cooldown:
       default-days: 7
     ignore:
-      # typescript-eslint 8 supports TypeScript below 6.1; lift this when it supports 7.
+      # `typescript` is TypeScript 6's API (npm:@typescript/typescript6),
+      # the name typescript-eslint 8 imports: TypeScript 7.0 ships no API.
+      # The compiler is TypeScript 7 under @typescript/native. Lift this
+      # when typescript-eslint reads TypeScript 7's own API.
       - dependency-name: typescript
         versions: [">=7"]
   # The setup script's package.json declares no dependency today (it runs

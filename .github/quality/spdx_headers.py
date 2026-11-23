@@ -33,7 +33,7 @@ gate copied from kleidos-dev/agents is checked there. In a shallow clone the
 years cannot be read, so only their presence is checked (the CI fetches the
 whole history).
 
-Python 3.11 or newer, standard library only.
+Python 3.15 or newer, standard library only.
 """
 
 from __future__ import annotations
@@ -352,7 +352,7 @@ def kit_copies(root: Path) -> set[str]:
         return set()
     try:
         return {str(e["path"]) for e in json.loads(path.read_text(encoding="utf-8"))["files"]}
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return set()
 
 
@@ -362,7 +362,7 @@ def agents_copy(root: Path, rel: str) -> bool:
         return True
     try:
         return AGENTS_COPY_MARK in (root / rel).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except OSError, UnicodeDecodeError:
         return False
 
 
