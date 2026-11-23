@@ -85,6 +85,7 @@ KIT_COPIES = {
     ".github/quality/markdownlint.jsonc": "quality/markdownlint/base.jsonc",
     ".gitleaks-mac.toml": "quality/gitleaks/mac.toml",
     ".github/quality/ruff.toml": "quality/ruff/ruff.toml",
+    ".github/quality/mypy_groups.py": "quality/mypy_groups.py",
     ".github/zizmor.yml": "quality/zizmor/zizmor.yml",
     ".shellcheckrc": "quality/shellcheck/shellcheckrc",
     ".github/quality/eslint.base.mjs": "quality/eslint/base.mjs",
@@ -199,6 +200,10 @@ MYPY_STRICT_PREFIXES = (
 )
 # Flags that make mypy stricter when set false.
 MYPY_FALSE_IS_STRICT = ("implicit_reexport", "implicit_optional", "follow_untyped_imports")
+# A repository of loose scripts runs mypy once per group of folders
+# (mypy_groups.py); at most MYPY_LISTED files are named per finding kind.
+MYPY_GROUPS_TABLE = "tool.kleidos-quality.mypy-groups"
+MYPY_LISTED = 20
 RUFF_KIT_LINE_LENGTH = 100
 
 NOQA = re.compile(r"#\s*noqa\b(?P<codes>:\s*[A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*)?", re.IGNORECASE)
@@ -1218,53 +1223,188 @@ def check_mypy(repo: Repo, report: Report) -> None:
                     f"pyproject.toml:{num + 1}",
                     "an override needs a comment above it saying why each module has no types",
                 )
-    check_mypy_coverage(repo, mypy, report)
-
-
-def check_mypy_coverage(repo: Repo, mypy: dict[str, Any], report: Report) -> None:
-    files = mypy.get("files")
-    if isinstance(files, str):
-        files = [f.strip() for f in files.split(",") if f.strip()]
-    if not files:
+    try:
+        # The python profile's copy beside this file (the kit's own in its home).
+        import mypy_groups
+    except ImportError:
         report.add(
             "mypy",
-            "pyproject.toml [tool.mypy]",
-            "files is not set: name the roots so a bare `mypy` checks every Python file",
+            f"{KIT_DIR}mypy_groups.py",
+            "missing beside check_quality.py, so the mypy groups cannot be read"
+            " (run sync.py --write)",
         )
         return
+    groups, problems = mypy_groups.declared(data)
+    for problem in problems:
+        report.add("mypy", "pyproject.toml", f"{problem}: refused (no waiver)")
+    if not problems:
+        runs = [(g.name, g.files, mypy_groups.expand(repo.root, g.files)) for g in groups]
+        check_mypy_coverage(repo, mypy, runs, report)
+
+
+def mypy_covers(rel: str, roots: Iterable[str], patterns: list[re.Pattern[str]]) -> bool:
+    """Whether a mypy run over these roots checks the file (a walk skips dot-directories)."""
+    covered = False
+    for root in roots:
+        if rel == root:
+            covered = True  # a file named explicitly is checked wherever it is
+            break
+        if root == ".":
+            rest = rel
+        elif under(rel, root):
+            rest = rel[len(root) + 1 :]
+        else:
+            continue
+        if not has_dot_part(rest):  # mypy skips dot-directories while it walks a root
+            covered = True
+            break
+    return covered and not any(p.search(rel) for p in patterns)
+
+
+def mypy_package(folder: PurePosixPath, tracked: set[str], namespaces: bool) -> list[str] | None:
+    """The package path mypy gives a folder, or None when the folder is no package.
+
+    mypy's own crawl up (find_sources.py): a folder with an __init__.py(i)
+    is a package; with namespace packages on (mypy's default), a folder
+    without one is a package too when its name is an identifier and the
+    folder above it is a package. The crawl stops at the repository root.
+    """
+    if not folder.name:
+        return None
+    name = folder.name.removesuffix("-stubs")
+    if {f"{folder}/__init__.py", f"{folder}/__init__.pyi"} & tracked:
+        return [*(mypy_package(folder.parent, tracked, namespaces) or []), name]
+    if not namespaces or not name.isidentifier():
+        return None
+    above = mypy_package(folder.parent, tracked, namespaces)
+    return None if above is None else [*above, name]
+
+
+def mypy_module(rel: str, tracked: set[str], namespaces: bool = True) -> str:
+    """The module name mypy gives a file it finds: the packages above it, then its stem.
+
+    A script in a plain folder, with no package above it, is a top-level
+    module named after its file alone.
+    """
+    path = PurePosixPath(rel)
+    parts = mypy_package(path.parent, tracked, namespaces) or []
+    if path.stem != "__init__":
+        parts = [*parts, path.stem]
+    return ".".join(parts)
+
+
+def check_mypy_duplicates(
+    unit: str, rels: list[str], tracked: set[str], namespaces: bool, report: Report
+) -> None:
+    """No two files of one mypy run share a module name (mypy stops at the second)."""
+    seen: dict[str, str] = {}
+    clashes: list[tuple[str, str, str]] = []
+    for rel in rels:
+        module = mypy_module(rel, tracked, namespaces)
+        first = seen.setdefault(module, rel)
+        if (
+            module
+            and first != rel
+            and PurePosixPath(first).with_suffix("") != PurePosixPath(rel).with_suffix("")
+        ):  # a .py and its .pyi are one module
+            clashes.append((module, first, rel))
+    for module, first, rel in clashes[:MYPY_LISTED]:
+        report.add(
+            "mypy",
+            rel,
+            f"is module {module!r} like {first}, in the same mypy run ({unit}): mypy stops at"
+            f" the duplicate; put the two folders in different [[{MYPY_GROUPS_TABLE}]]",
+        )
+    if len(clashes) > MYPY_LISTED:
+        report.add(
+            "mypy",
+            "pyproject.toml",
+            f"... and {len(clashes) - MYPY_LISTED} more duplicate module names in {unit}",
+        )
+
+
+def check_mypy_coverage(
+    repo: Repo,
+    mypy: dict[str, Any],
+    groups: list[tuple[str, tuple[str, ...], list[tuple[str, list[str]]]]],
+    report: Report,
+) -> None:
+    """Every tracked Python file is in exactly one mypy run, and no run holds a module twice."""
     excludes = mypy.get("exclude") or []
     if isinstance(excludes, str):
         excludes = [excludes]
     patterns = [re.compile(e if isinstance(e, str) else "") for e in excludes]
-    roots = [str(f).strip("/").removeprefix("./") or "." for f in files]
-    uncovered = []
-    for rel in repo.own(PY_SUFFIXES):
-        covered = False
-        for root in roots:
-            if rel == root:
-                covered = True  # a file named explicitly is checked wherever it is
-                break
-            if root == ".":
-                rest = rel
-            elif under(rel, root):
-                rest = rel[len(root) + 1 :]
-            else:
-                continue
-            if not has_dot_part(rest):  # mypy skips dot-directories while it walks a root
-                covered = True
-                break
-        if covered and any(p.search(rel) for p in patterns):
-            covered = False
-        if not covered:
+    if groups:
+        runs = [
+            (name, tuple(p for _r, paths in expanded for p in paths))
+            for name, _f, expanded in groups
+        ]
+        how = f"add its folder to one [[{MYPY_GROUPS_TABLE}]]"
+    else:
+        files = mypy.get("files")
+        if isinstance(files, str):
+            files = [f.strip() for f in files.split(",") if f.strip()]
+        if not files:
+            report.add(
+                "mypy",
+                "pyproject.toml [tool.mypy]",
+                "files is not set: name the roots so a bare `mypy` checks every Python file"
+                f" (or declare [[{MYPY_GROUPS_TABLE}]])",
+            )
+            return
+        runs = [
+            ("[tool.mypy] files", tuple(str(f).strip("/").removeprefix("./") or "." for f in files))
+        ]
+        how = "add its root to [tool.mypy] files"
+    own = repo.own(PY_SUFFIXES)
+    members: dict[str, list[str]] = {name: [] for name, _ in runs}
+    uncovered: list[str] = []
+    twice: list[tuple[str, list[str]]] = []
+    for rel in own:
+        hits = [name for name, roots in runs if mypy_covers(rel, roots, patterns)]
+        for name in hits:
+            members[name].append(rel)
+        if not hits:
             uncovered.append(rel)
-    for rel in uncovered[:20]:
-        report.add("mypy", rel, "not checked by mypy: add its root to [tool.mypy] files")
-    if len(uncovered) > 20:
+        elif len(hits) > 1:
+            twice.append((rel, hits))
+    for rel in uncovered[:MYPY_LISTED]:
+        report.add("mypy", rel, f"not checked by mypy: {how}")
+    if len(uncovered) > MYPY_LISTED:
         report.add(
             "mypy",
             "pyproject.toml [tool.mypy]",
-            f"... and {len(uncovered) - 20} more files mypy does not check",
+            f"... and {len(uncovered) - MYPY_LISTED} more files mypy does not check",
         )
+    for rel, hits in twice[:MYPY_LISTED]:
+        report.add(
+            "mypy",
+            rel,
+            f"is in the mypy groups {', '.join(hits)}: every file is in exactly one group",
+        )
+    if len(twice) > MYPY_LISTED:
+        report.add(
+            "mypy",
+            "pyproject.toml",
+            f"... and {len(twice) - MYPY_LISTED} more files in more than one mypy group",
+        )
+    if groups:
+        for name, _files, expanded in groups:
+            for root, paths in expanded:
+                if not any(mypy_covers(rel, paths, patterns) for rel in members[name]):
+                    report.add(
+                        "mypy",
+                        "pyproject.toml",
+                        f"mypy group {name}: {root} holds no tracked Python file it would"
+                        " check: remove it",
+                    )
+    if mypy.get("explicit_package_bases") is True:
+        return  # module names then follow mypy_path, which this check does not model
+    tracked = set(repo.files)
+    namespaces = mypy.get("namespace_packages") is not False
+    for name, _roots in runs:
+        unit = name if not groups else f"group {name}"
+        check_mypy_duplicates(unit, members[name], tracked, namespaces, report)
 
 
 def python_comments(repo: Repo, rel: str) -> list[tuple[int, str]]:

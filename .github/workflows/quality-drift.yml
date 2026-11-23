@@ -21,6 +21,6 @@ permissions: {}
 jobs:
   drift:
     name: "🔭 Quality kit drift"
-    uses: kleidos-dev/.github/.github/workflows/reusable-quality-drift.yml@fe956cffe83955b1f17a4121b906979dc9f8df6b # quality-v1.0.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-quality-drift.yml@76ecdbbacb7c3ed96a1ec42b65044e9557c42743 # quality-v1.1.0
     permissions:
       contents: read

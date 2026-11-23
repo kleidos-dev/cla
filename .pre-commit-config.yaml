@@ -79,12 +79,14 @@ repos:
   # mypy runs from the repository's own environment, where its dependencies
   # are installed (the kit's quality/requirements-tools.txt, from a kit
   # checkout, and the repository's requirements); CI runs it in the kit's
-  # mypy workflow.
+  # mypy workflow. The runner makes one mypy run per group of folders the
+  # repository declares ([[tool.kleidos-quality.mypy-groups]]), or one bare
+  # mypy without any.
   - repo: local
     hooks:
       - id: mypy
         name: mypy (strict)
-        entry: mypy
+        entry: python3 .github/quality/mypy_groups.py
         language: system
         types_or: [python, pyi]
         pass_filenames: false
