@@ -279,7 +279,7 @@ async function main(): Promise<number> {
             failed.push(`SIGNIN_CLIENT_SECRET (environment ${ENVIRONMENT} of ${REGISTRY})`);
             console.error(`gh secret set failed (exit ${set.code}); its output is not shown, as it could echo the value.`);
           }
-          console.log(`\nGitHub App created: ${SLUG} (app id ${c.id}, ${WEB}/apps/${SLUG}).`);
+          console.log(`\nGitHub App created: ${SLUG} (app id ${printable(String(c.id))}, ${WEB}/apps/${SLUG}).`);
           console.log(`Stored: ${stored.join(", ") || "nothing"}.`);
           if (failed.length) {
             console.error(`NOT stored: ${failed.join(", ")}. The secret is gone: on the app's settings page generate a new client secret and put it with \`npx wrangler secret put SIGNIN_CLIENT_SECRET\` in worker/ and \`gh secret set SIGNIN_CLIENT_SECRET --env ${ENVIRONMENT} --repo ${REGISTRY}\`, both reading it from standard input.`);
