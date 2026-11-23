@@ -168,7 +168,7 @@ export class GitHub {
       if ((await this.installationFor(r)) !== installation) throw new NotAllowedError("repositories_span_installations");
     }
     const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort(byCodeUnits);
-    const key = `${installation}|${names.join(",")}|${JSON.stringify(Object.entries(permissions).sort(([a], [b]) => byCodeUnits(a, b)))}`;
+    const key = `${installation}|${names.join(",")}|${JSON.stringify(Object.entries(permissions).sort((a, b) => byCodeUnits(a.join(), b.join())))}`;
     const now = nowSeconds();
     const hit = state.tokens.get(key);
     if (hit && hit.expires - 300 > now) return hit.token;
