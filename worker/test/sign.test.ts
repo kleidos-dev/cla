@@ -105,7 +105,7 @@ describe("web signing", () => {
     const bot = w.gh.botComments(SANDBOX, pr.number);
     expect(bot).toHaveLength(1);
     expect(bot[0]!.body).toContain("**Contributor Agreement signed.**");
-    expect(bot[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v1/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(bot[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     expect(bot[0]!.body).toContain(`/blob/${w.gh.recordCommits.get(alice.id)}/signatures/individual/123456.json`);
     expect(run.approved).toBe(true);
 

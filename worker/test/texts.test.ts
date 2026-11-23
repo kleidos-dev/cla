@@ -124,7 +124,7 @@ describe("pages and hygiene", () => {
       await b.get(path),
       await b.get(path, es),
       await b.get("/sign/kleidos-dev/boards/1"),
-      await b.get("/button/v1/needed-0-2.svg"),
+      await b.get("/button/v2/needed-0-2.svg"),
       await b.get("/assets/mark.svg"),
     ];
     const { callback } = await b.signIn(path);

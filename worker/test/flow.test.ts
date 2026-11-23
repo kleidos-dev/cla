@@ -4,7 +4,7 @@ import { cron, makeBot } from "../src/bot";
 import type { ConfiguredEnv } from "../src/env";
 import { ORG_ID, commit, sha } from "./fakegh";
 import type { World } from "./helpers";
-import { SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
+import { SANDBOX, drain, openPr, prEvent, spanishIn, webhook, world } from "./helpers";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -43,14 +43,23 @@ describe("evaluation", () => {
     const [comment] = w.gh.botComments(SANDBOX, pr.number);
     expect(comment!.body.startsWith("<!-- kleidos-cla:v1 -->\n**Contributor Agreement needed.** ")).toBe(true);
     expect(comment!.body).toContain("Still to sign: @alice.");
-    expect(comment!.body).toContain("<sub>Firma una vez el Acuerdo de Contribución y arrancan las comprobaciones. Falta firmar: @alice.</sub>");
     // The button: its image URL names the state and the count, wrapped in the sign link, with alt text.
-    expect(comment!.body).toContain(`[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v1/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(comment!.body).toContain(`[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v2/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     // The privacy notice is one link away, not a paragraph in the comment.
     expect(comment!.body).toContain("[Privacy](https://cla.kleidos.dev/privacy)");
-    expect(comment!.body).toContain("[Acuerdo en español](https://cla.kleidos.dev/agreement?lang=es)");
     expect(comment!.body).not.toContain("**Your data.**");
-    expect(comment!.body.split("\n").length).toBeLessThanOrEqual(7);
+    // English only: one line, the button, one line of links; Spanish is on the pages it links to.
+    expect(spanishIn(comment!.body)).toBeNull();
+    expect(comment!.body).toBe(
+      [
+        "<!-- kleidos-cla:v1 -->",
+        "**Contributor Agreement needed.** Sign it once and the checks of this pull request start; it covers every Kleidos repository. Still to sign: @alice.",
+        "",
+        `[![Sign the Kleidos Contributor Agreement: 0 of 1 author signed](https://cla.kleidos.dev/button/v2/needed-0-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`,
+        "",
+        "<sub>[Agreement](https://cla.kleidos.dev/agreement) · [Privacy](https://cla.kleidos.dev/privacy) · Employer or under 18? [Who signs](https://github.com/kleidos-dev/cla#who-signs)</sub>",
+      ].join("\n"),
+    );
     expect(run.approved).toBe(false);
     expect(w.gh.dispatches).toHaveLength(0);
   });
@@ -88,8 +97,8 @@ describe("evaluation", () => {
     expect(w.gh.check(SANDBOX, pr.head.sha)!.title).toBe("2 signatures needed");
     const body = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
     expect(body).toContain("**Contributor Agreement: 1 of 3 signed.** @alice has signed; still to sign: [bob](https://github.com/bob), [carol](https://github.com/carol).");
-    expect(body).toContain("<sub>Ya ha firmado @alice; falta firmar: bob, carol.</sub>");
-    expect(body).toContain("/button/v1/partial-1-3.svg");
+    expect(spanishIn(body)).toBeNull();
+    expect(body).toContain("/button/v2/partial-1-3.svg");
     expect(body).toContain("No signature needed: `jmrplens` (the project owner).");
     expect(body).not.toContain("@bob");
     expect(body).not.toContain("@carol");
@@ -100,7 +109,46 @@ describe("evaluation", () => {
     const updated = w.gh.botComments(SANDBOX, pr.number);
     expect(updated).toHaveLength(1);
     expect(updated[0]!.body).toContain("**Contributor Agreement signed.**");
-    expect(updated[0]!.body).toContain("/button/v1/signed-3-3.svg");
+    expect(updated[0]!.body).toContain("/button/v2/signed-3-3.svg");
+    expect(spanishIn(updated[0]!.body)).toBeNull();
+  });
+
+  it("the comment a pull request already has is edited to the green state, never a second one", async () => {
+    const w = await world();
+    const pr = openPr(w, alice);
+    await opened(w, pr);
+    const [first] = w.gh.botComments(SANDBOX, pr.number);
+    expect(first!.body).toContain("/button/v2/needed-0-1.svg");
+    await w.gh.signDirectly(alice);
+    await opened(w, pr, "synchronize");
+    const after = w.gh.botComments(SANDBOX, pr.number);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.id).toBe(first!.id);
+    expect(after[0]!.body).toContain("**Contributor Agreement signed.**");
+    expect(after[0]!.body).toContain(`[![Kleidos Contributor Agreement signed by its author](https://cla.kleidos.dev/button/v2/signed-1-1.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(spanishIn(after[0]!.body)).toBeNull();
+    expect(w.gh.requests.filter((r) => r.method === "POST" && r.url.endsWith(`/issues/${pr.number}/comments`))).toHaveLength(1);
+  });
+
+  it("a contributor who has signed opens a new pull request: no comment, no mention, a green check", async () => {
+    const w = await world();
+    const first = openPr(w, alice);
+    await opened(w, first);
+    await w.gh.signDirectly(alice);
+    await opened(w, first, "synchronize");
+    expect(w.gh.check(SANDBOX, first.head.sha)!.conclusion).toBe("success");
+    const pr = openPr(w, alice);
+    await opened(w, pr);
+    // A later push and a cron pass are evaluations too; none of them writes a comment.
+    pr.head.sha = sha();
+    await opened(w, pr, "synchronize");
+    await cron(makeBot(w.env as ConfiguredEnv));
+    await drain(w);
+    const check = w.gh.check(SANDBOX, pr.head.sha)!;
+    expect(check.conclusion).toBe("success");
+    expect(check.title).toBe("Contributor Agreement accepted");
+    expect(w.gh.comments.filter((c) => c.repo === SANDBOX && c.pr === pr.number)).toHaveLength(0);
+    expect(w.gh.requests.filter((r) => r.url.includes(`/issues/${pr.number}/comments`) && r.method !== "GET")).toHaveLength(0);
   });
 
   it("Co-authored-by trailers count as authors, and an unlinked co-author email blocks", async () => {

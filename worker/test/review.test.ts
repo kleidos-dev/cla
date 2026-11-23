@@ -9,7 +9,7 @@ import { normalizeSentence } from "../src/util";
 import { APP_ID, BOT_ID, ORG_ID, commit, sha } from "./fakegh";
 import type { FakePr } from "./fakegh";
 import type { World } from "./helpers";
-import { Browser, CONFIG, ORIGIN, SANDBOX, drain, openPr, prEvent, sign, webhook, world } from "./helpers";
+import { Browser, CONFIG, ORIGIN, SANDBOX, drain, openPr, prEvent, sign, spanishIn, webhook, world } from "./helpers";
 import vectors from "../../registry/tests/normalize-vectors.json";
 
 afterEach(() => {
@@ -191,7 +191,7 @@ describe("texts", () => {
     await opened(w, pr);
     const needed = w.gh.botComments(REGISTRY, pr.number)[0]!.body;
     expect(needed).toContain("Sign it once and a maintainer starts the checks of this pull request");
-    expect(needed).toContain("una persona que mantiene el repositorio inicia las comprobaciones");
+    expect(spanishIn(needed)).toBeNull();
     expect(needed).not.toContain("start by themselves");
     await w.gh.signDirectly(alice);
     await opened(w, pr, "reopened");
@@ -200,6 +200,7 @@ describe("texts", () => {
     expect(accepted).toContain("a maintainer starts its checks");
     expect(accepted).toContain("started by a maintainer, not automatically");
     expect(accepted).not.toContain("run by themselves");
+    expect(spanishIn(accepted)).toBeNull();
     expect(w.gh.check(REGISTRY, pr.head.sha)!.summary).toContain("started by a maintainer");
   });
 

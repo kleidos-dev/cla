@@ -7,10 +7,12 @@
  * So the state and the count are in the URL, the content of a URL never
  * changes (it is served immutable), and the bot rewrites its comment with
  * the URL of the new state: a change of state is a new URL, never a wait
- * for a cache to expire. `v1` changes when the drawing does.
+ * for a cache to expire. The version changes when the drawing does: `v2`
+ * is the English-only drawing; the bilingual `v1` addresses of older
+ * comments are still answered, with the current drawing.
  *
  * The words are drawn as outlines (an <img> loads no web font): the three
- * drawings under assets/button/ give the words of each state, and
+ * drawings under assets/button/ give the English words of each state, and
  * glyphs.json the Kleidos Mono outlines of the count.
  */
 import glyphs from "./assets/button/glyphs.json";
@@ -20,7 +22,7 @@ import signedSvg from "./assets/button/signed.svg";
 
 export type ButtonState = "needed" | "partial" | "signed" | "none";
 
-export const BUTTON_VERSION = "v1";
+export const BUTTON_VERSION = "v2";
 const MAX_COUNT = 999;
 const H = 48;
 const TILE = 48;
@@ -95,8 +97,6 @@ export function buttonAlt(state: ButtonState, signed: number, total: number): st
   return `Sign the Kleidos Contributor Agreement: ${signed} of ${total} ${authors} signed`;
 }
 
-const SPANISH: Record<ButtonState, string> = { needed: "Firma el acuerdo", partial: "Firma el acuerdo", signed: "Acuerdo firmado", none: "No hace falta firmar" };
-
 /** The state of a pull request as the button draws it. */
 export function buttonState(signed: number, total: number, clear: boolean): ButtonState {
   if (clear) return total === 0 ? "none" : "signed";
@@ -110,9 +110,12 @@ export function buttonPath(state: ButtonState, signed: number, total: number): s
   return `/button/${BUTTON_VERSION}/${state}-${s}-${t}.svg`;
 }
 
-/** Parses a button path; only the combinations the bot can write are served, everything else is null (404). */
+/**
+ * Parses a button path; only the combinations the bot can write are served,
+ * everything else is null (404). `v1` is the address of older comments.
+ */
 export function parseButtonPath(path: string): { state: ButtonState; signed: number; total: number } | null {
-  const m = /^\/button\/v1\/(needed|partial|signed|none)-(0|[1-9]\d{0,2})-(0|[1-9]\d{0,2})\.svg$/.exec(path);
+  const m = /^\/button\/v[12]\/(needed|partial|signed|none)-(0|[1-9]\d{0,2})-(0|[1-9]\d{0,2})\.svg$/.exec(path);
   if (!m) return null;
   const state = m[1] as ButtonState;
   const signed = Number(m[2]);
@@ -138,7 +141,7 @@ export function buttonSvg(state: ButtonState, signed: number, total: number): st
     after = cx + w;
   }
   const w = Math.round(after + PAD);
-  const title = `${buttonAlt(state, signed, total)}. ${SPANISH[state]}.`;
+  const title = `${buttonAlt(state, signed, total)}.`;
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${H}" viewBox="0 0 ${w} ${H}" role="img" aria-labelledby="t">` +
     `<!--SPDX-FileCopyrightText: 2026 José M. Requena Plens--><!--SPDX-License-Identifier: GPL-3.0-or-later-->` +

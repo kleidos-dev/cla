@@ -202,3 +202,9 @@ export class Browser {
     return out;
   }
 }
+
+/** Spanish in a text, apart from the author's name in a licence notice; null when there is none. */
+export function spanishIn(text: string): string | null {
+  const m = /\b(?:firm\w*|acuerdo|español|falta|personas?|comprobaciones|mantiene|repositorio|hace)\b|lang=es|[ñ¿¡áéíóú]/i.exec(text.replaceAll("José M. Requena Plens", ""));
+  return m ? m[0] : null;
+}

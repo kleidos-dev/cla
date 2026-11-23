@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buttonPath, buttonState, buttonSvg, parseButtonPath } from "../src/button";
+import neededSvg from "../src/assets/button/needed.svg";
+import noneSvg from "../src/assets/button/none.svg";
+import signedSvg from "../src/assets/button/signed.svg";
+import { buttonAlt, buttonPath, buttonState, buttonSvg, parseButtonPath } from "../src/button";
 import { CSP, withEncoding } from "../src/html";
 import { fromAcceptLanguage } from "../src/i18n";
 import { BOT_ID, commit } from "./fakegh";
 import type { World } from "./helpers";
-import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, webhook, world } from "./helpers";
+import { Browser, CONFIG, SANDBOX, drain, openPr, prEvent, spanishIn, webhook, world } from "./helpers";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -37,7 +40,7 @@ describe("the edge", () => {
     const { path } = await setup(w);
     const b = new Browser(w, alice);
     const css = /href="(\/assets\/cla\.[0-9a-f]+\.css)"/.exec(await (await b.get("/agreement")).text())![1]!;
-    for (const p of [path, `${path}?lang=es`, "/agreement", "/agreement?lang=es", "/agreement/entity", "/privacy", "/privacy?lang=es", "/agreement/es", css, "/assets/mark.svg", "/assets/fonts/kleidos-mono.woff2", "/button/v1/needed-0-1.svg", "/healthz"]) {
+    for (const p of [path, `${path}?lang=es`, "/agreement", "/agreement?lang=es", "/agreement/entity", "/privacy", "/privacy?lang=es", "/agreement/es", css, "/assets/mark.svg", "/assets/fonts/kleidos-mono.woff2", "/button/v2/needed-0-1.svg", "/healthz"]) {
       const r = await b.get(p);
       expect(r.headers.get("cache-control"), p).toMatch(/(^|, )no-transform$/);
     }
@@ -73,19 +76,19 @@ describe("the comment's button", () => {
     const w = await world();
     const { pr } = await setup(w, [commit(alice), commit(bob)]);
     const first = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
-    expect(first).toContain(`(https://cla.kleidos.dev/button/v1/needed-0-2.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
+    expect(first).toContain(`(https://cla.kleidos.dev/button/v2/needed-0-2.svg)](https://cla.kleidos.dev/sign/${SANDBOX}/${pr.number})`);
     expect(first).toContain("Still to sign: @alice, [bob](https://github.com/bob).");
     await w.gh.signDirectly(bob);
     await webhook(w, "pull_request", prEvent(pr, "reopened"));
     await drain(w);
     const second = w.gh.botComments(SANDBOX, pr.number);
     expect(second).toHaveLength(1);
-    expect(second[0]!.body).toContain("[![Sign the Kleidos Contributor Agreement: 1 of 2 authors signed](https://cla.kleidos.dev/button/v1/partial-1-2.svg)]");
+    expect(second[0]!.body).toContain("[![Sign the Kleidos Contributor Agreement: 1 of 2 authors signed](https://cla.kleidos.dev/button/v2/partial-1-2.svg)]");
     await w.gh.signDirectly(alice);
     await webhook(w, "pull_request", prEvent(pr, "reopened"));
     await drain(w);
     const third = w.gh.botComments(SANDBOX, pr.number)[0]!.body;
-    expect(third).toContain("[![Kleidos Contributor Agreement signed by all 2 authors](https://cla.kleidos.dev/button/v1/signed-2-2.svg)]");
+    expect(third).toContain("[![Kleidos Contributor Agreement signed by all 2 authors](https://cla.kleidos.dev/button/v2/signed-2-2.svg)]");
     expect(third).toContain("Register entries: [alice](https://github.com/kleidos-dev/cla/blob/");
     expect(third.startsWith("<!-- kleidos-cla:v1 -->\n")).toBe(true);
   });
@@ -93,7 +96,7 @@ describe("the comment's button", () => {
   it("is served as an SVG with no script, cached for good, under the same headers as the pages", async () => {
     const w = await world();
     const b = new Browser(w, alice);
-    for (const p of ["/button/v1/needed-0-1.svg", "/button/v1/partial-1-3.svg", "/button/v1/signed-12-12.svg", "/button/v1/none-0-0.svg"]) {
+    for (const p of ["/button/v2/needed-0-1.svg", "/button/v2/partial-1-3.svg", "/button/v2/signed-12-12.svg", "/button/v2/none-0-0.svg", "/button/v1/needed-0-1.svg", "/button/v1/signed-12-12.svg"]) {
       const r = await b.get(p);
       expect(r.status, p).toBe(200);
       expect(r.headers.get("content-type")).toBe("image/svg+xml; charset=utf-8");
@@ -105,13 +108,28 @@ describe("the comment's button", () => {
       expect(svg).not.toMatch(/<script|<style|\son[a-z]+=|href=|<image|<foreignObject/i);
       expect(svg).toMatch(/<title id="t">[^<]+<\/title>/);
     }
-    expect(await (await b.get("/button/v1/partial-1-3.svg")).text()).toContain("<title id=\"t\">Sign the Kleidos Contributor Agreement: 1 of 3 authors signed. Firma el acuerdo.</title>");
+    expect(await (await b.get("/button/v2/partial-1-3.svg")).text()).toContain("<title id=\"t\">Sign the Kleidos Contributor Agreement: 1 of 3 authors signed.</title>");
+    // The addresses of older, bilingual comments keep answering, with the English drawing.
+    expect(await (await b.get("/button/v1/partial-1-3.svg")).text()).toBe(await (await b.get("/button/v2/partial-1-3.svg")).text());
+  });
+
+  it("is in English only: no Spanish in the title or in the drawings of any state", () => {
+    for (const [state, signed, total] of [["needed", 0, 2], ["partial", 1, 2], ["signed", 2, 2], ["none", 0, 0]] as const) {
+      const svg = buttonSvg(state, signed, total);
+      const title = /<title id="t">([^<]+)<\/title>/.exec(svg)![1]!;
+      expect(title, state).toBe(`${buttonAlt(state, signed, total)}.`);
+      expect(spanishIn(svg), state).toBeNull();
+      // One line of words: a single outline path between the frame and the chip.
+      const words = svg.slice(svg.indexOf('rx="9.5"/>') + 10).split(/<rect /)[0]!;
+      expect(words.match(/<path /g), state).toHaveLength(1);
+    }
+    for (const f of [neededSvg, signedSvg, noneSvg]) expect(spanishIn(f)).toBeNull();
   });
 
   it("only the combinations the bot writes exist; anything else is 404", async () => {
     const w = await world();
     const b = new Browser(w, alice);
-    for (const p of ["/button/v1/needed-1-2.svg", "/button/v1/partial-0-2.svg", "/button/v1/partial-3-2.svg", "/button/v1/signed-1-2.svg", "/button/v1/none-1-1.svg", "/button/v1/needed-00-1.svg", "/button/v1/needed-0-1000.svg", "/button/v2/needed-0-1.svg", "/button/v1/needed-0-1.png", "/button/v1/other-0-1.svg"]) {
+    for (const p of ["/button/v2/needed-1-2.svg", "/button/v2/partial-0-2.svg", "/button/v2/partial-3-2.svg", "/button/v2/signed-1-2.svg", "/button/v2/none-1-1.svg", "/button/v2/needed-00-1.svg", "/button/v2/needed-0-1000.svg", "/button/v1/needed-1-2.svg", "/button/v1/signed-1-2.svg", "/button/v3/needed-0-1.svg", "/button/v0/needed-0-1.svg", "/button/v2/needed-0-1.png", "/button/v2/other-0-1.svg"]) {
       expect((await b.get(p)).status, p).toBe(404);
     }
     expect(parseButtonPath(buttonPath("partial", 2, 5))).toEqual({ state: "partial", signed: 2, total: 5 });
@@ -128,7 +146,7 @@ describe("the comment's button", () => {
     expect(width(buttonSvg("signed", 2, 2))).toBe(282);
     expect(width(buttonSvg("none", 0, 0))).toBe(225);
     expect(width(buttonSvg("partial", 10, 12))).toBeGreaterThan(width(short));
-    expect(buttonSvg("partial", 10, 12)).toContain("Firma el acuerdo");
+    expect(buttonSvg("partial", 10, 12)).toContain("<title id=\"t\">Sign the Kleidos Contributor Agreement: 10 of 12 authors signed.</title>");
   });
 });
 

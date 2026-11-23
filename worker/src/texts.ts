@@ -70,15 +70,9 @@ function manualStart(ctx: TextContext): string | null {
   return null;
 }
 
-/** A login in the Spanish line: the opener @-mentioned again (no second notification), anybody else as plain text. */
-function whoPlain(a: Account, opener: number): string {
-  if (!isLogin(a.login)) return `account id ${a.id}`;
-  return a.id === opener ? `@${a.login}` : escapeMd(a.login);
-}
-
 function footLine(ctx: TextContext, sign: boolean): string {
   const o = ctx.origin;
-  const links = [`[Agreement](${o}/agreement)`, `[Acuerdo en español](${o}/agreement?lang=es)`, `[Privacy](${o}/privacy)`];
+  const links = [`[Agreement](${o}/agreement)`, `[Privacy](${o}/privacy)`];
   if (sign) links.push(`Employer or under 18? [Who signs](https://github.com/${ctx.registry}#who-signs)`);
   return `<sub>${links.join(" · ")}</sub>`;
 }
@@ -96,10 +90,13 @@ function registerLine(a: Assessment, ctx: TextContext): string {
 }
 
 /**
- * The bot's one comment on a pull request: two lines (English, then
- * Spanish), any special line, the sign button, one line of links. The
- * button's URL names the state and the count, so every state is a new
- * image URL and GitHub's image cache never shows a stale one.
+ * The bot's one comment on a pull request, in English only: one line, any
+ * special line, the sign button, one line of links (the pages it links to
+ * switch to Spanish). The button's URL names the state and the count, so
+ * every state is a new image URL and GitHub's image cache never shows a
+ * stale one. A pull request whose authors are all clear from the start
+ * gets no comment at all (`upsertComment`); this body is then only the
+ * green state an earlier comment is edited to.
  */
 export function commentBody(a: Assessment, ctx: TextContext): string {
   const total = a.required.length;
@@ -111,7 +108,7 @@ export function commentBody(a: Assessment, ctx: TextContext): string {
   const lines: string[] = [MARKER];
   const nn = notNeeded(a);
   if (state === "none") {
-    lines.push(`**No signature needed.** Every author of this pull request is covered${nn ? `: ${nn}` : ""}.`, "<sub>No hace falta firmar: todas las personas autoras están cubiertas.</sub>", "");
+    lines.push(`**No signature needed.** Every author of this pull request is covered${nn ? `: ${nn}` : ""}.`, "");
     if (manual) lines.push(manual, "");
     lines.push(image(`${ctx.origin}/agreement`), "", footLine(ctx, false));
     return lines.join("\n");
@@ -121,9 +118,6 @@ export function commentBody(a: Assessment, ctx: TextContext): string {
       manual
         ? "**Contributor Agreement signed.** Everyone who wrote this pull request has accepted it; a maintainer starts its checks."
         : "**Contributor Agreement signed.** Everyone who wrote this pull request has accepted it, so its checks run by themselves from now on.",
-      manual
-        ? "<sub>Todas las personas autoras han aceptado el acuerdo; las comprobaciones las inicia una persona que mantiene el repositorio.</sub>"
-        : "<sub>Todas las personas autoras han aceptado el acuerdo; las comprobaciones se ejecutan solas desde ahora.</sub>",
       "",
     );
     if (nn) lines.push(`No signature needed: ${nn}.`, "");
@@ -132,20 +126,16 @@ export function commentBody(a: Assessment, ctx: TextContext): string {
     return lines.join("\n");
   }
   const still = a.missing.map((m) => who(m, a.opener.id)).join(", ");
-  const stillEs = a.missing.map((m) => whoPlain(m, a.opener.id)).join(", ");
   const start = manual ? "Sign it once and a maintainer starts the checks of this pull request" : "Sign it once and the checks of this pull request start";
-  const startEs = manual ? "Firma una vez el Acuerdo de Contribución y una persona que mantiene el repositorio inicia las comprobaciones." : "Firma una vez el Acuerdo de Contribución y arrancan las comprobaciones.";
   if (state === "partial") {
     const done = a.required.filter((r) => a.signed.has(r.id));
     const doneEn = done.map((d) => who(d, a.opener.id)).join(", ");
-    const doneEs = done.map((d) => whoPlain(d, a.opener.id)).join(", ");
     lines.push(
       `**Contributor Agreement: ${signed} of ${total} signed.** ${doneEn} ${done.length === 1 ? "has" : "have"} signed${still ? `; still to sign: ${still}` : ""}.`,
-      `<sub>Ya ${done.length === 1 ? "ha" : "han"} firmado ${doneEs}${stillEs ? `; falta firmar: ${stillEs}` : ""}.</sub>`,
       "",
     );
   } else {
-    lines.push(`**Contributor Agreement needed.** ${start}; it covers every Kleidos repository.${still ? ` Still to sign: ${still}.` : ""}`, `<sub>${startEs}${stillEs ? ` Falta firmar: ${stillEs}.` : ""}</sub>`, "");
+    lines.push(`**Contributor Agreement needed.** ${start}; it covers every Kleidos repository.${still ? ` Still to sign: ${still}.` : ""}`, "");
   }
   if (nn) lines.push(`No signature needed: ${nn}.`, "");
   for (const s of specialLines(a, ctx)) lines.push(s, "");
