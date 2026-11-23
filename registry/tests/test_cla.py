@@ -7,11 +7,14 @@ histories.
 from __future__ import annotations
 
 import base64
+import contextlib
+import io
 import json
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -645,6 +648,53 @@ class Timestamps(unittest.TestCase):
             cla.tsr_time(cla.tsr_text(tsr) or ""), cla.parse_time("2026-11-23T01:18:44Z")
         )
 
+    def test_one_of_several_roots_is_enough_and_another_authoritys_is_not(self) -> None:
+        tsr = (FIXTURES / "sectigo-qualified.tsr").read_bytes()
+        digest = cla.sha256((FIXTURES / "sectigo-qualified.data").read_bytes())
+        with tempfile.TemporaryDirectory() as d:
+            other = Path(d) / "other.pem"
+            subprocess.run(
+                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2"]
+                + ["-subj", "/CN=Another authority"]
+                + ["-keyout", str(Path(d) / "other.key"), "-out", str(other)],
+                check=True,
+                capture_output=True,
+            )
+            pinned = self.ROOTS[0]
+            for roots in ([other, pinned], [pinned, other]):
+                self.assertIsNone(cla.verify_tsr(tsr, digest, roots, True))
+            for roots in ([other], []):
+                self.assertEqual(
+                    cla.verify_tsr(tsr, digest, roots, True),
+                    "the time-stamp token does not verify",
+                )
+
+    def test_a_root_is_a_file_of_registry_tsa_and_nothing_else(self) -> None:
+        self.assertEqual(cla.pinned_roots(CONFIG), list(self.ROOTS))
+        self.assertEqual(cla.pinned_roots({}), [])
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            tsa = root / "registry" / "tsa"
+            tsa.mkdir(parents=True)
+            outside = root / "outside.pem"
+            shutil.copy(self.ROOTS[0], outside)
+            (tsa / "link.pem").symlink_to(outside)
+            with mock.patch.object(cla, "ROOT", root), mock.patch.object(cla, "TSA_ROOTS", tsa):
+                for name in (
+                    "outside.pem",
+                    str(outside),
+                    "registry/tsa/../../outside.pem",
+                    "registry/tsa/link.pem",
+                    "registry/tsa/missing.pem",
+                    "registry/tsa",
+                ):
+                    config = {"timestamping": {"url": "http://tsa.invalid/", "roots": [name]}}
+                    with (
+                        self.subTest(name),
+                        self.assertRaisesRegex(RuntimeError, "not a root pinned"),
+                    ):
+                        cla.TSAStamper.from_config(config)
+
     def test_a_query_is_a_well_formed_rfc3161_request(self) -> None:
         digest = cla.sha256(b"x")
         with tempfile.TemporaryDirectory() as d:
@@ -678,6 +728,37 @@ class Timestamps(unittest.TestCase):
         self.assertEqual(calls, ["application/timestamp-query"] * 2)
         self.assertEqual(len(waits), 1)
         self.assertGreater(waits[0], 14)
+
+
+class Trailers(unittest.TestCase):
+    """worker/test/texts.test.ts holds the Worker's side of these."""
+
+    def test_the_emails_of_a_message(self) -> None:
+        for message, emails in (
+            (
+                "x\n\nCo-authored-by: A <A@Example.org>\nco-authored-by:B<b@x.y>",
+                "a@example.org b@x.y",
+            ),
+            ("CO-AUTHORED-BY: \t A <x> B <b@x.y> \t \nSigned-off-by: C <c@x.y>", "b@x.y"),
+            ("Co-authored-by: <a@x.y>\nCo-authored-by: A <b@x.y", "a@x.y"),
+            ("Co-authored-by: A <a@x.y>.\nCo-authored-by: A <a @x.y>\nCo-authored-by: A <>", ""),
+            ("Co-authored-by: A <a@x.y>>\nCo-authored-by: a@x.y>\n Co-authored-by: A <a@x.y>", ""),
+            ("Co-authored-by:\nA <a@x.y>\nCo-authored-by: A <a@x.y\n>", ""),
+        ):
+            with self.subTest(message):
+                self.assertEqual(" ".join(cla.trailer_emails(message)), emails)
+
+    def test_a_hostile_message_takes_no_time(self) -> None:
+        # A commit message is its author's to write, so reading one takes no more than its length.
+        start = time.process_time()
+        for message in (
+            "Co-authored-by: " + " " * 3000,
+            "Co-authored-by: " + " \t<a> " * 1000 + "x",
+            "Co-authored-by: " + "<" * 3000,
+            "Co-authored-by: \n" * 1000,
+        ):
+            self.assertEqual(cla.trailer_emails(message), [])
+        self.assertLess(time.process_time() - start, 1)
 
 
 class RecordCoverage(unittest.TestCase):
@@ -849,6 +930,8 @@ class Verify(unittest.TestCase):
         self.git("config", "commit.gpgsign", "false")
         self.facts: dict[str, cla.Facts] = {}
         self.witness = FakeWitness()
+        self.marker = self.root.resolve() / ".verify" / "next"
+        self.marker.parent.mkdir()
         self.commit_as(OWNER, "Start the register", {"README.md": "register\n"})
 
     def tearDown(self) -> None:
@@ -1326,6 +1409,81 @@ class Verify(unittest.TestCase):
             remove=["signatures/individual/1.json"],
         )
         self.assertTrue(self.verify())
+
+    def run_main(self, *args: str) -> tuple[int, str]:
+        """The verify command over this history, what GitHub says of it apart."""
+        out = io.StringIO()
+        with (
+            mock.patch.object(cla, "ROOT", self.root.resolve()),
+            mock.patch.object(cla, "MARKER_DIR", self.marker.parent),
+            mock.patch.object(cla, "load_config", lambda: CONFIG),
+            mock.patch.object(cla, "commit_facts", lambda *_: self.facts),
+            mock.patch.object(cla, "GitHubWitness", lambda *_: self.witness),
+            mock.patch.object(cla, "verify_workflows", lambda *_: []),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(out),
+        ):
+            try:
+                return cla.main(["verify", *args]), out.getvalue()
+            except SystemExit as e:
+                return int(e.code or 0), out.getvalue()
+
+    def test_a_clean_register_leaves_its_marker(self) -> None:
+        head = self.sign(1)
+        code, out = self.run_main("--ref", "signatures", "--marker-out", str(self.marker))
+        self.assertEqual((code, self.marker.read_text("utf-8")), (0, f"{head}\n"), out)
+        self.git("update-ref", "refs/remotes/origin/signatures", head)
+        self.assertEqual(self.run_main()[0], 0)
+
+    def test_a_problem_leaves_no_marker(self) -> None:
+        self.commit_as(OWNER, "tidy up", {"x.txt": "x"})
+        code, out = self.run_main("--ref", "signatures", "--marker-out", str(self.marker))
+        self.assertEqual(code, 1, out)
+        self.assertFalse(self.marker.exists())
+
+    def test_a_tag_named_like_the_branch_does_not_stand_in_for_it(self) -> None:
+        clean = self.sign(1)
+        self.git("tag", "origin/signatures", clean)
+        self.git("tag", "signatures", clean)
+        tampered = self.commit_as(OWNER, "tidy up", {"x.txt": "x"})
+        self.git("update-ref", "refs/remotes/origin/signatures", tampered)
+        for ref in ("origin/signatures", "signatures"):
+            with self.subTest(ref):
+                code, out = self.run_main("--ref", ref)
+                self.assertEqual(code, 1, out)
+                self.assertIn(tampered[:12], out)
+
+    def test_a_ref_is_one_of_the_two_and_never_an_option_of_git(self) -> None:
+        self.sign(1)
+        written = self.root / "written"
+        for ref in (f"--output={written}", "HEAD", "main", "signatures~1", ""):
+            with self.subTest(ref):
+                code, out = self.run_main(f"--ref={ref}")
+                self.assertEqual(code, 2, out)
+                self.assertIn("invalid choice", out)
+        with self.assertRaises(subprocess.CalledProcessError):
+            cla.verify_history(self.root, CONFIG, f"--output={written}", None, self.facts.get)
+        self.assertFalse(written.exists())
+
+    def test_the_marker_is_a_file_of_the_verify_folder_and_nothing_else(self) -> None:
+        self.sign(1)
+        outside = self.root.resolve() / "outside"
+        outside.mkdir()
+        (self.marker.parent / "link").symlink_to(outside / "x")
+        (self.marker.parent / "folder").symlink_to(outside)
+        for path in (
+            outside / "x",
+            self.marker.parent / ".." / "outside" / "x",
+            self.marker.parent / "link",
+            self.marker.parent / "folder" / "x",
+            self.marker.parent,
+            "relative",
+        ):
+            with self.subTest(path):
+                code, out = self.run_main("--ref", "signatures", "--marker-out", str(path))
+                self.assertEqual(code, 2, out)
+                self.assertIn("is not a file of .verify/", out)
+        self.assertEqual(list(outside.iterdir()), [])
 
 
 class VerifyWorkflows(unittest.TestCase):
