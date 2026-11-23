@@ -51,14 +51,20 @@ ACTIONS_BOT = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$")
-NOREPLY_RE = re.compile(r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I)
+NOREPLY_RE = re.compile(
+    r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I
+)
 TRAILER_RE = re.compile(r"^co-authored-by:[ \t]*(.*?)[ \t]*<([^<>\s]+)>[ \t]*$", re.I | re.M)
-RECORD_PATH_RE = re.compile(r"^(signatures/individual/[1-9]\d*\.json|coverage/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/[1-9]\d*\.json)$")
+RECORD_PATH_RE = re.compile(
+    r"^(signatures/individual/[1-9]\d*\.json|coverage/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/[1-9]\d*\.json)$"
+)
 # GitHub lists at most 250 commits of a pull request; with more, not every author can be known.
 MAX_COMMITS = 250
 TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-PR_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]{0,9})$")
+PR_URL_RE = re.compile(
+    r"^https://github\.com/([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]{0,9})$"
+)
 RECORD_WORKFLOW_PATH = ".github/workflows/record.yml"
 GITHUB_COMMITTER_EMAIL = "noreply@github.com"
 
@@ -74,7 +80,9 @@ def now() -> str:
 # The characters either JavaScript's or Python's \s counts as white space,
 # spelled out; worker/src/util.ts uses the same list (normalize-vectors.json
 # is the shared test).
-WHITESPACE = re.compile("[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+WHITESPACE = re.compile(
+    "[\t\n\v\f\r\x1c-\x1f \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+"
+)
 
 
 def normalize(s: str) -> str:
@@ -105,7 +113,11 @@ def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
 
 def record_valid(config: dict[str, Any], rec: dict[str, Any] | None) -> bool:
     """Whether a record counts now: a version still accepted, with that version's digest."""
-    return bool(rec) and rec.get("version") in config["accepted_versions"] and record_published(config, rec)  # type: ignore[union-attr]
+    return (
+        bool(rec)
+        and rec.get("version") in config["accepted_versions"]
+        and record_published(config, rec)
+    )  # type: ignore[union-attr]
 
 
 def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
@@ -115,7 +127,9 @@ def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
     accepted_versions (to have everyone sign again) must not turn the
     signatures made under it into tampering."""
     info = config["versions"].get(str(rec.get("version")))
-    return bool(info and isinstance(rec.get("version"), int) and info["set_sha256"] == rec.get("set_sha256"))
+    return bool(
+        info and isinstance(rec.get("version"), int) and info["set_sha256"] == rec.get("set_sha256")
+    )
 
 
 # --- GitHub -----------------------------------------------------------------
@@ -124,7 +138,9 @@ def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 
-def urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes]:
+def urllib_transport(
+    method: str, url: str, headers: dict[str, str], body: bytes | None
+) -> tuple[int, bytes]:
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310 (https only, built below)
@@ -164,7 +180,9 @@ class GitHub:
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         status, data = self.call("POST", "/graphql", {"query": query, "variables": variables})
         if status != 200 or data.get("errors"):
-            raise RuntimeError(f"GraphQL answered {status}: {[e.get('type') for e in (data or {}).get('errors', [])]}")
+            raise RuntimeError(
+                f"GraphQL answered {status}: {[e.get('type') for e in (data or {}).get('errors', [])]}"
+            )
         return data["data"]
 
     def file(self, repo: str, path: str, ref: str) -> str | None:
@@ -188,12 +206,16 @@ commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} node
 authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}"""
 
 
-def commit_file(gh: GitHub, registry: str, path: str, content: str, headline: str, attempts: int = 5) -> str:
+def commit_file(
+    gh: GitHub, registry: str, path: str, content: str, headline: str, attempts: int = 5
+) -> str:
     """Adds or changes one file on the signatures branch, as a commit GitHub signs."""
     owner, name = registry.split("/")
     last = ""
     for _ in range(attempts):
-        head = gh.graphql(HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"})["repository"]["ref"]["target"]["oid"]
+        head = gh.graphql(
+            HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"}
+        )["repository"]["ref"]["target"]["oid"]
         try:
             out = gh.graphql(
                 COMMIT_MUTATION,
@@ -202,7 +224,16 @@ def commit_file(gh: GitHub, registry: str, path: str, content: str, headline: st
                         "branch": {"repositoryNameWithOwner": registry, "branchName": BRANCH},
                         "expectedHeadOid": head,
                         "message": {"headline": headline},
-                        "fileChanges": {"additions": [{"path": path, "contents": base64.b64encode(content.encode("utf-8")).decode("ascii")}]},
+                        "fileChanges": {
+                            "additions": [
+                                {
+                                    "path": path,
+                                    "contents": base64.b64encode(content.encode("utf-8")).decode(
+                                        "ascii"
+                                    ),
+                                }
+                            ]
+                        },
                     }
                 },
             )
@@ -248,7 +279,13 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     author = node.get("author") or {}
     gid = author.get("databaseId")
     login = author.get("login", "")
-    if not isinstance(gid, int) or gid <= 0 or (rest.get("user") or {}).get("type") != "User" or not LOGIN_RE.match(login) or login.endswith("[bot]"):
+    if (
+        not isinstance(gid, int)
+        or gid <= 0
+        or (rest.get("user") or {}).get("type") != "User"
+        or not LOGIN_RE.match(login)
+        or login.endswith("[bot]")
+    ):
         raise Refused("the author is not a personal account")
     version = accepted_sentences(ctx.config).get(normalize(node["body"]))
     if version is None:
@@ -267,7 +304,9 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "set_sha256": ctx.config["versions"][str(version)]["set_sha256"],
         "accepted_at": node["createdAt"],
         # Posted through the app (the sign page) or typed by hand; told by the app's numeric id, never its slug.
-        "method": "web" if isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"] else "comment",
+        "method": "web"
+        if isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
+        else "comment",
         "evidence": {
             "pr_url": f"https://github.com/{repo}/pull/{pr}",
             "comment_url": f"https://github.com/{repo}/pull/{pr}#issuecomment-{comment_id}",
@@ -277,7 +316,13 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
     }
-    oid = commit_file(ctx.gh, ctx.registry, f"signatures/individual/{gid}.json", json.dumps(record, indent=2) + "\n", f"sign: {login} ({gid}) accepts version {version}")
+    oid = commit_file(
+        ctx.gh,
+        ctx.registry,
+        f"signatures/individual/{gid}.json",
+        json.dumps(record, indent=2) + "\n",
+        f"sign: {login} ({gid}) accepts version {version}",
+    )
     return f"recorded in {oid}"
 
 
@@ -286,7 +331,9 @@ def parse_noreply(email: str | None) -> tuple[int, str] | None:
     return (int(m.group(1)), m.group(2)) if m else None
 
 
-def pr_authors(ctx: Context, repo: str, pr: dict[str, Any]) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
+def pr_authors(
+    ctx: Context, repo: str, pr: dict[str, Any]
+) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
     """The Worker's rule, written again: opener, commit authors and co-authors (id → login, type, dates); and how many could not be identified."""
     owner, name = repo.split("/")
     people: dict[int, tuple[str, str, list[str]]] = {}
@@ -304,7 +351,9 @@ def pr_authors(ctx: Context, repo: str, pr: dict[str, Any]) -> tuple[dict[int, t
     cursor = None
     seen = 0
     while True:
-        page = ctx.gh.graphql(COMMITS_QUERY, {"owner": owner, "name": name, "number": pr["number"], "cursor": cursor})
+        page = ctx.gh.graphql(
+            COMMITS_QUERY, {"owner": owner, "name": name, "number": pr["number"], "cursor": cursor}
+        )
         pull = (page.get("repository") or {}).get("pullRequest") or {}
         commits = pull.get("commits")
         if not commits:
@@ -348,10 +397,18 @@ def pr_authors(ctx: Context, repo: str, pr: dict[str, Any]) -> tuple[dict[int, t
 def covering_entity(ctx: Context, gid: int, date: str) -> bool:
     for e in ctx.entities:
         info = ctx.config["versions"].get(str(e.get("version")))
-        if not info or e.get("version") not in ctx.config["accepted_versions"] or info["set_sha256"] != e.get("set_sha256"):
+        if (
+            not info
+            or e.get("version") not in ctx.config["accepted_versions"]
+            or info["set_sha256"] != e.get("set_sha256")
+        ):
             continue
         for c in e.get("covered", []):
-            if c["github_id"] == gid and c["from"] <= date and (not c.get("until") or date <= c["until"]):
+            if (
+                c["github_id"] == gid
+                and c["from"] <= date
+                and (not c.get("until") or date <= c["until"])
+            ):
                 return True
     return False
 
@@ -382,7 +439,9 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
         ids.append(gid)
         versions[str(gid)] = rec["version"]  # type: ignore[index]
     if missing:
-        raise Refused(f"merged without a signature from account id(s) {', '.join(map(str, missing))}")
+        raise Refused(
+            f"merged without a signature from account id(s) {', '.join(map(str, missing))}"
+        )
     owner, name = repo.split("/")
     path = f"coverage/{owner}/{name}/{number}.json"
     if ctx.gh.file(ctx.registry, path, BRANCH) is not None:
@@ -399,7 +458,13 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
     }
-    oid = commit_file(ctx.gh, ctx.registry, path, json.dumps(record, indent=2) + "\n", f"coverage: {repo}#{number}")
+    oid = commit_file(
+        ctx.gh,
+        ctx.registry,
+        path,
+        json.dumps(record, indent=2) + "\n",
+        f"coverage: {repo}#{number}",
+    )
     return f"recorded in {oid}"
 
 
@@ -407,7 +472,9 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
 
 
 def git(root: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
+    ).stdout
 
 
 @dataclass
@@ -437,7 +504,20 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
             return "the record does not match its path"
         if not record_published(config, rec):
             return "the version or digest is not a published one"
-        allowed = {"schema", "kind", "github_id", "login_at_signing", "agreement", "version", "set_sha256", "accepted_at", "method", "evidence", "recorded_at", "recorder_run_id"}
+        allowed = {
+            "schema",
+            "kind",
+            "github_id",
+            "login_at_signing",
+            "agreement",
+            "version",
+            "set_sha256",
+            "accepted_at",
+            "method",
+            "evidence",
+            "recorded_at",
+            "recorder_run_id",
+        }
         if set(rec) != allowed:
             return f"unexpected or missing fields {sorted(set(rec) ^ allowed)}"
         ev = rec["evidence"]
@@ -466,7 +546,11 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
             return "malformed record"
     else:
         parts = path.split("/")
-        if rec.get("kind") != "coverage" or rec.get("repo") != f"{parts[1]}/{parts[2]}" or str(rec.get("pr")) != parts[3].split(".")[0]:
+        if (
+            rec.get("kind") != "coverage"
+            or rec.get("repo") != f"{parts[1]}/{parts[2]}"
+            or str(rec.get("pr")) != parts[3].split(".")[0]
+        ):
             return "the coverage record does not match its path"
     return None
 
@@ -484,18 +568,29 @@ class Facts:
 
 def by_recorder(f: Facts) -> bool:
     """A commit createCommitOnBranch made with the recorder's GITHUB_TOKEN: github-actions[bot]'s, committed and signed by GitHub."""
-    return f.author_id == ACTIONS_BOT_ID and f.signature_valid and f.signed_by_github and f.committer_email == GITHUB_COMMITTER_EMAIL
+    return (
+        f.author_id == ACTIONS_BOT_ID
+        and f.signature_valid
+        and f.signed_by_github
+        and f.committer_email == GITHUB_COMMITTER_EMAIL
+    )
 
 
 def by_owner(f: Facts) -> bool:
     """A commit the owner made and signed himself (or through GitHub's own interface)."""
-    return f.author_id == OWNER_ID and f.signature_valid and (f.committer_id == OWNER_ID or f.signed_by_github)
+    return (
+        f.author_id == OWNER_ID
+        and f.signature_valid
+        and (f.committer_id == OWNER_ID or f.signed_by_github)
+    )
 
 
 class Witness:
     """What the cross-checks read from GitHub; tests give their own."""
 
-    def comment(self, repo: str, comment_id: int) -> dict[str, Any] | None:  # pragma: no cover - interface
+    def comment(
+        self, repo: str, comment_id: int
+    ) -> dict[str, Any] | None:  # pragma: no cover - interface
         raise NotImplementedError
 
     def run(self, run_id: int) -> dict[str, Any] | None:  # pragma: no cover - interface
@@ -506,7 +601,9 @@ class Pending(Exception):
     """A record's recorder run has not finished yet: the check stops before it and the next run resumes there."""
 
 
-def cross_check(config: dict[str, Any], registry: str, path: str, rec: dict[str, Any], witness: Witness) -> str | None:
+def cross_check(
+    config: dict[str, Any], registry: str, path: str, rec: dict[str, Any], witness: Witness
+) -> str | None:
     """The record's evidence, re-read from GitHub: the acceptance comment it cites and the recorder run that wrote it.
 
     This is what a GitHub-signed github-actions[bot] commit made anywhere
@@ -538,7 +635,12 @@ def cross_check(config: dict[str, Any], registry: str, path: str, rec: dict[str,
     run = witness.run(run_id)
     if run is None:
         return f"recorder run {run_id} is not a run of {registry}"
-    if (run.get("repository") or {}).get("full_name") != registry or run.get("path") != RECORD_WORKFLOW_PATH or run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
+    if (
+        (run.get("repository") or {}).get("full_name") != registry
+        or run.get("path") != RECORD_WORKFLOW_PATH
+        or run.get("event") != "workflow_dispatch"
+        or run.get("head_branch") != "main"
+    ):
         return f"run {run_id} is not {RECORD_WORKFLOW_PATH} dispatched on main of {registry}"
     if str(run.get("display_title", "")).strip() != title:
         return f"run {run_id} recorded something else"
@@ -559,7 +661,15 @@ class Verified:
     checked_through: str | None
 
 
-def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | None, info: CommitInfo, witness: Witness | None = None, registry: str = "kleidos-dev/cla") -> Verified:
+def verify_history(
+    root: Path,
+    config: dict[str, Any],
+    ref: str,
+    since: str | None,
+    info: CommitInfo,
+    witness: Witness | None = None,
+    registry: str = "kleidos-dev/cla",
+) -> Verified:
     """Every commit: linear, one record each, each the recorder's GitHub-signed commit (the owner's own redact:/entity: commits and the root aside).
 
     ``info(sha)`` answers, from GitHub, who authored and committed a commit
@@ -567,13 +677,19 @@ def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | No
     proves nothing. The records of the commits after ``since`` are also
     cross-checked against the comment and the run they cite (``witness``)."""
     findings: list[Finding] = []
-    log = git(root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", ref, "--").strip().splitlines()
+    log = (
+        git(root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", ref, "--")
+        .strip()
+        .splitlines()
+    )
     commits = [line.split("\x00") for line in log]
     start = 0
     if since:
         shas = [c[0] for c in commits]
         if since not in shas:
-            return Verified([Finding(since, "the previous head is no longer in the history (rewritten?)")], None)
+            return Verified(
+                [Finding(since, "the previous head is no longer in the history (rewritten?)")], None
+            )
         start = shas.index(since) + 1
     checked_through = since
     pending = False
@@ -587,17 +703,31 @@ def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | No
             findings.append(Finding(sha, "GitHub does not know this commit on the branch"))
             continue
         owners = by_owner(facts) and re.match(r"^(redact|entity):", subject)
-        changes = [line.split("\t") for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha).strip().splitlines()]
+        changes = [
+            line.split("\t")
+            for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha)
+            .strip()
+            .splitlines()
+        ]
         before = len(findings)
         if not owners:
             if not by_recorder(facts):
-                findings.append(Finding(sha, f"made by {author!r}, not by the recorder (author, committer or GitHub's signature)"))
+                findings.append(
+                    Finding(
+                        sha,
+                        f"made by {author!r}, not by the recorder (author, committer or GitHub's signature)",
+                    )
+                )
             if len(changes) != 1:
                 findings.append(Finding(sha, f"changes {len(changes)} files, not one"))
             for status, *paths in changes:
                 path = paths[-1]
                 if status not in ("A", "M") or not RECORD_PATH_RE.match(path):
-                    findings.append(Finding(sha, f"{status} {path}: only adding or changing one record is allowed"))
+                    findings.append(
+                        Finding(
+                            sha, f"{status} {path}: only adding or changing one record is allowed"
+                        )
+                    )
                     continue
                 text = git(root, "show", f"{sha}:{path}")
                 problem = check_record(config, path, text)
@@ -616,21 +746,34 @@ def verify_history(root: Path, config: dict[str, Any], ref: str, since: str | No
     return Verified(findings, checked_through if not findings else since)
 
 
-def verify_coverage(gh: GitHub, config: dict[str, Any], registry: str, merged_since: str, settle_minutes: int = 60) -> list[Finding]:
+def verify_coverage(
+    gh: GitHub, config: dict[str, Any], registry: str, merged_since: str, settle_minutes: int = 60
+) -> list[Finding]:
     """Every pull request merged in a served repository since a date has its coverage file.
 
     One merged within the last ``settle_minutes`` is not yet a problem: its
     recorder run may still be queued, and the Worker's cron re-dispatches a
     missing one."""
     findings: list[Finding] = []
-    settled = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=settle_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    settled = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=settle_minutes)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     for repo in config["served_repositories"]:
         owner, name = repo.split("/")
         pulls = gh.get(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
         for p in pulls:
-            if p.get("merged_at") and p["merged_at"][:10] >= merged_since and p["merged_at"] <= settled:
+            if (
+                p.get("merged_at")
+                and p["merged_at"][:10] >= merged_since
+                and p["merged_at"] <= settled
+            ):
                 if gh.file(registry, f"coverage/{owner}/{name}/{p['number']}.json", BRANCH) is None:
-                    findings.append(Finding(p.get("merge_commit_sha") or "0" * 12, f"{repo}#{p['number']} was merged with no coverage record"))
+                    findings.append(
+                        Finding(
+                            p.get("merge_commit_sha") or "0" * 12,
+                            f"{repo}#{p['number']} was merged with no coverage record",
+                        )
+                    )
     return findings
 
 
@@ -646,7 +789,10 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--since")
     v.add_argument("--merged-since")
     v.add_argument("--ref", default=f"origin/{BRANCH}")
-    v.add_argument("--marker-out", help="where to write the last commit whose records were cross-checked, for the next run's --since")
+    v.add_argument(
+        "--marker-out",
+        help="where to write the last commit whose records were cross-checked, for the next run's --since",
+    )
     args = ap.parse_args(argv)
 
     token = os.environ.get("GITHUB_TOKEN", "")
@@ -654,7 +800,9 @@ def main(argv: list[str] | None = None) -> int:
     gh = GitHub(token, os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     config = load_config()
     if args.cmd == "record":
-        ctx = Context(gh, registry, int(os.environ.get("GITHUB_RUN_ID", "1")), config, load_entities())
+        ctx = Context(
+            gh, registry, int(os.environ.get("GITHUB_RUN_ID", "1")), config, load_entities()
+        )
         try:
             if args.kind == "sign":
                 if not args.comment_id:
@@ -668,16 +816,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     facts = commit_facts(gh, registry, BRANCH)
-    verified = verify_history(ROOT, config, args.ref, args.since, facts.get, GitHubWitness(gh, registry), registry)
+    verified = verify_history(
+        ROOT, config, args.ref, args.since, facts.get, GitHubWitness(gh, registry), registry
+    )
     findings = verified.findings
     findings += verify_workflows(gh, registry)
     if args.merged_since:
-        findings += verify_coverage(gh, config, registry, max(args.merged_since, config.get("coverage_from", "")))
+        findings += verify_coverage(
+            gh, config, registry, max(args.merged_since, config.get("coverage_from", ""))
+        )
     if args.marker_out and verified.checked_through and not findings:
         Path(args.marker_out).write_text(verified.checked_through + "\n", "utf-8")
     for f in findings:
         print(f"problem: {f}")
-    print(f"verify: {len(findings)} problem(s)" + (f", records cross-checked through {verified.checked_through[:12]}" if verified.checked_through else ""))
+    print(
+        f"verify: {len(findings)} problem(s)"
+        + (
+            f", records cross-checked through {verified.checked_through[:12]}"
+            if verified.checked_through
+            else ""
+        )
+    )
     return 1 if findings else 0
 
 
@@ -692,7 +851,10 @@ def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
     out: dict[str, Facts] = {}
     cursor = None
     while True:
-        ref = gh.graphql(HISTORY_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{branch}", "cursor": cursor})["repository"]["ref"]
+        ref = gh.graphql(
+            HISTORY_QUERY,
+            {"owner": owner, "name": name, "ref": f"refs/heads/{branch}", "cursor": cursor},
+        )["repository"]["ref"]
         if not ref:
             raise RuntimeError(f"the branch {branch} does not exist")
         hist = ref["target"]["history"]
@@ -700,7 +862,13 @@ def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
             sig = n.get("signature") or {}
             author = (n.get("author") or {}).get("user") or {}
             committer = n.get("committer") or {}
-            out[n["oid"]] = Facts(author.get("databaseId"), (committer.get("user") or {}).get("databaseId"), (committer.get("email") or "").lower(), bool(sig.get("isValid")), bool(sig.get("wasSignedByGitHub")))
+            out[n["oid"]] = Facts(
+                author.get("databaseId"),
+                (committer.get("user") or {}).get("databaseId"),
+                (committer.get("email") or "").lower(),
+                bool(sig.get("isValid")),
+                bool(sig.get("wasSignedByGitHub")),
+            )
         if not hist["pageInfo"]["hasNextPage"]:
             return out
         cursor = hist["pageInfo"]["endCursor"]
