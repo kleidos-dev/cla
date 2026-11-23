@@ -71,6 +71,8 @@ class FakeGitHub:
         self.signin: dict[str, dict[str, Any]] = {}
         self.revoked: list[str] = []
         self.forged: set[str] = set()
+        #: Account id → when the owner's redact: commit removed its entry.
+        self.redacted: dict[str, str] = {}
         self.date = "Tue, 01 Dec 2026 10:22:58 GMT"
 
     def add_signin(
@@ -229,16 +231,33 @@ class FakeGitHub:
         if path.startswith(f"/repos/{REGISTRY}/commits?"):
             gid = path.split("signatures/individual/")[1].split(".json")[0]
             forged = gid in self.forged
-            return ok(
-                [
+            history = [
+                {
+                    "sha": "e" * 40,
+                    "author": {"id": 666 if forged else cla.ACTIONS_BOT_ID},
+                    "committer": {"login": "mallory" if forged else "web-flow"},
+                    "commit": {
+                        "message": f"sign: alice ({gid}) accepts version 1",
+                        "committer": {"date": "2026-11-30T09:00:00Z"},
+                        "verification": {"verified": True, "reason": "valid"},
+                    },
+                }
+            ]
+            if gid in self.redacted:
+                history.insert(
+                    0,
                     {
-                        "sha": "e" * 40,
-                        "author": {"id": 666 if forged else cla.ACTIONS_BOT_ID},
-                        "committer": {"login": "mallory" if forged else "web-flow"},
-                        "commit": {"verification": {"verified": True, "reason": "valid"}},
-                    }
-                ]
-            )
+                        "sha": "d" * 40,
+                        "author": {"id": cla.OWNER_ID},
+                        "committer": {"login": cla.OWNER_LOGIN},
+                        "commit": {
+                            "message": f"redact: remove account {gid} at its holder's request",
+                            "committer": {"date": self.redacted[gid]},
+                            "verification": {"verified": True, "reason": "valid"},
+                        },
+                    },
+                )
+            return ok(history)
         if path.startswith("/repos/") and path.count("/") == 3:
             return ok({"private": path.removeprefix("/repos/") in self.private})
         if "/issues/comments/" in path:
@@ -401,6 +420,36 @@ class RecordSign(unittest.TestCase):
         self.assertEqual(cla.record_sign(ctx(f), REPO, 7, 2), "already recorded")
         self.assertEqual(len(f.writes), 1)
 
+    def test_a_version_2_sentence_posted_through_the_app_is_refused(self) -> None:
+        # Version 2 is signed by signing in: the sign page never posts its sentence, so one posted
+        # through the bot's app is somebody acting in the signer's name. Typed by hand it counts.
+        v2 = CONFIG_V2["versions"]["2"]["sentence"]
+        f = FakeGitHub()
+        f.add_comment(1, v2)
+        with self.assertRaises(cla.Refused):
+            cla.record_sign(ctx(f, config=CONFIG_V2), REPO, 7, 1)
+        self.assertEqual(f.writes, [])
+        f.add_comment(2, v2, via=None)
+        self.assertTrue(
+            cla.record_sign(ctx(f, config=CONFIG_V2), REPO, 7, 2).startswith("recorded")
+        )
+        rec = json.loads(f.files["signatures:signatures/individual/123456.json"])
+        self.assertEqual((rec["version"], rec["method"]), (2, "comment"))
+
+    def test_a_comment_older_than_a_removal_does_not_bring_the_entry_back(self) -> None:
+        # The comment was written at 10:22:31Z; the owner removed the entry at its holder's
+        # request afterwards. The cron re-dispatches the comment: it must stay removed.
+        f = FakeGitHub()
+        f.add_comment(1, SENTENCE)
+        f.redacted["123456"] = "2026-12-02T08:00:00Z"
+        with self.assertRaises(cla.Refused):
+            cla.record_sign(ctx(f), REPO, 7, 1)
+        self.assertEqual(f.writes, [])
+        # A comment written after the removal is a new acceptance.
+        f.add_comment(2, SENTENCE)
+        f.comments[2]["node"]["createdAt"] = "2026-12-03T09:00:00Z"
+        self.assertTrue(cla.record_sign(ctx(f), REPO, 7, 2).startswith("recorded"))
+
     def test_the_head_moving_between_read_and_write_is_retried(self) -> None:
         f = FakeGitHub()
         f.add_comment(1, SENTENCE)
@@ -499,6 +548,16 @@ class RecordSignin(unittest.TestCase):
         f.add_signin(second)
         self.assertEqual(signin(f, token=second), "already recorded")
         self.assertEqual(f.revoked, [TOKEN, second])
+
+    def test_a_re_run_of_a_run_that_recorded_stays_green(self) -> None:
+        # A re-run carries the same token, revoked by the first run: the entry is already there,
+        # so the answer is the same, and the run the entry cites does not turn red.
+        f = FakeGitHub()
+        f.add_signin(TOKEN)
+        self.assertTrue(signin(f, stamper=FakeStamper()).startswith("recorded"))
+        self.assertNotIn(TOKEN, f.signin)
+        self.assertEqual(signin(f), "already recorded")
+        self.assertEqual(len([w for w in f.writes if w[1].endswith(".json")]), 1)
 
     def test_no_token_from_the_authority_still_records_and_drops_a_stale_one(self) -> None:
         f = FakeGitHub()
@@ -1061,6 +1120,13 @@ class Verify(unittest.TestCase):
             "another commit of main": {"run": {"head_sha": "d" * 40}},
             "another account": {"run": {"display_title": f"Record signin {REPO}#7 999"}},
             "another app": {"config": {**CONFIG_V2, "signin_client_id": "Iv23liSOMEOTHERAPP01"}},
+            "another app, ours retired": {
+                "config": {
+                    **CONFIG_V2,
+                    "signin_client_id": "Iv23liSOMEOTHERAPP01",
+                    "retired_signin_client_ids": ["Iv23liSOMEOTHERAPP02"],
+                }
+            },
             "the run failed": {"run": {"conclusion": "failure"}},
         }
         for name, change in cases.items():
@@ -1077,6 +1143,18 @@ class Verify(unittest.TestCase):
                 self.assertTrue(
                     self.run_verify(config=change.get("config", CONFIG_V2)).findings, name
                 )
+
+    def test_a_signin_record_through_a_retired_app_still_verifies(self) -> None:
+        # The sign-in app was replaced (say, by the fallback OAuth App): the entries signed through
+        # the old one stay checkable once its client id is listed as retired.
+        config = {
+            **CONFIG_V2,
+            "signin_client_id": "Iv23liSOMEOTHERAPP01",
+            "retired_signin_client_ids": [SIGNIN_CLIENT_ID],
+        }
+        rec = self.signin_record(1)
+        self.commit_as(RECORDER, "sign: 1", {"signatures/individual/1.json": json.dumps(rec)})
+        self.assertEqual(self.run_verify(config=config).findings, [])
 
     def test_a_malformed_signin_record(self) -> None:
         cases = {
@@ -1168,7 +1246,7 @@ class Verify(unittest.TestCase):
         self.sign(2)
         self.assertTrue(any("rewritten" in p for p in self.verify(since=old)))
 
-    def test_the_owners_redact_and_entity_commits(self) -> None:
+    def test_the_owners_redact_commit_deletes_only(self) -> None:
         self.sign(1)
         self.commit_as(
             OWNER,
@@ -1179,6 +1257,53 @@ class Verify(unittest.TestCase):
         self.assertEqual(self.verify(), [])
         self.commit_as(OWNER, "tidy up", {"x.txt": "x"})
         self.assertTrue(self.verify())
+
+    def test_a_redact_commit_takes_the_token_with_the_record(self) -> None:
+        with mock.patch.object(cla, "verify_tsr", fake_verify_tsr):
+            self.sign(2)
+            text = (self.root / "signatures/individual/2.json").read_text("utf-8")
+            self.commit_as(
+                RECORDER, "stamp: 2", {"signatures/individual/2.tsr": self.token_for(text)}
+            )
+            self.assertEqual(self.verify(), [])
+            self.commit_as(
+                OWNER,
+                "redact: remove account 2 at its holder's request",
+                {},
+                remove=["signatures/individual/2.json", "signatures/individual/2.tsr"],
+            )
+            self.assertEqual(self.verify(), [])
+            # The record alone, its token left behind: a token with no record.
+            self.tearDown()
+            self.setUp()
+            self.sign(2)
+            text = (self.root / "signatures/individual/2.json").read_text("utf-8")
+            self.commit_as(
+                RECORDER, "stamp: 2", {"signatures/individual/2.tsr": self.token_for(text)}
+            )
+            self.commit_as(
+                OWNER,
+                "redact: remove account 2 at its holder's request",
+                {},
+                remove=["signatures/individual/2.json"],
+            )
+            self.assertTrue(any("a token with no record" in p for p in self.verify()))
+
+    def test_an_owners_commit_that_adds_or_changes_an_entry(self) -> None:
+        # The owner's own commits pass no recorder check, so they may only delete: one that adds
+        # or rewrites an entry, under any subject, is a problem.
+        for name, subject, files in (
+            ("an added entry", "redact: tidy", {"signatures/individual/9.json": "{}"}),
+            ("a changed entry", "redact: tidy", {"signatures/individual/1.json": "{}"}),
+            ("an entity: subject", "entity: Acme", {"signatures/individual/9.json": "{}"}),
+            ("another path", "redact: tidy", {"x.txt": "x"}),
+        ):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.sign(1)
+                self.commit_as(OWNER, subject, files)
+                self.assertTrue(self.verify(), name)
 
     def test_a_redact_commit_by_somebody_else(self) -> None:
         self.sign(1)

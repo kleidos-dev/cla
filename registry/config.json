@@ -6,6 +6,7 @@
   "coverage_from": "2026-11-23",
   "app_id": 5879825,
   "signin_client_id": null,
+  "retired_signin_client_ids": [],
   "timestamping": {
     "url": "http://timestamp.sectigo.com/qualified",
     "qualified": true,

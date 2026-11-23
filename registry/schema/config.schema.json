@@ -12,6 +12,7 @@
     "coverage_from": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Pull requests merged before this date predate the register and need no coverage record" },
     "app_id": { "type": ["integer", "null"], "minimum": 1, "description": "The numeric id of the GitHub App kleidos-cla, once it exists: an acceptance posted through it is recorded with method web, any other with method comment" },
     "signin_client_id": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9.]{16,40}$", "description": "The client id of the identity-only sign-in app (a GitHub App with no permission at all), once it exists. A version whose flow is signin is signed through it, and the recorder accepts only a token of this app" },
+    "retired_signin_client_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9.]{16,40}$" }, "description": "The client ids of sign-in apps that signin_client_id replaced. Nothing is signed through them any more, but the verifier still accepts the entries that were, so replacing the app does not turn them into findings" },
     "timestamping": {
       "type": "object",
       "additionalProperties": false,

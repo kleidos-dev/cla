@@ -17,8 +17,8 @@ signature written while the time-stamping authority did not answer.
 
 ``verify`` runs in ``verify.yml`` after every recorder run and weekly: the
 history is linear, every commit adds or changes exactly one record and is
-the recorder's GitHub-signed commit (or the owner's ``redact:``/``entity:``
-commit), every record has the schema's shape and a published version,
+the recorder's GitHub-signed commit (or the owner's ``redact:`` commit,
+which only deletes records), every record has the schema's shape and a published version,
 every time-stamp token verifies over its record against the pinned roots,
 the records added since the last run cite a genuine unedited acceptance
 comment (or, for a sign-in, the successful recorder run on that commit of
@@ -606,6 +606,27 @@ def write_signature(
     return f"recorded in {oid}" + ("" if token else " (no time-stamp token yet)")
 
 
+def redacted_after(ctx: Context, gid: int, accepted_at: str) -> None:
+    """Refuses a comment older than the owner's removal of that account's entry.
+
+    The removal was asked for after that comment was written, so the comment
+    cannot bring the entry back: only a new acceptance can. Without this the
+    Worker's cron, which re-dispatches the acceptance comments of open pull
+    requests, would write the entry again (registry/README.md, "Removal")."""
+    accepted = parse_time(accepted_at)
+    path = f"signatures/individual/{gid}.json"
+    history = ctx.gh.get(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=100")
+    for c in history if isinstance(history, list) else []:
+        commit = c.get("commit") or {}
+        if (
+            (c.get("author") or {}).get("id") == OWNER_ID
+            and str(commit.get("message", "")).startswith("redact:")
+            and (removed := parse_time((commit.get("committer") or {}).get("date")))
+            and (accepted is None or accepted <= removed)
+        ):
+            raise Refused("this account's entry was removed at its request after that comment")
+
+
 def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     """Records one genuine, unedited acceptance by the account that wrote it."""
     served(ctx, repo)
@@ -636,6 +657,16 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     if previous and record_valid(ctx.config, previous) and previous["version"] >= version:
         return "already recorded"
     via = rest.get("performed_via_github_app") or {}
+    web = isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
+    # The sign page never posts the sentence of a version signed by signing in: one posted
+    # through the bot's app is somebody acting in the signer's name, which that version says
+    # does not happen. Typed by hand it is the version's own fallback.
+    if web and ctx.config["versions"][str(version)].get("flow") == "signin":
+        raise Refused(
+            f"version {version} is not posted through the app, it is signed by signing in"
+        )
+    if previous is None:
+        redacted_after(ctx, gid, node["createdAt"])
     record = {
         "schema": 1,
         "kind": "individual",
@@ -647,9 +678,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "accepted_at": node["createdAt"],
         # Posted through the app (the sign page) or typed by hand; told by the app's numeric id,
         # never its slug.
-        "method": "web"
-        if isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
-        else "comment",
+        "method": "web" if web else "comment",
         "evidence": {
             "pr_url": f"https://github.com/{repo}/pull/{pr}",
             "comment_url": f"https://github.com/{repo}/pull/{pr}#issuecomment-{comment_id}",
@@ -709,10 +738,13 @@ def record_signin(
 
     "Check a token" (POST /applications/{client_id}/token, Basic with the
     app's own secret) is answered by GitHub, not by the Worker: a Worker
-    that lies can only record the account that is signing in at that
-    moment. The acceptance time is GitHub's Date of that answer, the
-    authorization time its created_at. The grant is deleted whatever
-    happens, so the token dies within seconds of the recording."""
+    that lies can only record an account that authorized the sign-in app
+    and whose authorization was not deleted since. The acceptance time is
+    GitHub's Date of that answer, the authorization time its created_at.
+    The grant is deleted whatever happens, so the token dies within seconds
+    of the recording. An account already recorded for that version is
+    answered before the token is checked: a re-run of a run that recorded
+    it carries the same token, revoked by then, and must stay green."""
     try:
         if gid <= 0:
             raise Refused("no account id")
@@ -739,6 +771,9 @@ def record_signin(
         pull = ctx.gh.get(f"/repos/{repo}/pulls/{pr}")
         if pull.get("number") != pr:
             raise Refused("no such pull request")
+        previous = existing_record(ctx, gid)
+        if previous and record_valid(ctx.config, previous) and previous["version"] >= version:
+            return "already recorded"
         status, body, headers = ctx.gh.exchange(
             "POST",
             f"/applications/{app.client_id}/token",
@@ -769,9 +804,6 @@ def record_signin(
             raise Refused("the token belongs to another account than the one reported")
         if not (accepted - SIGNIN_MAX_AGE <= authorized <= accepted + dt.timedelta(minutes=1)):
             raise Refused("the sign-in is not recent")
-        previous = existing_record(ctx, gid)
-        if previous and record_valid(ctx.config, previous) and previous["version"] >= version:
-            return "already recorded"
         record = {
             "schema": 2,
             "kind": "individual",
@@ -1059,6 +1091,10 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
             rec["schema"] == 1
             and rec["agreement"] == config["agreement"]
             and rec["method"] in ("web", "comment")
+            and (
+                rec["method"] == "comment"
+                or config["versions"][str(rec["version"])].get("flow") != "signin"
+            )
             and isinstance(rec["login_at_signing"], str)
             and LOGIN_RE.match(rec["login_at_signing"]) is not None
             and not rec["login_at_signing"].endswith("[bot]")
@@ -1239,8 +1275,8 @@ def cross_check(
         # evidence.
         title = f"Record signin {m.group(1)}#{m.group(2)} {rec['github_id']}"
         head_sha = rec["recorder_commit"]
-        if rec["evidence"]["signin_client_id"] != config.get("signin_client_id"):
-            return "signed in through an app that is not the one registry/config.json names"
+        if rec["evidence"]["signin_client_id"] not in signin_client_ids(config):
+            return "signed in through an app registry/config.json does not name"
     elif path.startswith("signatures/"):
         m = PR_URL_RE.match(rec["evidence"]["pr_url"])
         if m is None:
@@ -1282,6 +1318,15 @@ def cross_check(
     if run.get("conclusion") != "success":
         return f"run {run_id} did not succeed"
     return None
+
+
+def signin_client_ids(config: dict[str, Any]) -> set[str]:
+    """The sign-in app of today and the ones it replaced: an entry signed through a replaced app
+    stays checkable."""
+    ids = {i for i in config.get("retired_signin_client_ids", []) if isinstance(i, str)}
+    if isinstance(config.get("signin_client_id"), str):
+        ids.add(config["signin_client_id"])
+    return ids
 
 
 CommitInfo = Callable[[str], "Facts | None"]
@@ -1371,7 +1416,7 @@ def verify_history(
     registry: str = "kleidos-dev/cla",
 ) -> Verified:
     """Every commit: linear, one record each, each the recorder's GitHub-signed commit (the owner's
-    own redact:/entity: commits and the root aside).
+    own redact: commits, which only delete records, and the root aside).
 
     ``info(sha)`` answers, from GitHub, who authored and committed a commit
     and whether GitHub signed it: a name or an email in the git metadata
@@ -1403,7 +1448,7 @@ def verify_history(
         if facts is None:
             findings.append(Finding(sha, "GitHub does not know this commit on the branch"))
             continue
-        owners = by_owner(facts) and re.match(r"^(redact|entity):", subject)
+        owners = by_owner(facts) and re.match(r"^redact:", subject)
         changes = [
             line.split("\t")
             for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha)
@@ -1411,7 +1456,14 @@ def verify_history(
             .splitlines()
         ]
         before = len(findings)
-        if not owners:
+        if owners:
+            # A removal at its holder's request deletes; it never adds or changes an entry.
+            for status, *paths in changes:
+                if status != "D" or not RECORD_PATH_RE.match(paths[-1]):
+                    findings.append(
+                        Finding(sha, f"{status} {paths[-1]}: a redact: commit only deletes records")
+                    )
+        else:
             if not by_recorder(facts):
                 findings.append(
                     Finding(

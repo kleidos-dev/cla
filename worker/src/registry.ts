@@ -26,6 +26,8 @@ export interface Config {
   app_id?: number | null;
   /** The client id of the identity-only sign-in app, once it exists. */
   signin_client_id?: string | null;
+  /** Sign-in apps it replaced: the verifier still accepts the entries signed through them. */
+  retired_signin_client_ids?: string[];
 }
 
 export interface Entity {
