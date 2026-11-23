@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buttonPath, buttonState, buttonSvg, parseButtonPath } from "../src/button";
-import { CSP } from "../src/html";
+import { CSP, withEncoding } from "../src/html";
 import { fromAcceptLanguage } from "../src/i18n";
 import { BOT_ID, commit } from "./fakegh";
 import type { World } from "./helpers";
@@ -44,6 +44,27 @@ describe("the edge", () => {
     await b.signIn(path);
     const r = await b.get(path);
     expect(r.headers.get("cache-control")).toMatch(/no-transform/);
+  });
+});
+
+describe("the encoding", () => {
+  const page = () => new Response("<!doctype html><p>x</p>", { headers: { "content-type": "text/html; charset=utf-8", vary: "Accept-Language" } });
+  const req = (ae?: string) => new Request("https://cla.kleidos.dev/agreement", { headers: ae === undefined ? {} : { "accept-encoding": ae } });
+  it("is named by the Worker, since the edge may not compress: brotli first, then gzip, never one refused", () => {
+    expect(withEncoding(req("gzip, deflate, br, zstd"), page()).headers.get("content-encoding")).toBe("br");
+    expect(withEncoding(req("gzip"), page()).headers.get("content-encoding")).toBe("gzip");
+    expect(withEncoding(req("br;q=0, gzip;q=0.8"), page()).headers.get("content-encoding")).toBe("gzip");
+    expect(withEncoding(req("identity"), page()).headers.has("content-encoding")).toBe(false);
+    expect(withEncoding(req(), page()).headers.has("content-encoding")).toBe(false);
+    expect(withEncoding(req(), page()).headers.get("vary")).toBe("Accept-Language, Accept-Encoding");
+    expect(withEncoding(req("br"), page()).headers.get("vary")).toBe("Accept-Language, Accept-Encoding");
+  });
+  it("leaves what is already compressed, and empty bodies, alone", () => {
+    const font = new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "font/woff2" } });
+    expect(withEncoding(req("br"), font).headers.has("content-encoding")).toBe(false);
+    expect(withEncoding(req("br"), new Response(null, { status: 302, headers: { location: "/" } })).headers.has("content-encoding")).toBe(false);
+    const svg = new Response("<svg/>", { headers: { "content-type": "image/svg+xml; charset=utf-8" } });
+    expect(withEncoding(req("gzip"), svg).headers.get("content-encoding")).toBe("gzip");
   });
 });
 

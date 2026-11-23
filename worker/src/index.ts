@@ -6,7 +6,7 @@ import type { ConfiguredEnv, Env } from "./env";
 import { isConfigured } from "./env";
 import { GitHubError, NotAllowedError } from "./github";
 import { buttonSvg, parseButtonPath } from "./button";
-import { ASSETS, STYLESHEET, messagePage, redirect, securityHeaders, stylesheetPath, text } from "./html";
+import { ASSETS, STYLESHEET, messagePage, redirect, securityHeaders, stylesheetPath, text, withEncoding } from "./html";
 import type { Lang } from "./i18n";
 import { pickLang } from "./i18n";
 import { keysFor } from "./keys";
@@ -156,7 +156,7 @@ export async function handleQueue(batch: MessageBatch<QueueMessage>, env: Env, b
 export default {
   async fetch(req, env): Promise<Response> {
     try {
-      return await handleFetch(req, env);
+      return withEncoding(req, await handleFetch(req, env));
     } catch (e) {
       log("unhandled", { reason: e instanceof Error ? e.name : "unknown" });
       return text("internal error\n", 500);

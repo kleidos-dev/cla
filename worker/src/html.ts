@@ -62,6 +62,29 @@ export function securityHeaders(h: Headers, cache: Cache): Headers {
   return h;
 }
 
+/**
+ * The edge may not compress what no-transform protects, so the Worker
+ * says how: it names the encoding in content-encoding and the runtime
+ * encodes the body on the way out (Response encodeBody "automatic").
+ * Text only; the fonts are already compressed. Brotli first, then gzip,
+ * as the request's Accept-Encoding allows (q=0 refuses).
+ */
+export function withEncoding(req: Request, res: Response): Response {
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.body || res.headers.has("content-encoding") || !/^(text\/|image\/svg\+xml|application\/json)/.test(type)) return res;
+  const accepted = new Set<string>();
+  for (const part of (req.headers.get("accept-encoding") ?? "").toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map((s) => s.trim());
+    const q = params.find((x) => x.startsWith("q="));
+    if (name && !(q && Number(q.slice(2)) === 0)) accepted.add(name);
+  }
+  const encoding = accepted.has("br") ? "br" : accepted.has("gzip") ? "gzip" : null;
+  const h = new Headers(res.headers);
+  h.set("vary", h.has("vary") ? `${h.get("vary")}, Accept-Encoding` : "Accept-Encoding");
+  if (encoding) h.set("content-encoding", encoding);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export interface PageOptions {
   title: string;
   lang: Lang;
