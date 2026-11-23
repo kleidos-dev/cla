@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // The cases of the 2026-11-22 reviews: each one failed, or could not be
 // written, before its fix.

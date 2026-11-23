@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import { b64urlDecode, b64urlEncode, fromUtf8, utf8 } from "./util";
 

@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import type { Account, CommitNode } from "./authors";
 import { commitAuthors } from "./authors";

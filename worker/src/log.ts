@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 /**
  * The Worker's only logger. A line carries the fields of an allowlist, each

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+
 node_modules/
 .wrangler/
 .dev.vars*

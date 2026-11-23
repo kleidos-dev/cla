@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import type { Lang } from "./i18n";
 import { isLang } from "./i18n";

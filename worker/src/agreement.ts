@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import addendum from "../../agreements/v1/addendum.md";
 import addendumEs from "../../agreements/v1/addendum.es.md";

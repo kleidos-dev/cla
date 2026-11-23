@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // A stand-in for wrangler in the test of create-github-app.ts: it appends
 // its arguments, standard input and working directory to FAKE_WRANGLER_LOG

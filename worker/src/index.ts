@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import { AGREEMENT_VERSION, FILES, checkIntegrity } from "./agreement";
 import type { Bot } from "./bot";

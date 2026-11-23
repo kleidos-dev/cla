@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // End-to-end test of scripts/create-github-app.ts against a mocked GitHub
 // (both github.com and api.github.com) and a fake wrangler. Run with

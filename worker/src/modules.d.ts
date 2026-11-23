@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // Files bundled by the "Text" and "Data" rules of wrangler.jsonc.
 declare module "*.md" {

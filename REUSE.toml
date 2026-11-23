@@ -1,17 +1,46 @@
 version = 1
 SPDX-PackageName = "cla"
-SPDX-PackageSupplier = "José M. Requena Plens <jmrplens@kleidos.dev>"
+SPDX-PackageSupplier = "José M. Requena Plens"
 SPDX-PackageDownloadLocation = "https://github.com/kleidos-dev/cla"
 
 # Everything this project wrote is under the MIT License: the Worker, the
 # recorder and verifier, the owner's setup script, their tests and the CI;
 # the Kleidos Addendum and its Spanish translation, the Spanish summary,
-# the privacy notices, the configuration, the schemas and the prose. The
-# row below names what is not this project's.
+# the privacy notices, the configuration, the schemas and the prose. Every
+# file that can carry a comment states both lines itself (the Kleidos
+# quality kit's rule, kleidos-dev/.github docs/quality.md, "Licensing
+# headers"); the rows below name what cannot, and what is not this
+# project's.
 [[annotations]]
 path = ["**"]
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 José M. Requena Plens <jmrplens@kleidos.dev>"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
+SPDX-License-Identifier = "MIT"
+
+# The formats that take no comment: JSON (the register's configuration and
+# schemas, the packages, the tsconfigs, the quality kit's record),
+# .python-version and the agreement's SHA256SUMS. This row is their
+# statement.
+[[annotations]]
+path = ["**/*.json", ".python-version", "agreements/v1/SHA256SUMS"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
+SPDX-License-Identifier = "MIT"
+
+# The texts the Worker serves byte for byte, which therefore cannot carry a
+# header: the Addendum (hashed into SHA256SUMS and the acceptance
+# sentence), its Spanish translation, the Spanish summary, and the privacy
+# notices, all rendered on the signing site. This project's own, MIT.
+[[annotations]]
+path = [
+  "agreements/v1/addendum.md",
+  "agreements/v1/addendum.es.md",
+  "agreements/v1/summary.es.md",
+  "PRIVACY.md",
+  "PRIVACY.es.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "MIT"
 
 # The two Contributor Agreements 1.2 texts, generated verbatim by the
@@ -34,7 +63,7 @@ path = ["agreements/v1/individual.es.md"]
 precedence = "override"
 SPDX-FileCopyrightText = [
   "Contributor Agreements, https://contributoragreements.org/ (original text)",
-  "2026 José M. Requena Plens <jmrplens@kleidos.dev> (Spanish translation)",
+  "2026 José M. Requena Plens (Spanish translation)",
 ]
 SPDX-License-Identifier = "CC-BY-SA-4.0"
 
@@ -43,7 +72,7 @@ SPDX-License-Identifier = "CC-BY-SA-4.0"
 [[annotations]]
 path = ["worker/src/assets/mark.svg", "worker/src/assets/button/*.svg"]
 precedence = "override"
-SPDX-FileCopyrightText = "2026 José M. Requena Plens <mail@kleidos.dev>"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
 # Kleidos Mono's outlines of the digits and the slash, read from the font

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 //
 // Creates the GitHub App kleidos-cla from its manifest and stores its six

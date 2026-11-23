@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 """Tests of registry/cla.py: the recorder against a fake GitHub, the verifier against real git
 histories.

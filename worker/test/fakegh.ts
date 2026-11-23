@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 /**
  * An in-memory GitHub for the tests: the REST and GraphQL endpoints the

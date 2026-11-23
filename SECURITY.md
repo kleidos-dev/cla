@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: MIT
+-->
+
 # Security policy
 
 This repository holds the Kleidos Contributor Agreement, its public register and the bot behind [cla.kleidos.dev](https://cla.kleidos.dev). A flaw here could let someone forge or erase a signature, turn the `📝 CLA` check green without one, start CI on an outside pull request without a signature, or reach a signer's GitHub session.

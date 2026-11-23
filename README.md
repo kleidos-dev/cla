@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: MIT
+-->
+
 # Kleidos Contributor Agreement
 
 The Kleidos Contributor Agreement, the public register of who has accepted it, and the bot that collects acceptances at [cla.kleidos.dev](https://cla.kleidos.dev).

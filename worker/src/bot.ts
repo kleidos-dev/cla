@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 import type { Assessment, PullRequest } from "./assess";
 import { CHECK_NAME, HeadMovedError, allClear, assess } from "./assess";

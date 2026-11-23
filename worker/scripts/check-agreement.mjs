@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 // The build gate of the agreement texts: every file SHA256SUMS lists hashes
 // to its line, and the set digest (the SHA-256 of SHA256SUMS) and the
