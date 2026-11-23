@@ -37,8 +37,7 @@
     }
   },
   "served_repositories": {
-    "kleidos-dev/cla": { "auto_approve": false },
-    "kleidos-dev/cla-sandbox": { "auto_approve": true }
+    "kleidos-dev/cla": { "auto_approve": false }
   },
   "exempt": [
     { "id": 28966312, "login": "jmrplens", "why": "the project owner" },
