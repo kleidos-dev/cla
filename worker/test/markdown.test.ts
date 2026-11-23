@@ -33,7 +33,17 @@ describe("the test's HTML reader", () => {
   });
 
   it("refuses any other markup", () => {
-    const bad = ["<script>", "<p", "a < b", "a > b", "a & b", "&lt", "&nbsp;", 'say "x"', "<p onclick=x>", '<p id="x">', '<a href="/x" onclick="y">z</a>', '<a href="/x?a=1&b=2">z</a>', '<h2 href="/x">y</h2>', "<p>", "</p>", "<p><em></p></em>", "<!-- x -->", "<P>x</P>", '<a href="/x"">y</a>'];
+    // Each is well formed but for one thing, so nothing else can refuse it.
+    const bad = [
+      // A tag: one of the renderer's, whole, in lower case, closed by its own.
+      "<script>x</script>", "<b>x</b>", "<h7>x</h7>", "<img>", "<P>x</P>", "<p", "<p >x</p>", "<br/>", "<!-- x -->", "<p>", "</p>", "<p><em></p></em>",
+      // An attribute: an id on h2 to h5 or an href on a link, once, and none on a closing tag.
+      "<p onclick=x>y</p>", '<p id="x">y</p>', '<h1 id="x">y</h1>', '<h6 id="x">y</h6>', '<h2 href="/x">y</h2>', '<a href="/x" onclick="y">z</a>', '<h2 id="x" id="y">z</h2>', '<h2 id="x">y</h2 id="x">',
+      // An attribute's value: every character escaped that has to be.
+      '<a href="/x?a=1&b=2">z</a>', '<a href="/x?a&ampb">z</a>', '<a href="/x<y">z</a>', '<a href="/x>y">z</a>', '<a href="/x\'y">z</a>', '<a href="/x"">y</a>',
+      // Text: the same.
+      "a < b", "a > b", "a & b", "&lt", "&nbsp;", 'say "x"', "it's",
+    ];
     for (const html of bad) expect(() => readHtml(html), html).toThrow();
   });
 });
