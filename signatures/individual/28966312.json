@@ -1,0 +1,22 @@
+{
+  "schema": 2,
+  "kind": "individual",
+  "github_id": 28966312,
+  "login_at_signing": "jmrplens",
+  "agreement": "kleidos-ca",
+  "version": 2,
+  "set_sha256": "a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408",
+  "sentence_sha256": "c55145107f4721fa667c209c5848652fd05b6501173d72a8cfe6855cf1382411",
+  "accepted_at": "2026-11-23T13:04:42Z",
+  "method": "signin",
+  "evidence": {
+    "authorized_at": "2026-11-23T13:04:06Z",
+    "signin_client_id": "Iv23lim9q5F8XhVsvuIj",
+    "context_pr_url": "https://github.com/kleidos-dev/cla-sandbox/pull/2",
+    "site_commit": "db561544328c282ff958f3d8204ef1b1cf7d5ab5",
+    "lang": "es"
+  },
+  "recorded_at": "2026-11-23T13:04:43Z",
+  "recorder_run_id": 45180307732,
+  "recorder_commit": "2cea1bcaca85ff3c8fa0a8392ad427f81cd9b9ee"
+}
