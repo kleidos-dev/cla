@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: MIT
-"""Tests of registry/cla.py: the recorder against a fake GitHub, the verifier against real git histories."""
+"""Tests of registry/cla.py: the recorder against a fake GitHub, the verifier against real git
+histories.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import cla  # noqa: E402
+import cla
 
 CONFIG = {**cla.load_config(), "app_id": 4242}
 SENTENCE = CONFIG["versions"]["1"]["sentence"]
@@ -67,8 +69,11 @@ class FakeGitHub:
         self, method: str, url: str, headers: dict[str, str], body: bytes | None
     ) -> tuple[int, bytes]:
         path = url.removeprefix("https://api.github.com")
-        data = json.loads(body) if body else None
-        ok = lambda d: (200, json.dumps(d).encode())  # noqa: E731
+        data: dict[str, Any] = json.loads(body) if body else {}
+
+        def ok(d: object) -> tuple[int, bytes]:
+            return 200, json.dumps(d).encode()
+
         if path == "/graphql":
             q, v = data["query"], data["variables"]
             if "createCommitOnBranch" in q:
@@ -137,7 +142,7 @@ def ctx(fake: FakeGitHub, entities: list[dict[str, Any]] | None = None) -> cla.C
 def commit(
     gid: int, login: str, *, coauthor: str | None = None, listed: bool = True, merge: bool = False
 ) -> dict[str, Any]:
-    nodes = [
+    nodes: list[dict[str, Any]] = [
         {
             "email": f"{gid}+{login}@users.noreply.github.com",
             "user": {"databaseId": gid, "login": login},
@@ -205,14 +210,14 @@ class RecordSign(unittest.TestCase):
 
     def test_refusals_write_nothing(self) -> None:
         cases = {
-            "edited": dict(body=SENTENCE, edited=True),
-            "other pull request": dict(body=SENTENCE, pr=8),
-            "other repository": dict(body=SENTENCE, repo="kleidos-dev/other"),
-            "a bot": dict(body=SENTENCE, kind="Bot", login="x[bot]"),
-            "extra text": dict(body=SENTENCE + " Thanks!"),
-            "other version": dict(body=SENTENCE.replace("version 1", "version 2")),
-            "other digest": dict(body=SENTENCE.replace("89c1d46b9b10", "89c1d46b9b11")),
-            "look-alike unicode": dict(body=SENTENCE.replace("a", "а", 1)),
+            "edited": {"body": SENTENCE, "edited": True},
+            "other pull request": {"body": SENTENCE, "pr": 8},
+            "other repository": {"body": SENTENCE, "repo": "kleidos-dev/other"},
+            "a bot": {"body": SENTENCE, "kind": "Bot", "login": "x[bot]"},
+            "extra text": {"body": SENTENCE + " Thanks!"},
+            "other version": {"body": SENTENCE.replace("version 1", "version 2")},
+            "other digest": {"body": SENTENCE.replace("89c1d46b9b10", "89c1d46b9b11")},
+            "look-alike unicode": {"body": SENTENCE.replace("a", "а", 1)},
         }
         for name, kw in cases.items():
             with self.subTest(name):
@@ -542,7 +547,8 @@ class Verify(unittest.TestCase):
         self.assertTrue(any("changes 2 files" in p for p in self.verify()))
 
     def test_a_commit_not_made_and_signed_by_the_recorder(self) -> None:
-        # Not github-actions[bot]; github-actions[bot] by email only, signed with the pusher's own key; not GitHub's committer.
+        # Not github-actions[bot]; github-actions[bot] by email only, signed with the pusher's own
+        # key; not GitHub's committer.
         for facts in (
             cla.Facts(666, 666, "m@example.org", True, False),
             cla.Facts(cla.ACTIONS_BOT_ID, 666, "m@example.org", True, False),
@@ -556,21 +562,22 @@ class Verify(unittest.TestCase):
                 self.assertTrue(any("not by the recorder" in p for p in self.verify()))
 
     def test_a_github_signed_commit_from_elsewhere_fails_the_cross_check(self) -> None:
-        # A record minted by createCommitOnBranch in a fork passes every commit fact; its evidence does not.
-        cases = {
-            "the run is not this repository's": dict(
-                run={"repository": {"full_name": "mallory/cla"}}
-            ),
-            "the run recorded something else": dict(
-                run={"display_title": "Record sign kleidos-dev/cla-sandbox#7 1"}
-            ),
-            "the run is unknown": dict(run=None),
-            "the run failed": dict(run={"conclusion": "failure"}),
-            "the comment is another account's": dict(comment={"author_id": 999}),
-            "the comment was edited": dict(comment={"edited": True}),
-            "the comment is gone": dict(comment=None),
-            "the comment says something else": dict(comment={"body": SENTENCE + " x"}),
-            "the time is not the comment's": dict(comment={"created_at": "2020-01-01T00:00:00Z"}),
+        # A record minted by createCommitOnBranch in a fork passes every commit fact; its evidence
+        # does not.
+        cases: dict[str, dict[str, dict[str, Any] | None]] = {
+            "the run is not this repository's": {
+                "run": {"repository": {"full_name": "mallory/cla"}}
+            },
+            "the run recorded something else": {
+                "run": {"display_title": "Record sign kleidos-dev/cla-sandbox#7 1"}
+            },
+            "the run is unknown": {"run": None},
+            "the run failed": {"run": {"conclusion": "failure"}},
+            "the comment is another account's": {"comment": {"author_id": 999}},
+            "the comment was edited": {"comment": {"edited": True}},
+            "the comment is gone": {"comment": None},
+            "the comment says something else": {"comment": {"body": SENTENCE + " x"}},
+            "the time is not the comment's": {"comment": {"created_at": "2020-01-01T00:00:00Z"}},
         }
         for name, change in cases.items():
             with self.subTest(name):
@@ -579,18 +586,15 @@ class Verify(unittest.TestCase):
                 rec = self.record(1)
                 self.witness.genuine(rec)
                 cid, rid = rec["evidence"]["comment_id"], rec["recorder_run_id"]
+                # genuine() above gave the record its run and its comment.
                 if "run" in change:
-                    self.witness.runs[rid] = (
-                        None
-                        if change["run"] is None
-                        else {**self.witness.runs[rid], **change["run"]}
-                    )  # type: ignore[dict-item]
+                    run_change, run = change["run"], self.witness.runs[rid] or {}
+                    self.witness.runs[rid] = None if run_change is None else {**run, **run_change}
                 if "comment" in change:
+                    comment_change, comment = change["comment"], self.witness.comments[cid] or {}
                     self.witness.comments[cid] = (
-                        None
-                        if change["comment"] is None
-                        else {**self.witness.comments[cid], **change["comment"]}
-                    )  # type: ignore[dict-item]
+                        None if comment_change is None else {**comment, **comment_change}
+                    )
                 self.commit_as(
                     RECORDER, "sign: 1", {"signatures/individual/1.json": json.dumps(rec)}
                 )
@@ -604,7 +608,9 @@ class Verify(unittest.TestCase):
         second = self.sign(2)
         rec3 = self.record(3)
         self.witness.genuine(rec3)
-        self.witness.runs[rec3["recorder_run_id"]]["status"] = "in_progress"  # type: ignore[index]
+        run3 = self.witness.runs[rec3["recorder_run_id"]]
+        assert run3 is not None  # genuine() gave the record its run
+        run3["status"] = "in_progress"
         self.commit_as(RECORDER, "sign: 3", {"signatures/individual/3.json": json.dumps(rec3)})
         v = self.run_verify(since=old)
         self.assertEqual(v.findings, [])
@@ -697,7 +703,8 @@ class VerifyCoverage(unittest.TestCase):
         ) -> tuple[int, bytes]:
             if "/pulls?state=closed" in url:
                 repo = url.split("/repos/")[1].split("/pulls")[0]
-                # 4 was merged a minute ago: its recorder run may still be queued, so it is not a problem yet.
+                # 4 was merged a minute ago: its recorder run may still be queued, so it is not a
+                # problem yet.
                 just = cla.now()
                 pulls = (
                     [
@@ -722,7 +729,7 @@ class VerifyCoverage(unittest.TestCase):
 
 
 class Helpers(unittest.TestCase):
-    def test_the_shared_normalisation_vectors(self) -> None:
+    def test_the_shared_normalization_vectors(self) -> None:
         vectors = json.loads((Path(__file__).parent / "normalize-vectors.json").read_text("utf-8"))[
             "vectors"
         ]

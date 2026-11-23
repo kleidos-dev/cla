@@ -39,9 +39,10 @@ import sys
 import unicodedata
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, TypeGuard
 
 ROOT = Path(__file__).resolve().parent.parent
 BRANCH = "signatures"
@@ -74,7 +75,7 @@ class Refused(Exception):
 
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # The characters either JavaScript's or Python's \s counts as white space,
@@ -95,11 +96,18 @@ def sha256(data: str | bytes) -> str:
 
 
 def load_config(root: Path = ROOT) -> dict[str, Any]:
-    return json.loads((root / "registry" / "config.json").read_text("utf-8"))
+    config = json.loads((root / "registry" / "config.json").read_text("utf-8"))
+    if not isinstance(config, dict):
+        raise Refused("registry/config.json is not a JSON object")
+    return config
 
 
 def load_entities(root: Path = ROOT) -> list[dict[str, Any]]:
-    return json.loads((root / "registry" / "entities.json").read_text("utf-8")).get("entities", [])
+    data = json.loads((root / "registry" / "entities.json").read_text("utf-8"))
+    entities = data.get("entities", []) if isinstance(data, dict) else None
+    if not isinstance(entities, list):
+        raise Refused("registry/entities.json holds no list of entities")
+    return entities
 
 
 def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
@@ -113,11 +121,9 @@ def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
 
 def record_valid(config: dict[str, Any], rec: dict[str, Any] | None) -> bool:
     """Whether a record counts now: a version still accepted, with that version's digest."""
-    return (
-        bool(rec)
-        and rec.get("version") in config["accepted_versions"]
-        and record_published(config, rec)
-    )  # type: ignore[union-attr]
+    if not rec:
+        return False
+    return rec.get("version") in config["accepted_versions"] and record_published(config, rec)
 
 
 def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
@@ -141,9 +147,12 @@ Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]
 def urllib_transport(
     method: str, url: str, headers: dict[str, str], body: bytes | None
 ) -> tuple[int, bytes]:
-    req = urllib.request.Request(url, data=body, method=method, headers=headers)
+    # Only https: urllib would also open file: and custom schemes (ruff S310).
+    if not url.startswith("https://"):
+        raise RuntimeError(f"refusing a request that is not https: {url.split('?')[0]}")
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)  # noqa: S310  https only, checked above
     try:
-        with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310 (https only, built below)
+        with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310  https only, checked above
             return res.status, res.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
@@ -180,9 +189,8 @@ class GitHub:
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         status, data = self.call("POST", "/graphql", {"query": query, "variables": variables})
         if status != 200 or data.get("errors"):
-            raise RuntimeError(
-                f"GraphQL answered {status}: {[e.get('type') for e in (data or {}).get('errors', [])]}"
-            )
+            types = [e.get("type") for e in (data or {}).get("errors", [])]
+            raise RuntimeError(f"GraphQL answered {status}: {types}")
         return data["data"]
 
     def file(self, repo: str, path: str, ref: str) -> str | None:
@@ -191,18 +199,27 @@ class GitHub:
             return None
         if status != 200:
             raise RuntimeError(f"reading {path} answered {status}")
+        if not isinstance(text, str):
+            raise RuntimeError(f"reading {path} answered no text")
         return text
 
 
-COMMENT_QUERY = """query($id:ID!){node(id:$id){... on IssueComment{createdAt lastEditedAt body editor{login}
-author{login ... on User{databaseId}} pullRequest{number repository{nameWithOwner}}}}}"""
+# GraphQL documents; a line break is white space to GraphQL, so where they
+# break is only layout.
+COMMENT_QUERY = """query($id:ID!){node(id:$id){... on IssueComment{createdAt lastEditedAt body
+editor{login} author{login ... on User{databaseId}} pullRequest{number
+repository{nameWithOwner}}}}}"""
 
-HEAD_QUERY = """query($owner:String!,$name:String!,$ref:String!){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}}}"""
+HEAD_QUERY = """query($owner:String!,$name:String!,$ref:String!){
+repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{oid}}}}"""
 
-COMMIT_MUTATION = """mutation($input:CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{oid url}}}"""
+COMMIT_MUTATION = """mutation($input:CreateCommitOnBranchInput!){
+createCommitOnBranch(input:$input){commit{oid url}}}"""
 
-COMMITS_QUERY = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){
-commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid message authoredDate parents{totalCount}
+COMMITS_QUERY = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+repository(owner:$owner,name:$name){pullRequest(number:$number){
+commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor}
+nodes{commit{oid message authoredDate parents{totalCount}
 authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}"""
 
 
@@ -237,7 +254,10 @@ def commit_file(
                     }
                 },
             )
-            return out["createCommitOnBranch"]["commit"]["oid"]
+            oid = out["createCommitOnBranch"]["commit"]["oid"]
+            if not isinstance(oid, str):
+                raise RuntimeError("createCommitOnBranch answered no commit id")
+            return oid
         except RuntimeError as e:  # the branch moved between the read and the write
             last = str(e)
     raise RuntimeError(f"could not commit {path}: {last}")
@@ -303,7 +323,8 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "version": version,
         "set_sha256": ctx.config["versions"][str(version)]["set_sha256"],
         "accepted_at": node["createdAt"],
-        # Posted through the app (the sign page) or typed by hand; told by the app's numeric id, never its slug.
+        # Posted through the app (the sign page) or typed by hand; told by the app's numeric id,
+        # never its slug.
         "method": "web"
         if isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
         else "comment",
@@ -334,7 +355,9 @@ def parse_noreply(email: str | None) -> tuple[int, str] | None:
 def pr_authors(
     ctx: Context, repo: str, pr: dict[str, Any]
 ) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
-    """The Worker's rule, written again: opener, commit authors and co-authors (id → login, type, dates); and how many could not be identified."""
+    """The Worker's rule, written again: opener, commit authors and co-authors (id → login, type,
+    dates); and how many could not be identified.
+    """
     owner, name = repo.split("/")
     people: dict[int, tuple[str, str, list[str]]] = {}
     unknown = 0
@@ -433,11 +456,11 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
             missing.append(gid)
             continue
         rec = existing_record(ctx, gid)
-        if not record_valid(ctx.config, rec):
+        if rec is None or not record_valid(ctx.config, rec):
             missing.append(gid)
             continue
         ids.append(gid)
-        versions[str(gid)] = rec["version"]  # type: ignore[index]
+        versions[str(gid)] = rec["version"]
     if missing:
         raise Refused(
             f"merged without a signature from account id(s) {', '.join(map(str, missing))}"
@@ -486,12 +509,14 @@ class Finding:
         return f"{self.commit[:12]}: {self.problem}"
 
 
-def _pos_int(v: Any) -> bool:
+def _pos_int(v: object) -> TypeGuard[int]:
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
 
 def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
-    """The shape of one record file (registry/schema/), checked field by field; worker/src/registry.ts isSignatureRecord does the same."""
+    """The shape of one record file (registry/schema/), checked field by field;
+    worker/src/registry.ts isSignatureRecord does the same.
+    """
     try:
         rec = json.loads(text)
     except json.JSONDecodeError:
@@ -557,7 +582,9 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
 
 @dataclass
 class Facts:
-    """What GitHub says of one commit of the signatures branch: who wrote it, who committed it, and its signature."""
+    """What GitHub says of one commit of the signatures branch: who wrote it, who committed it, and
+    its signature.
+    """
 
     author_id: int | None
     committer_id: int | None
@@ -567,7 +594,9 @@ class Facts:
 
 
 def by_recorder(f: Facts) -> bool:
-    """A commit createCommitOnBranch made with the recorder's GITHUB_TOKEN: github-actions[bot]'s, committed and signed by GitHub."""
+    """A commit createCommitOnBranch made with the recorder's GITHUB_TOKEN: github-actions[bot]'s,
+    committed and signed by GitHub.
+    """
     return (
         f.author_id == ACTIONS_BOT_ID
         and f.signature_valid
@@ -598,13 +627,16 @@ class Witness:
 
 
 class Pending(Exception):
-    """A record's recorder run has not finished yet: the check stops before it and the next run resumes there."""
+    """A record's recorder run has not finished yet: the check stops before it and the next run
+    resumes there.
+    """
 
 
 def cross_check(
     config: dict[str, Any], registry: str, path: str, rec: dict[str, Any], witness: Witness
 ) -> str | None:
-    """The record's evidence, re-read from GitHub: the acceptance comment it cites and the recorder run that wrote it.
+    """The record's evidence, re-read from GitHub: the acceptance comment it cites and the recorder
+    run that wrote it.
 
     This is what a GitHub-signed github-actions[bot] commit made anywhere
     else (a fork's Actions, say) and pushed here cannot pass."""
@@ -613,7 +645,8 @@ def cross_check(
         return "no recorder run id"
     if path.startswith("signatures/"):
         m = PR_URL_RE.match(rec["evidence"]["pr_url"])
-        assert m
+        if m is None:
+            return "the evidence's pr_url is not a pull request address"
         repo, pr = m.group(1), int(m.group(2))
         cid = rec["evidence"]["comment_id"]
         title = f"Record sign {repo}#{pr} {cid}"
@@ -657,7 +690,8 @@ CommitInfo = Callable[[str], "Facts | None"]
 @dataclass
 class Verified:
     findings: list[Finding]
-    #: The last commit whose records were cross-checked (the next run's --since); None when nothing moved it.
+    #: The last commit whose records were cross-checked (the next run's --since); None when nothing
+    #: moved it.
     checked_through: str | None
 
 
@@ -670,7 +704,8 @@ def verify_history(
     witness: Witness | None = None,
     registry: str = "kleidos-dev/cla",
 ) -> Verified:
-    """Every commit: linear, one record each, each the recorder's GitHub-signed commit (the owner's own redact:/entity: commits and the root aside).
+    """Every commit: linear, one record each, each the recorder's GitHub-signed commit (the owner's
+    own redact:/entity: commits and the root aside).
 
     ``info(sha)`` answers, from GitHub, who authored and committed a commit
     and whether GitHub signed it: a name or an email in the git metadata
@@ -715,7 +750,8 @@ def verify_history(
                 findings.append(
                     Finding(
                         sha,
-                        f"made by {author!r}, not by the recorder (author, committer or GitHub's signature)",
+                        f"made by {author!r}, not by the recorder "
+                        "(author, committer or GitHub's signature)",
                     )
                 )
             if len(changes) != 1:
@@ -755,25 +791,23 @@ def verify_coverage(
     recorder run may still be queued, and the Worker's cron re-dispatches a
     missing one."""
     findings: list[Finding] = []
-    settled = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=settle_minutes)).strftime(
+    settled = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=settle_minutes)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
     for repo in config["served_repositories"]:
         owner, name = repo.split("/")
         pulls = gh.get(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
-        for p in pulls:
-            if (
-                p.get("merged_at")
-                and p["merged_at"][:10] >= merged_since
-                and p["merged_at"] <= settled
-            ):
-                if gh.file(registry, f"coverage/{owner}/{name}/{p['number']}.json", BRANCH) is None:
-                    findings.append(
-                        Finding(
-                            p.get("merge_commit_sha") or "0" * 12,
-                            f"{repo}#{p['number']} was merged with no coverage record",
-                        )
-                    )
+        findings.extend(
+            Finding(
+                p.get("merge_commit_sha") or "0" * 12,
+                f"{repo}#{p['number']} was merged with no coverage record",
+            )
+            for p in pulls
+            if p.get("merged_at")
+            and p["merged_at"][:10] >= merged_since
+            and p["merged_at"] <= settled
+            and gh.file(registry, f"coverage/{owner}/{name}/{p['number']}.json", BRANCH) is None
+        )
     return findings
 
 
@@ -791,7 +825,8 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--ref", default=f"origin/{BRANCH}")
     v.add_argument(
         "--marker-out",
-        help="where to write the last commit whose records were cross-checked, for the next run's --since",
+        help="where to write the last commit whose records were cross-checked, "
+        "for the next run's --since",
     )
     args = ap.parse_args(argv)
 
@@ -840,13 +875,17 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if findings else 0
 
 
-HISTORY_QUERY = """query($owner:String!,$name:String!,$ref:String!,$cursor:String){repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{... on Commit{
-history(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{oid author{user{databaseId}} committer{email user{databaseId}}
+HISTORY_QUERY = """query($owner:String!,$name:String!,$ref:String!,$cursor:String){
+repository(owner:$owner,name:$name){ref(qualifiedName:$ref){target{... on Commit{
+history(first:100,after:$cursor){pageInfo{hasNextPage endCursor}
+nodes{oid author{user{databaseId}} committer{email user{databaseId}}
 signature{isValid wasSignedByGitHub}}}}}}}}"""
 
 
 def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
-    """Who authored and committed every commit of a branch, and its signature, 100 commits per GraphQL query."""
+    """Who authored and committed every commit of a branch, and its signature, 100 commits per
+    GraphQL query.
+    """
     owner, name = registry.split("/")
     out: dict[str, Facts] = {}
     cursor = None
@@ -902,11 +941,15 @@ class GitHubWitness(Witness):
             return None
         if status != 200:
             raise RuntimeError(f"reading run {run_id} answered {status}")
+        if not isinstance(run, dict):
+            raise RuntimeError(f"reading run {run_id} answered no object")
         return run
 
 
 def verify_workflows(gh: GitHub, registry: str) -> list[Finding]:
-    """The recorder and this verifier are enabled: the app's actions: write could disable them (SECURITY.md)."""
+    """The recorder and this verifier are enabled: the app's actions: write could disable them
+    (SECURITY.md).
+    """
     findings: list[Finding] = []
     for wf in ("record.yml", "verify.yml"):
         state = gh.get(f"/repos/{registry}/actions/workflows/{wf}").get("state")
