@@ -14,7 +14,7 @@ This repository holds the Kleidos Contributor Agreement, its public register and
 1. **A private vulnerability report** on this repository: the **Security** tab, **Report a vulnerability**.
 2. **Email** to <mail@kleidos.dev>, encrypted if you want with the OpenPGP key `9476 5B19 FB50 5392 C68A  ED60 0535 C714 FCEF 3BC3` (`gpg --locate-keys mail@kleidos.dev`).
 
-English or Spanish. Test only against `kleidos-dev/cla-sandbox` or your own deployment, with your own accounts: never sign, comment or open pull requests as anybody else, and never try to obtain another person's token.
+English or Spanish. Test only against your own deployment, with your own accounts: never sign, comment or open pull requests as anybody else, and never try to obtain another person's token.
 
 ## In scope
 

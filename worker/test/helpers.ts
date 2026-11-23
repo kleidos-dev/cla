@@ -15,7 +15,7 @@ export const ORIGIN = "https://cla.kleidos.dev";
 export const WEBHOOK_SECRET = "test-webhook-secret";
 export const SANDBOX = "kleidos-dev/cla-sandbox";
 /** registry/config.json's shape, with a sign-in app that may or may not be named yet. */
-type TestConfig = Omit<typeof configJson, "signin_client_id"> & { signin_client_id: string | null };
+type TestConfig = Omit<typeof configJson, "signin_client_id" | "served_repositories"> & { signin_client_id: string | null; served_repositories: Record<string, { auto_approve: boolean }> };
 
 /**
  * The register's configuration as the tests use it: registry/config.json
@@ -24,10 +24,12 @@ type TestConfig = Omit<typeof configJson, "signin_client_id"> & { signin_client_
  * live register to version 2 leaves these tests as they are; CONFIG_V2 is
  * the version 2 world. The owner is on the exemption list whatever its
  * state (his exemption is lifted for an end-to-end test now and then; the
- * flows tested here do not depend on that).
+ * flows tested here do not depend on that). SANDBOX is a made-up repository
+ * that only the tests serve.
  */
 export const CONFIG: TestConfig = {
   ...configJson,
+  served_repositories: { ...configJson.served_repositories, [SANDBOX]: { auto_approve: true } },
   current_version: 1,
   accepted_versions: [1],
   signin_client_id: null,

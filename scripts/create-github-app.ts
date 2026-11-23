@@ -214,7 +214,7 @@ async function main(): Promise<number> {
           if (failed.length) {
             console.error(`NOT stored: ${failed.join(", ")}. The values are gone: on the app's settings page generate a new private key, reset the client secret or change the webhook secret as needed, and put them with \`npx wrangler secret put <NAME>\` in worker/.`);
           }
-          console.log(`\nNext:\n  1. Install it on ${ORG}, only on kleidos-dev/cla and kleidos-dev/cla-sandbox: ${WEB}/apps/${c.slug}/installations/new`);
+          console.log(`\nNext:\n  1. Install it on ${ORG}, only on kleidos-dev/cla: ${WEB}/apps/${c.slug}/installations/new`);
           console.log(`  2. On the app's page, check: "Expire user authorization tokens" on, "Enable Device Flow" off.`);
           console.log(`  3. The app id for the rulesets' required check (integration_id) is ${c.id}.`);
           console.log(`  4. In registry/config.json set "app_id": ${c.id}, and add the bot account to "exempt": gh api users/${c.slug}%5Bbot%5D --jq .id`);
