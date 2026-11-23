@@ -11,7 +11,7 @@ This repository holds the agreement itself, so a few rules are stricter than els
 - **The agreement texts are frozen.** `agreements/v1/individual.md` and `entity.md` are generated verbatim and are never edited; `addendum.md` and `SHA256SUMS` change only as a new version (`agreements/v2/`, a new entry in `registry/config.json`, a new acceptance sentence), never in place. A typo fix in a binding text is a new version. Pull requests that edit `agreements/v1/` are closed.
 - **The register is written only by `record.yml`.** Do not open pull requests against the `signatures` branch. To correct or remove an entry, write to <mail@kleidos.dev>.
 - **Exemptions and entities** (`registry/config.json`, `registry/entities.json`) are changed by the owner only, in signed commits with an `entity:` subject for entities.
-- **Changes to `.github/` wait for a maintainer**: the bot never approves their checks automatically.
+- **Changes to `.github/` wait for a maintainer** (`@kleidos-dev/maintainers`): the bot never approves their checks automatically. You do not need to mention anyone: every pull request asks the maintainers for a review on its own, through `CODEOWNERS`.
 
 ## Working on the code
 
