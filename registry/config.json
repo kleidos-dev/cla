@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "agreement": "kleidos-ca",
-  "current_version": 1,
-  "accepted_versions": [1],
+  "current_version": 2,
+  "accepted_versions": [1, 2],
   "coverage_from": "2026-11-23",
   "app_id": 5879825,
-  "signin_client_id": null,
+  "signin_client_id": "Iv23lim9q5F8XhVsvuIj",
   "retired_signin_client_ids": [],
   "timestamping": {
     "url": "http://timestamp.sectigo.com/qualified",

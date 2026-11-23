@@ -15,7 +15,7 @@ Kleidos is published under the GNU GPL, version 3 or later. Every contributor ac
 
 Each version is made of two texts accepted together, in a single act. **English is the binding language**; the Spanish texts are for information. The version signed today is the one `registry/config.json` names as `current_version`.
 
-**Version 2** ([`agreements/v2/`](agreements/v2/)) is published and **not current yet**. It differs from version 1 only in the Addendum, clause 1.5 (you accept by signing in at cla.kleidos.dev and confirming the sentence, and nothing is posted in your name; or, if the site is down, by posting the sentence yourself) and a new clause 1.6 (an entry that names you and that you did not make is looked into with you and removed if it cannot be confirmed). Its set digest is `a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408`. It becomes current once the sign-in app exists, with one change of `registry/config.json` that sets `signin_client_id` to that app's client id together with `current_version: 2` and `accepted_versions: [1, 2]`, and this paragraph with it; the Worker deployed beforehand must bundle these exact texts (it pauses signing on any digest it does not hold). Signatures under version 1 stay valid.
+**Version 2** ([`agreements/v2/`](agreements/v2/)) is **current**. It differs from version 1 only in the Addendum, clause 1.5 (you accept by signing in at cla.kleidos.dev and confirming the sentence, and nothing is posted in your name; or, if the site is down, by posting the sentence yourself) and a new clause 1.6 (an entry that names you and that you did not make is looked into with you and removed if it cannot be confirmed). Its set digest is `a05d5ba2c12c829a14dd2316bc49afdf726bb2a0da14d71a17098fc427c88408`. Signatures under version 1 stay valid.
 
 Version 1:
 
@@ -39,7 +39,7 @@ Check it yourself with `sha256sum -c SHA256SUMS && sha256sum SHA256SUMS` inside 
 
 ## How to sign
 
-From version 2 on (the flow the site uses once version 2 is current):
+From version 2 on (the flow the site uses):
 
 1. Open your pull request in any Kleidos repository.
 2. The bot `kleidos-cla` posts a short comment, in English, with a **Sign the agreement** button, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
@@ -49,7 +49,7 @@ From version 2 on (the flow the site uses once version 2 is current):
 
 If the site is down, you can post the acceptance sentence yourself as a new comment on your pull request, alone and unedited; the register records it the same way (`method: "comment"`).
 
-Under version 1 (the flow live until version 2 is current):
+Under version 1 (the flow used until version 2 became current; its signatures stay valid):
 
 1. Open your pull request in any Kleidos repository.
 2. The bot `kleidos-cla` posts a short comment, in English, with a **Sign the agreement** button that shows how many authors have signed, and the check `📝 CLA` shows "Action required". The repository's other checks wait.
