@@ -135,6 +135,8 @@ class FakeGitHub:
     comments: dict[int, dict[str, Any]] = field(default_factory=dict)
     pulls: dict[int, Any] = field(default_factory=dict)
     commits: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    #: The closed pull requests of a repository, the last updated first.
+    closed: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     #: GitHub lists at most this many commits of a pull request.
     cap: int = 250
     #: What "commits that touched this path" answers, newest first, for a path not just written.
@@ -284,6 +286,7 @@ class FakeGitHub:
             ("GET", rf"/repos/{REGISTRY}/commits", self._history),
             ("GET", r"/repos/([^/]+/[^/]+)", self._repository),
             ("GET", r"/repos/([^/]+/[^/]+)/issues/comments/(\d+)", self._comment),
+            ("GET", r"/repos/([^/]+/[^/]+)/pulls", self._closed),
             ("GET", r"/repos/([^/]+/[^/]+)/pulls/(\d+)", self._pull),
         )
         for verb, pattern, answer in routes:
@@ -319,8 +322,8 @@ class FakeGitHub:
     def _history(self, query: dict[str, str], data: Any) -> Answer:
         assert data is None, data
         assert query["sha"] == cla.BRANCH, query
-        path, size = query["path"], int(query["per_page"])
-        page = int(query.get("page", "1"))
+        path, size, page = query["path"], int(query["per_page"]), int(query.get("page", "1"))
+        assert 0 < size <= 100, size
         assert set(query) <= {"sha", "path", "per_page", "page"}, query
         own = [recorder_commit()] if path in self.files else []
         every = self.histories.get(path, own)
@@ -334,6 +337,13 @@ class FakeGitHub:
         assert (query, data) == ({}, None), (query, data)
         found = self.comments.get(int(cid))
         return ok(found["rest"]) if found and found["repo"] == repo else NOT_FOUND
+
+    def _closed(self, repo: str, query: dict[str, str], data: Any) -> Answer:
+        assert data is None, data
+        size, page = int(query.pop("per_page")), int(query.pop("page"))
+        assert query == {"state": "closed", "sort": "updated", "direction": "desc"}, query
+        assert 0 < size <= 100, size
+        return ok(self.closed.get(repo, [])[(page - 1) * size : page * size])
 
     def _pull(self, repo: str, number: str, query: dict[str, str], data: Any) -> Answer:
         assert (repo, query, data) == (REPO, {}, None), (repo, query, data)

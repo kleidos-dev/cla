@@ -216,6 +216,28 @@ class Requests(RegisterTest):
             with self.subTest(body), self.fails("GET /x answered no list of objects"):
                 github(Once((200, body, {}))).get_list("/x?y")
 
+    def test_the_pages_of_a_list_are_read_while_they_are_full(self) -> None:
+        full: list[dict[str, Any]] = [{"n": n} for n in range(100)]
+        transport = Once(ok(full), ok(full), ok([{"n": 1}]))
+        found = list(github(transport).pages("/x?y=1"))
+        self.assertEqual(found, [*full, *full, {"n": 1}])
+        self.assertEqual(
+            [c[1] for c in transport.calls],
+            [f"{API}/x?y=1&per_page=100&page={n}" for n in (1, 2, 3)],
+        )
+        self.assertEqual(list(github(Once(ok(full), ok([]))).pages("/x?y=1")), full)
+        self.assertEqual(list(github(Once(ok(full[:99]))).pages("/x?y=1")), full[:99])
+        transport = Once(ok(full))
+        self.assertEqual(next(github(transport).pages("/x?y=1")), {"n": 0})
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_a_list_without_an_end_is_not_read_for_ever(self) -> None:
+        full: list[dict[str, Any]] = [{"n": n} for n in range(100)]
+        transport = Once(*[ok(full)] * 51)
+        with self.fails("GET /x has more than 50 pages"):
+            list(github(transport).pages("/x?y=1"))
+        self.assertEqual(len(transport.calls), 50)
+
     def test_a_file_is_its_bytes_or_nothing(self) -> None:
         transport = Once((200, b"\xff\x00", {}), NOT_FOUND, ok({}, 403))
         gh = github(transport)
@@ -298,15 +320,6 @@ class Commits(RegisterTest):
         )
         self.assertEqual(self.fake.files, self.FILES)
 
-    def test_one_file_is_its_text(self) -> None:
-        self.assertEqual(
-            cla.commit_file(self.gh, REGISTRY, "coverage/o/n/1.json", "é\n", "coverage"),
-            self.fake.head,
-        )
-        self.assertEqual(
-            self.fake.writes, [Write("coverage", {"coverage/o/n/1.json": "é\n".encode()}, [])]
-        )
-
     def test_a_branch_that_moved_is_read_and_written_again(self) -> None:
         stale = ok({"data": None, "errors": [{"type": "STALE_DATA"}]})
         self.fake.next("POST /graphql createCommitOnBranch", stale, stale)
@@ -346,7 +359,7 @@ class Commits(RegisterTest):
         with self.fails(
             "could not commit coverage/o/n/1.json: createCommitOnBranch answered no commit id"
         ):
-            cla.commit_file(self.gh, REGISTRY, "coverage/o/n/1.json", "x", "coverage")
+            cla.commit_files(self.gh, REGISTRY, {"coverage/o/n/1.json": b"x"}, [], "coverage")
 
     def test_a_branch_that_does_not_exist_takes_no_commit(self) -> None:
         for data in (

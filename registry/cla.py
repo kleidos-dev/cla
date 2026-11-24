@@ -61,7 +61,7 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard
@@ -95,6 +95,11 @@ SIGNATURE_NAME_RE = re.compile(r"[1-9][0-9]{0,15}\.json")
 SIGNATURE_PATH_RE = re.compile(r"signatures/individual/([1-9][0-9]{0,15})\.(?:json|tsr)")
 # GitHub lists at most 250 commits of a pull request; with more, not every author can be known.
 MAX_COMMITS = 250
+#: GitHub's largest page, and how many of a list are read before it is too long to be what it is.
+PAGE_SIZE = 100
+MAX_PAGES = 50
+#: GitHub lists at most 1000 files of a directory, and does not say that it left some out.
+SIGNATURE_LIST_LIMIT = 1000
 #: The largest integer JavaScript reads exactly, which is the largest the Worker takes.
 MAX_INT = 2**53 - 1
 HEX64_RE = re.compile(r"[0-9a-f]{64}")
@@ -377,6 +382,15 @@ class GitHub:
         if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
             raise RuntimeError(f"GET {path.split('?')[0]} answered no list of objects")
         return data
+
+    def pages(self, path: str) -> Iterator[dict[str, Any]]:
+        """Every object of a list GitHub gives in pages, each page asked for when it is needed."""
+        for page in range(1, MAX_PAGES + 1):
+            found = self.get_list(f"{path}&per_page={PAGE_SIZE}&page={page}")
+            yield from found
+            if len(found) < PAGE_SIZE:
+                return
+        raise RuntimeError(f"GET {path.split('?')[0]} has more than {MAX_PAGES} pages")
 
     def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         status, answer = self.call("POST", "/graphql", {"query": query, "variables": variables})
@@ -699,24 +713,22 @@ def write_signature(
     return f"recorded in {oid}" + ("" if token else " (no time-stamp token yet)")
 
 
-def redacted_after(ctx: Context, gid: int, accepted_at: str) -> None:
+def redacted_after(ctx: Context, gid: int, accepted: dt.datetime) -> None:
     """Refuses a comment older than the owner's removal of that account's entry.
 
     The removal was asked for after that comment was written, so the comment
     cannot bring the entry back: only a new acceptance can. Without this the
     Worker's cron, which re-dispatches the acceptance comments of open pull
-    requests, would write the entry again (registry/README.md, "Removal")."""
-    accepted = parse_time(accepted_at)
+    requests, would write the entry again (registry/README.md, "Removal"). A
+    removal whose time GitHub does not say counts as later than any comment."""
     path = f"signatures/individual/{gid}.json"
-    for c in ctx.gh.get_list(
-        f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=100"
-    ):
-        if (
-            dig(c, "author", "id") == OWNER_ID
-            and str(dig(c, "commit", "message")).startswith("redact:")
-            and (removed := parse_time(dig(c, "commit", "committer", "date")))
-            and (accepted is None or accepted <= removed)
-        ):
+    for c in ctx.gh.pages(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}"):
+        if dig(c, "author", "id") != OWNER_ID:
+            continue
+        if not str(dig(c, "commit", "message")).startswith("redact:"):
+            continue
+        removed = parse_time(dig(c, "commit", "committer", "date"))
+        if removed is None or accepted <= removed:
             raise Refused("this account's entry was removed at its request after that comment")
 
 
@@ -737,8 +749,8 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     gid, login = dig(node, "author", "databaseId"), dig(node, "author", "login")
     if not _pos_int(gid) or dig(rest, "user", "type") != "User" or not is_login(login):
         raise Refused("the author is not a personal account")
-    body, created = node.get("body"), node.get("createdAt")
-    if not isinstance(body, str) or record_time(created) is None:
+    body, created = node.get("body"), record_time(node.get("createdAt"))
+    if not isinstance(body, str) or created is None:
         raise RuntimeError("GitHub's answer has no usable body or createdAt")
     version = accepted_sentences(ctx.config).get(normalize(body))
     if version is None:
@@ -765,7 +777,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "agreement": ctx.config["agreement"],
         "version": version,
         "set_sha256": ctx.config["versions"][str(version)]["set_sha256"],
-        "accepted_at": created,
+        "accepted_at": iso(created),
         # Posted through the app (the sign page) or typed by hand; told by the app's numeric id,
         # never its slug.
         "method": "web" if web else "comment",
@@ -928,9 +940,6 @@ def record_signin(
         revoke_signin(ctx.gh, app, token)
 
 
-SIGNATURE_LIST_LIMIT = 1000
-
-
 def record_stamps(ctx: Context, limit: int = 10) -> str:
     """Adds the missing time-stamp token of recorder-written signatures.
 
@@ -944,6 +953,8 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
         return "no signature yet"
     if status != 200 or not isinstance(listing, list):
         raise RuntimeError(f"listing the signatures answered {status}")
+    if len(listing) >= SIGNATURE_LIST_LIMIT:
+        raise Refused(f"GitHub lists {SIGNATURE_LIST_LIMIT} files at most, so some may be missing")
     names = {dig(e, "name") for e in listing if dig(e, "type") == "file"}
     todo = sorted(
         int(n[:-5])
@@ -1685,21 +1696,20 @@ def verify_coverage(
     findings: list[Finding] = []
     settled = iso(utcnow() - dt.timedelta(minutes=settle_minutes))
     for repo in config["served_repositories"]:
-        owner, name = repo.split("/")
-        pulls = gh.get_list(
-            f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100"
-        )
-        findings.extend(
-            Finding(
-                p.get("merge_commit_sha") or "0" * 12,
-                f"{repo}#{p['number']} was merged with no coverage record",
-            )
-            for p in pulls
-            if p.get("merged_at")
-            and p["merged_at"][:10] >= merged_since
-            and p["merged_at"] <= settled
-            and gh.file(registry, f"coverage/{owner}/{name}/{p['number']}.json", BRANCH) is None
-        )
+        for p in gh.pages(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc"):
+            # Merged is updated: what follows was merged before that date too.
+            if str(p.get("updated_at"))[:10] < merged_since:
+                break
+            merged = p.get("merged_at")
+            if not merged or merged[:10] < merged_since or merged > settled:
+                continue
+            if gh.file(registry, f"coverage/{repo}/{p['number']}.json", BRANCH) is None:
+                findings.append(
+                    Finding(
+                        p.get("merge_commit_sha") or "0" * 12,
+                        f"{repo}#{p['number']} was merged with no coverage record",
+                    )
+                )
     return findings
 
 
