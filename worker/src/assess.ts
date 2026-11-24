@@ -207,8 +207,3 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
 export function allClear(a: Assessment): boolean {
   return a.missing.length === 0 && a.unknownCommits.length === 0 && a.unlistedBots.length === 0 && !a.tooManyCommits;
 }
-
-/** Whether the pull request needs the bot's comment at all. */
-export function needsComment(a: Assessment): boolean {
-  return !allClear(a) || a.signed.size > 0;
-}

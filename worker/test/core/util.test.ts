@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 import fc from "fast-check";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { b64urlDecode, b64urlEncode, byCodeUnits, clientIp, fromUtf8, hex, isLogin, must, normalizeSentence, nowSeconds, randomB64url, readCapped, safeEqual, sha256Hex, stripEnd, utf8 } from "../../src/util";
+import { b64urlDecode, b64urlEncode, byCodeUnits, clientIp, fromUtf8, hex, isLogin, must, normalizeSentence, nowSeconds, posInt, randomB64url, readCapped, safeEqual, sha256Hex, stripEnd, utf8 } from "../../src/util";
 import vectors from "../../../registry/tests/normalize-vectors.json";
 
 afterEach(() => {
@@ -153,6 +153,16 @@ describe("isLogin", () => {
 
   it.each([undefined, null, 1, true, {}, ["alice"]])("a value that is no string (%j) is not", (v) => {
     expect(isLogin(v)).toBe(false);
+  });
+});
+
+describe("posInt", () => {
+  it.each([1, 2 ** 31, Number.MAX_SAFE_INTEGER])("%j is a positive integer", (v) => {
+    expect(posInt(v)).toBe(true);
+  });
+
+  it.each([0, -0, -1, 1.5, 2 ** 53, NaN, Infinity, "1", true, [1], {}, null, undefined])("%j is not", (v) => {
+    expect(posInt(v)).toBe(false);
   });
 });
 

@@ -35,14 +35,8 @@ export function b64urlEncode(bytes: Uint8Array): string {
 export function b64urlDecode(s: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[A-Za-z0-9_-]*$/.test(s) || s.length % 4 === 1) return null;
   const b64 = s.replaceAll("-", "+").replaceAll("_", "/") + "===".slice((s.length + 3) % 4);
-  try {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  } catch {
-    return null;
-  }
+  // Of this alphabet and length, atob takes everything.
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
 export function hex(bytes: ArrayBuffer | Uint8Array): string {
@@ -72,6 +66,11 @@ export const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[
 
 export function isLogin(s: unknown): s is string {
   return typeof s === "string" && LOGIN_RE.test(s);
+}
+
+/** A positive integer a number holds exactly: an id, a pull request's number. */
+export function posInt(v: unknown): v is number {
+  return Number.isSafeInteger(v) && (v as number) > 0;
 }
 
 export function nowSeconds(): number {

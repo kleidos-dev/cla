@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { isLogin, must, stripEnd } from "./util";
+import { isLogin, must, posInt, stripEnd } from "./util";
 
 export interface Account {
   id: number;
@@ -51,7 +51,7 @@ export function parseNoreply(email: string | null): Account | null {
   if (!m) return null;
   const id = Number.parseInt(must(m[1]), 10);
   const login = must(m[2]);
-  if (!Number.isSafeInteger(id) || id <= 0 || !isLogin(login)) return null;
+  if (id === 0 || !isLogin(login)) return null;
   return { id, login, type: login.endsWith("[bot]") ? "Bot" : "User" };
 }
 
@@ -75,7 +75,7 @@ export function coAuthorEmails(message: string): string[] {
 }
 
 function actorAccount(a: GitActor): Account | null {
-  if (a.user && Number.isSafeInteger(a.user.databaseId) && must(a.user.databaseId) > 0 && isLogin(a.user.login)) return { id: must(a.user.databaseId), login: a.user.login, type: "User" };
+  if (a.user && posInt(a.user.databaseId) && isLogin(a.user.login)) return { id: a.user.databaseId, login: a.user.login, type: "User" };
   return parseNoreply(a.email);
 }
 

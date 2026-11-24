@@ -41,7 +41,7 @@ export interface Page<T> {
   truncated: boolean;
 }
 
-type Auth = { token: string } | { basic: [string, string] } | { jwt: true } | { none: true };
+type Auth = { token: string } | { basic: [string, string] } | { jwt: true };
 
 export type Permissions = Partial<Record<"pull_requests" | "checks" | "contents" | "actions" | "metadata", "read" | "write">>;
 
@@ -116,7 +116,7 @@ export class GitHub {
     const headers = new Headers({ "user-agent": UA, accept, "x-github-api-version": "2022-11-28" });
     if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
     else if ("jwt" in auth) headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
-    else if ("basic" in auth) headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
+    else headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
     let payload: string | null = null;
     if (body !== undefined) {
       headers.set("content-type", "application/json");

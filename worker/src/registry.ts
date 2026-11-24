@@ -3,7 +3,7 @@
 import type { GitHub } from "./github";
 import { GitHubError } from "./github";
 import type { Unchecked } from "./util";
-import { nowSeconds } from "./util";
+import { nowSeconds, posInt } from "./util";
 
 export interface VersionInfo {
   path: string;
@@ -93,10 +93,6 @@ const SIGNIN_KEYS = [...RECORD_KEYS, "sentence_sha256", "recorder_commit"];
 const SIGNIN_EVIDENCE_KEYS = ["authorized_at", "signin_client_id", "context_pr_url", "site_commit", "lang"];
 const HEX40 = /^[0-9a-f]{40}$/;
 const CLIENT_ID = /^[A-Za-z0-9.]{16,40}$/;
-
-function posInt(v: unknown): v is number {
-  return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
-}
 
 function sameKeys(o: object, keys: string[]): boolean {
   const k = Object.keys(o);
