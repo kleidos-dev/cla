@@ -222,9 +222,11 @@ describe("an acceptance that is refused", () => {
     const forV2 = await csrfToken(keys.csrf, ["other", "agree", `${SANDBOX}#${form.pr ?? ""}`, "2"]);
     for (const csrf of [form.csrf ?? "", forOther, forV2, ""]) {
       const r = await agree(w, { ...form, csrf, accept: "yes" }, { cookie });
-      expect(await expectMessage(r, 403, "csrf")).toContain(`href="/sign/${SANDBOX}/${form.pr ?? ""}?lang=en"`);
+      expect(await expectMessage(r, 403, "csrf")).toContain(`<a class="btn btn-block" href="/sign/${SANDBOX}/${form.pr ?? ""}?lang=en">Back to the sign page</a>`);
     }
-    expect(lines(w)).toEqual(Array(4).fill({ msg: "agree refused", reason: "csrf" }));
+    const es = await agree(w, { ...form, csrf: forOther, lang: "es", accept: "yes" }, { cookie });
+    expect(await expectMessage(es, 403, "csrf", "es")).toContain(`<a class="btn btn-block" href="/sign/${SANDBOX}/${form.pr ?? ""}?lang=es">Volver a la página de firma</a>`);
+    expect(lines(w)).toEqual(Array(5).fill({ msg: "agree refused", reason: "csrf" }));
     expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });
   });
 

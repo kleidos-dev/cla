@@ -75,23 +75,27 @@ describe("the sign page, signed out", () => {
     expect(await (await get(w, signPath(unknown))).text()).toContain('<span class="eyebrow">Still to sign</span><span>—</span>');
   });
 
-  it("while signing is paused shows the reason instead of a way to sign in", async () => {
+  it("while signing is paused shows the reason instead of a way to sign in, in either language", async () => {
     const w = await world({ config: CONFIG_V2 });
     const p = openPr(w, alice);
-    const html = await (await get(w, signPath(p))).text();
-    expect(html).toContain(`<div class="card is-pending" role="alert"><p>${S.en.status.paused}</p></div>`);
-    expect(html).not.toContain("/auth/login");
+    for (const lang of ["en", "es"] as const) {
+      const html = await (await get(w, `${signPath(p)}?lang=${lang}`)).text();
+      expect(html, lang).toContain(`<div class="card is-pending" role="alert"><p>${S[lang].status.paused}</p></div>`);
+      expect(html, lang).not.toContain("/auth/login");
+    }
   });
 
   it("of a closed or locked pull request says so, and leads back to it", async () => {
     const w = await world();
     const closed = openPr(w, alice);
     closed.state = "closed";
-    const back = (p: FakePr) => `<a class="btn btn-block" href="https://github.com/${p.repo}/pull/${p.number}">Back to the pull request</a>`;
+    const back = (p: FakePr, label = "Back to the pull request") => `<a class="btn btn-block" href="https://github.com/${p.repo}/pull/${p.number}">${label}</a>`;
     expect(await expectMessage(await get(w, signPath(closed)), 409, "closed")).toContain(back(closed));
+    expect(await expectMessage(await get(w, `${signPath(closed)}?lang=es`), 409, "closed", "es")).toContain(back(closed, "Volver al pull request"));
     const locked = openPr(w, alice);
     locked.locked = true;
     expect(await expectMessage(await get(w, signPath(locked)), 409, "locked")).toContain(back(locked));
+    expect(await expectMessage(await get(w, `${signPath(locked)}?lang=es`), 409, "locked", "es")).toContain(back(locked, "Volver al pull request"));
   });
 
   it("of a private repository, even a served one, is not found", async () => {
@@ -344,6 +348,10 @@ describe("the parts of the sign page", () => {
     const cookie = await sessionHeader(w, session(alice, { sid: "s1", token: "ghu_x", app: "bot", for: "other#1" }));
     const html = await (await get(w, signPath(p), cookie)).text();
     expect(html).toContain(`<a href="/auth/login?return=${encodeURIComponent(signPath(p))}&amp;switch=1&amp;lang=en">${S.en.accept.switch}</a>`);
+    for (const lang of ["en", "es"] as const) {
+      const form = /<form method="post" action="\/auth\/logout">([\s\S]*?)<\/form>/.exec(await (await get(w, `${signPath(p)}?lang=${lang}`, cookie)).text())?.[1];
+      expect(form, lang).toMatch(new RegExp(`^<input type="hidden" name="csrf" value="[^"]+"><input type="hidden" name="lang" value="${lang}"><button class="link-btn" type="submit">${S[lang].accept.signOut}</button>$`));
+    }
     const csrf = must(/<form method="post" action="\/auth\/logout"><input type="hidden" name="csrf" value="([^"]+)">/.exec(html)?.[1]);
     const out = await call(w, "/auth/logout", { method: "POST", headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", cookie }, body: `csrf=${encodeURIComponent(csrf)}` });
     expect(out.status).toBe(303);
@@ -386,6 +394,7 @@ describe("the sign page after a posted acceptance", () => {
     const r = await get(w, signPath(p), await pending(w, p, c));
     const html = await r.text();
     expect(html).toContain(`<title>${S.en.done.titleRecording}</title>`);
+    expect(await (await get(w, `${signPath(p)}?lang=es`, await pending(w, p, c))).text()).toContain(`<title>${S.es.done.titleRecording}</title>`);
     expect(html).toContain(`<p class="status is-pending">${S.en.done.statusRecording}</p>`);
     expect(html).toContain(`<div><dt class="eyebrow">${S.en.done.comment}</dt><dd><a href="${c.url}">${SANDBOX}#${p.number}</a></dd></div>`);
     expect(html).toContain(`<dd>1 · SHA-256 <code>${SET_1}</code></dd>`);

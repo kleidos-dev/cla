@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Strings } from "../../src/i18n";
 import { BACK, MESSAGES, S, fromAcceptLanguage, isLang, pickLang } from "../../src/i18n";
-import { restoring } from "./support";
+import { englishIn, restoring } from "./support";
 
 restoring();
 
@@ -92,6 +92,21 @@ describe("the strings of both languages", () => {
     expect(S.en.steps).toEqual(["Step 1 of 2 · Sign in", "Step 2 of 2 · Accept", "Done · Signed"]);
     expect(S.es.status.exempt("x")).toBe("@x está en la lista de exenciones de Kleidos: no hay nada que firmar.");
     expect(S.en.status.entity("x", "Acme")).toBe("@x is covered by the agreement of Acme: nothing to sign.");
+  });
+});
+
+describe("the check that a Spanish page shows no English", () => {
+  it("finds an English page string, a way back or a message there, written plainly or escaped", () => {
+    expect(englishIn(`<title>${S.en.start.title} · x</title>`)).toEqual([S.en.start.title]);
+    expect(englishIn(`<a class="btn">${BACK.sign.en}</a>`)).toEqual([BACK.sign.en]);
+    expect(englishIn(`<p>${MESSAGES.postedClosed.en[1]}</p>`)).toEqual([MESSAGES.postedClosed.en[1]]);
+    expect(englishIn(`<p>${S.en.status.signed(1, "2026-01-01")}</p>`)).toEqual(["You accepted version", ". Nothing to do: the pull request is being checked again."]);
+  });
+
+  it("leaves alone what is English on purpose, and the strings both languages share", () => {
+    expect(englishIn(`<label lang="en">${BACK.sign.en}</label><section class="prose" lang="en" aria-label="x"><p>${S.en.start.title}</p></section>`)).toEqual([]);
+    expect(englishIn(`<div class="prose privacy"><p>«${S.en.accept.signOut}»</p></div>`)).toEqual([]);
+    expect(englishIn(`<p>${S.en.prLabel} ${BACK.sign.es}</p>`)).toEqual([]);
   });
 });
 
