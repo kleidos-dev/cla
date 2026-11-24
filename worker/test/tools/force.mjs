@@ -56,7 +56,8 @@ const state = (t) => t.result().state;
 
 const started = Date.now();
 const base = await run(null);
-if (base.testModules.length === 0 || base.testModules.some((m) => !m.ok())) throw new Error("the suite does not pass unforced");
+const broken = base.testModules.flatMap((m) => [...m.errors().map((e) => e.message), ...[...m.children.allTests("failed")].map((t) => `${t.fullName}: ${t.result().errors?.[0]?.message}`)]);
+if (base.testModules.length === 0 || broken.length > 0) throw new Error(`the suite does not pass unforced:\n${broken.join("\n")}`);
 /** decision -> the files and the names of the tests that evaluate it. */
 const reached = new Map();
 for (const m of base.testModules) {

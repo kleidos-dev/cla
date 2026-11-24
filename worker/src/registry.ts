@@ -244,7 +244,7 @@ export class Registry {
     const text = await this.raw(`signatures/individual/${id}.json`, SIGNATURES_BRANCH);
     let rec: unknown;
     try {
-      rec = JSON.parse(text ?? "null");
+      rec = JSON.parse(String(text));
     } catch {
       // A file that is not JSON is no record.
     }
