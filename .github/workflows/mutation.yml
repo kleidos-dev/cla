@@ -41,8 +41,10 @@ on:
 permissions:
   contents: read
 
+# One run per area and branch: a run of one area dispatched by hand never
+# cancels the Monday's run of all of them, nor another area's.
 concurrency:
-  group: mutation-${{ github.ref }}
+  group: mutation-${{ github.ref }}-${{ inputs.area || 'all' }}
   cancel-in-progress: true
 
 jobs:
