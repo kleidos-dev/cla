@@ -209,8 +209,8 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
   const headings: Heading[] = [];
   const ids = new Set<string>();
   let para: string[] = [];
+  // Every open list has an open item: an item is closed only with its list or by the next item.
   const lists: ListFrame[] = [];
-  let itemOpen = false;
 
   const closePara = () => {
     if (para.length) {
@@ -222,9 +222,7 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
   const closeLists = (toDepth: number) => {
     closePara();
     while (lists.length > toDepth) {
-      if (itemOpen) out.push("</li>");
-      out.push(`</${must(lists.pop()).tag}>`);
-      itemOpen = lists.length > 0;
+      out.push("</li>", `</${must(lists.pop()).tag}>`);
     }
   };
 
@@ -253,23 +251,20 @@ export function renderMarkdown(src: string, opts: RenderOptions = {}): Rendered 
       closePara();
       const { indent, tag, text } = li;
       while (lists.length && must(lists[lists.length - 1]).indent > indent) {
-        if (itemOpen) out.push("</li>");
-        out.push(`</${must(lists.pop()).tag}>`);
-        itemOpen = true;
+        out.push("</li>", `</${must(lists.pop()).tag}>`);
       }
       const top = lists[lists.length - 1];
       if (!top || indent > top.indent) {
         out.push(`<${tag}>`);
         lists.push({ tag, indent });
       } else {
-        if (itemOpen) out.push("</li>");
+        out.push("</li>");
         if (top.tag !== tag) {
           out.push(`</${must(lists.pop()).tag}>`, `<${tag}>`);
           lists.push({ tag, indent });
         }
       }
       out.push("<li>");
-      itemOpen = true;
       para.push(text);
       continue;
     }
