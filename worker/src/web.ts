@@ -91,8 +91,8 @@ export async function signingState(config: Config | null, env: ConfiguredEnv): P
 
 /** The credentials to revoke a token of a session with: its own app, whether or not that app still signs. */
 function sessionApp(env: ConfiguredEnv, kind: "bot" | "signin" | undefined): OAuthApp | null {
-  if (kind !== "signin") return botApp(env);
-  return env.SIGNIN_CLIENT_ID && env.SIGNIN_CLIENT_SECRET ? { kind: "signin", clientId: env.SIGNIN_CLIENT_ID, clientSecret: env.SIGNIN_CLIENT_SECRET } : null;
+  // The sign-in app as the Worker holds it, whether or not the register still names it.
+  return kind === "signin" ? signinApp(env, env.SIGNIN_CLIENT_ID) : botApp(env);
 }
 
 // ---------------------------------------------------------------------------
