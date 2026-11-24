@@ -320,9 +320,10 @@ class Mutate(Planted):
         self.assertEqual(whole, list(range(len(mutator.mutants))))
         self.assertEqual(chosen(shard="1/2"), whole[::2])
         self.assertEqual(chosen(shard="2/2"), whole[1::2])
-        self.assertEqual(len(chosen(sample=3, seed=5)), 3)
-        self.assertEqual(chosen(sample=3, seed=5), chosen(sample=3, seed=5))
-        self.assertNotEqual(chosen(sample=3, seed=5), chosen(sample=3, seed=6))
+        sample = chosen(sample=3, seed=5)
+        self.assertEqual(len(sample), 3)
+        self.assertEqual(chosen(sample=3, seed=5), sample)
+        self.assertNotEqual(chosen(sample=3, seed=6), sample)
         self.assertEqual(chosen(sample=10_000), whole)
         for over, key, value in (
             ({"lines": "9-9"}, "line", {"9"}),
