@@ -474,3 +474,29 @@ describe("a list of commits that does not add up", () => {
     expect(queries()).toHaveLength(2);
   });
 });
+
+describe("a list GitHub cuts into too many pages", () => {
+  const many = (n: number) => Array.from({ length: n }, () => openPr(w, carol));
+
+  it("of open pull requests hides who else must sign: a maintainer looks", async () => {
+    const pr = openPr(w, alice);
+    many(300);
+    // The 302nd has the same head commit, and the three pages read do not reach it.
+    const twin = openPr(w, bob);
+    twin.head.sha = pr.head.sha;
+    const a = await assessed(pr);
+    expect(ids(a.required)).toEqual([alice.id]);
+    expect(a.tooManyCommits).toBe(true);
+    expect(allClear(a)).toBe(false);
+    expect(w.gh.seen(/\/pulls\?/)).toHaveLength(3);
+  });
+
+  it("of open pull requests that fits its three pages is whole", async () => {
+    const pr = openPr(w, alice);
+    many(298);
+    const twin = openPr(w, bob);
+    twin.head.sha = pr.head.sha;
+    const a = await assessed(pr);
+    expect([a.tooManyCommits, ids(a.required)]).toEqual([false, [alice.id, bob.id]]);
+  });
+});

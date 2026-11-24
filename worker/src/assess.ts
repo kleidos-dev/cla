@@ -62,6 +62,7 @@ export interface Assessment {
   entityCovered: { account: Account; entity: string }[];
   unknownCommits: string[];
   unlistedBots: { login: string; commit: string }[];
+  /** GitHub cut the list of commits, or of the open pull requests that may share the head: not everybody who must sign is known. */
   tooManyCommits: boolean;
   acceptances: Acceptance[];
   botComment: { id: number; body: string } | null;
@@ -155,6 +156,7 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
 
   if (pr.state === "open") {
     const open = await gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
+    if (open.truncated) tooManyCommits = true;
     for (const other of open.items) {
       if (other.number !== pr.number && other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
     }
