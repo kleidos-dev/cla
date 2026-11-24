@@ -117,11 +117,12 @@ assert.ok(measuredFiles.size > 10 && [...measuredFiles].every((f) => sources.inc
 const tests = { "worker/test/core/keys.test.ts": 'import { a } from "../../src/keys";\nimport { must } from "../../src/util";', "worker/test/edge/web-sign.test.ts": 'import { b } from "../../src/session";', "worker/test/edge/assets.test.ts": 'import { AGREEMENTS } from "../../src/agreement.ts";', "worker/test/core/nothing.test.ts": "" };
 const all = ["src/agreement.ts", "src/keys.ts", "src/session.ts", "src/util.ts", "src/web.ts"];
 const readTest = (p) => tests[p] ?? null;
-assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts"], all, readTest), ["src/keys.ts", "src/util.ts"], "by its name and its imports");
-assert.deepEqual(coveredBy(["worker/test/edge/web-sign.test.ts", "worker/test/edge/assets.test.ts"], all, readTest), ["src/agreement.ts", "src/session.ts", "src/web.ts"], "web-sign is for web.ts");
+assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts"], all, readTest), { files: ["src/keys.ts", "src/util.ts"], all: false }, "by its name and its imports");
+assert.deepEqual(coveredBy(["worker/test/edge/web-sign.test.ts", "worker/test/edge/assets.test.ts"], all, readTest), { files: ["src/agreement.ts", "src/session.ts", "src/web.ts"], all: false }, "web-sign is for web.ts");
 for (const other of ["worker/test/core/gone.test.ts", "worker/test/core/nothing.test.ts", "worker/test/helpers.ts", "worker/vitest.config.ts", "registry/tests/vectors/authors.json"]) {
-  assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts", other], all, readTest), all, `${other} is for every source`);
+  assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts", other], all, readTest), { files: ["src/keys.ts", "src/util.ts"], all: true }, `${other} is for every source, after the named ones`);
 }
+assert.deepEqual(coveredBy(["worker/test/helpers.ts"], all, readTest), { files: [], all: true }, "a helper alone is for every source");
 const notes = [];
 const planted = new Set();
 const some = await sampled(["src/a.ts"], read, { max: 3, seed: 2, log: (l) => notes.push(l), planted });

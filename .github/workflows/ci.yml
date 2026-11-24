@@ -204,7 +204,8 @@ jobs:
   # The mutants of the lines a pull request changes in the setup scripts and
   # the agreement gate, 120 at most, a seeded sample past that, and when it
   # changes their tests or what those run under, 60 more of the files those
-  # tests are for, seeded by the pull request's number (all of them run
+  # tests are for first, then, for a helper or a tool, of the others, seeded
+  # by the pull request's number (all of them run
   # every Monday, mutation.yml): a survivor that
   # tests/exclusions/scripts.toml does not list fails.
   scripts-mutants:
@@ -234,9 +235,9 @@ jobs:
 
   # The mutants of the lines a pull request changes in registry/cla.py, 120
   # at most, a seeded sample past that, and when it changes the tests or
-  # what they run under, 120 more of the statements the changed test
-  # modules run (of all of them, for a helper or a tool), seeded by the pull
-  # request's number; each in a process of its own with a time and a memory
+  # what they run under, 120 more: of the statements the changed test
+  # modules run first, then, for a helper or a tool, of the others, seeded
+  # by the pull request's number; each in a process of its own with a time and a memory
   # limit (all of them run every Monday, mutation.yml): a survivor that
   # tests/exclusions/register.toml does not list fails.
   register-mutants:
@@ -262,8 +263,8 @@ jobs:
   # The mutants of the lines a pull request changes in worker/src, as
   # test/tools/changed.mjs picks them (120 at most, a seeded choice past
   # that), and when it changes the tests or what they run under, 80 more of
-  # the sources the changed tests are for, seeded by the pull request's
-  # number (all of them run every Monday, mutation.yml), planted by
+  # the sources the changed test files name first, then, for a helper or a
+  # tool, of the others, seeded by the pull request's number (all of them run every Monday, mutation.yml), planted by
   # StrykerJS in the Workers runtime: a survivor that the list of its area
   # does not name fails.
   worker-mutants:
