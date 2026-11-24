@@ -5,7 +5,7 @@
 # reason in tests/exclusions/register.toml. A number only falls; one that goes
 # up needs a dated line in [raised], such as "mutant 2026-11-24" = "why",
 # which a maintainer reviews.
-files = ["registry/cla.py"]
+files = ["registry/cla.py", "registry/rules.py"]
 
 [misses]
 line = 1
