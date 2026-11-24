@@ -84,8 +84,14 @@ class Times(unittest.TestCase):
         self.assertIs(shifted and shifted.tzinfo, dt.UTC)
 
     def test_what_is_no_http_date_is_none(self) -> None:
-        self.assertIsNone(cla.parse_http_date(None))
-        for text in (
+        values: tuple[Any, ...] = (
+            None,
+            True,
+            5,
+            1.5,
+            [],
+            {},
+            b"Tue, 01 Dec 2026 10:23:02 GMT",
             "",
             "now",
             "2026-12-01T10:23:02Z",
@@ -94,9 +100,10 @@ class Times(unittest.TestCase):
             "Tue, 01 Dec 2026 10:23:02 +9999",
             "Tue, 32 Dec 2026 10:23:02 GMT",
             "Fri, 31 Dec 9999 23:59:59 -0100",
-        ):
-            with self.subTest(text):
-                self.assertIsNone(cla.parse_http_date(text))
+        )
+        for value in values:
+            with self.subTest(value):
+                self.assertIsNone(cla.parse_http_date(value))
 
 
 class Texts(unittest.TestCase):

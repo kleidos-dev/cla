@@ -66,6 +66,7 @@ class Never(Property):
             cla.parse_noreply(value)
             cla.noreply_account(value)
             cla.parse_time(value)
+            cla.parse_http_date(value)
             cla.record_time(value)
             cla.is_login(value)
             cla.dig(value, "a", "b")
