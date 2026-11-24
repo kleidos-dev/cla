@@ -77,10 +77,16 @@ REPO_RE = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
 LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 BOT_SUFFIX = "[bot]"
 NOREPLY_RE = re.compile(
-    r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I
+    r"([1-9][0-9]{0,11})\+([^@]+)@users\.noreply\.github\.com", re.ASCII | re.IGNORECASE
 )
 TRAILER_KEY = "co-authored-by:"
-TRAILER_EMAIL_RE = re.compile(r"[^<>\s]+")
+#: The line ends of JavaScript, which the Worker's reading of a message has too.
+LINE_END_RE = re.compile("[\n\r\u2028\u2029]")
+#: No bracket and none of the characters both languages count as white space: an address with one
+#: that only one of them counts is an address to both.
+TRAILER_EMAIL_RE = re.compile(
+    "[^<>\t\n\v\f\r \xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+"
+)
 RECORD_PATH_RE = re.compile(
     r"signatures/individual/[1-9][0-9]{0,15}\.(?:json|tsr)"
     r"|coverage/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}/[1-9][0-9]{0,9}\.json"
@@ -923,19 +929,29 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
     return f"stamped {done} of {len(todo)}"
 
 
-def parse_noreply(email: str | None) -> tuple[int, str] | None:
-    m = NOREPLY_RE.match((email or "").strip())
-    return (int(m.group(1)), m.group(2)) if m else None
+def parse_noreply(email: object) -> tuple[int, str] | None:
+    """The account ``<id>+<login>@users.noreply.github.com``, GitHub's own address, names.
+
+    None for anything GitHub could not have written: no such id, no such login, a blank more."""
+    m = NOREPLY_RE.fullmatch(email) if isinstance(email, str) else None
+    if m is None or not is_login(m[2].removesuffix(BOT_SUFFIX)):
+        return None
+    return int(m[1]), m[2]
 
 
 def trailer_emails(message: str) -> list[str]:
     """The emails of the ``Co-authored-by:`` trailers of a commit message, lower-cased.
 
-    Anybody writes a commit message, so each line is read once, with no
-    backtracking. worker/src/authors.ts coAuthorEmails does the same, and also ends a line at a
-    carriage return and at the two Unicode separators."""
+    Anybody writes a commit message, so each line is read once, with no backtracking. Git ends a
+    line at a line feed alone and JavaScript at three more characters: a trailer that either reading
+    has counts. worker/src/authors.ts coAuthorEmails does the same (tests/vectors/authors.json)."""
+    emails = _trailers(LINE_END_RE.split(message))
+    return emails + [e for e in _trailers(message.split("\n")) if e not in emails]
+
+
+def _trailers(lines: list[str]) -> list[str]:
     emails = []
-    for line in message.split("\n"):
+    for line in lines:
         if line[: len(TRAILER_KEY)].lower() != TRAILER_KEY:
             continue
         _name, bracket, address = line[len(TRAILER_KEY) :].rstrip(" \t").rpartition("<")
@@ -943,6 +959,46 @@ def trailer_emails(message: str) -> list[str]:
         if bracket and email != address and TRAILER_EMAIL_RE.fullmatch(email):
             emails.append(email.lower())
     return emails
+
+
+#: An account that wrote part of a pull request: its id, its login and its type.
+Account = tuple[int, str, str]
+
+
+def noreply_account(email: object) -> Account | None:
+    """The account a no-reply address names, and its type."""
+    found = parse_noreply(email)
+    return found and (*found, "Bot" if found[1].endswith(BOT_SUFFIX) else "User")
+
+
+def commit_authors(c: dict[str, Any]) -> tuple[list[Account], int]:
+    """The accounts that wrote one commit, and how many of its authors could not be identified.
+
+    Its author and co-authors as GitHub resolves them, and the trailers GitHub did not list.
+    worker/src/authors.ts commitAuthors does the same (tests/vectors/authors.json)."""
+    accounts: list[Account] = []
+    unknown = 0
+    listed = set()
+    for a in c["authors"]["nodes"]:
+        if isinstance(a.get("email"), str):
+            listed.add(a["email"].lower())
+        u = a.get("user") or {}
+        if _pos_int(u.get("databaseId")) and is_login(u.get("login")):
+            accounts.append((u["databaseId"], u["login"], "User"))
+        elif account := noreply_account(a.get("email")):
+            accounts.append(account)
+        else:
+            unknown += 1
+    if c["authors"]["totalCount"] > len(c["authors"]["nodes"]):
+        unknown += 1
+    for address in trailer_emails(c["message"]):
+        if address in listed:
+            continue
+        if account := noreply_account(address):
+            accounts.append(account)
+        else:
+            unknown += 1
+    return accounts, unknown
 
 
 def pr_authors(
@@ -980,27 +1036,10 @@ def pr_authors(
             c = n["commit"]
             seen += 1
             # Merge commits count like any other: a merge can carry changes of its own.
-            date = c["authoredDate"][:10]
-            listed = set()
-            for a in c["authors"]["nodes"]:
-                if a.get("email"):
-                    listed.add(a["email"].lower())
-                u = a.get("user")
-                if u and isinstance(u.get("databaseId"), int):
-                    add(u["databaseId"], u["login"], "User", date)
-                elif nr := parse_noreply(a.get("email")):
-                    add(nr[0], nr[1], "Bot" if nr[1].endswith("[bot]") else "User", date)
-                else:
-                    unknown += 1
-            if c["authors"]["totalCount"] > len(c["authors"]["nodes"]):
-                unknown += 1
-            for address in trailer_emails(c["message"]):
-                if address in listed:
-                    continue
-                if nr := parse_noreply(address):
-                    add(nr[0], nr[1], "Bot" if nr[1].endswith("[bot]") else "User", date)
-                else:
-                    unknown += 1
+            accounts, unidentified = commit_authors(c)
+            unknown += unidentified
+            for gid, login, kind in accounts:
+                add(gid, login, kind, c["authoredDate"][:10])
         if not commits["pageInfo"]["hasNextPage"] or seen >= MAX_COMMITS:
             if seen < commits["totalCount"]:
                 raise Refused("GitHub listed fewer commits than the pull request has")

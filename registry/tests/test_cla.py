@@ -734,28 +734,7 @@ class Timestamps(unittest.TestCase):
 
 
 class Trailers(unittest.TestCase):
-    """worker/test/texts.test.ts holds the Worker's side of these."""
-
-    def test_the_emails_of_a_message(self) -> None:
-        for message, emails in (
-            (
-                "x\n\nCo-authored-by: A <A@Example.org>\nco-authored-by:B<b@x.y>",
-                "a@example.org b@x.y",
-            ),
-            ("CO-AUTHORED-BY: \t A <x> B <b@x.y> \t \nSigned-off-by: C <c@x.y>", "b@x.y"),
-            ("Co-authored-by: <a@x.y>\nCo-authored-by: A <b@x.y", "a@x.y"),
-            ("Co-authored-by: A <a@x.y>.\nCo-authored-by: A <a @x.y>\nCo-authored-by: A <>", ""),
-            ("Co-authored-by: A <a@x.y>>\nCo-authored-by: a@x.y>\n Co-authored-by: A <a@x.y>", ""),
-            ("Co-authored-by:\nA <a@x.y>\nCo-authored-by: A <a@x.y\n>", ""),
-            # Only a line feed ends a line here: the Worker also reads these three.
-            ("x\r\n\r\nCo-authored-by: A <a@x.y>\r\nSigned-off-by: C <c@x.y>\r\n", ""),
-            ("x\rCo-authored-by: A <a@x.y>\rSigned-off-by: C <c@x.y>", ""),
-            ("x\u2028Co-authored-by: A <a@x.y>\u2028Signed-off-by: C <c@x.y>", ""),
-            # Nothing but blanks and tabs may follow the email.
-            *((f"Co-authored-by: A <a@x.y>{end}", "") for end in "\r\v\f\x85\xa0\u2028\u2029"),
-        ):
-            with self.subTest(message):
-                self.assertEqual(" ".join(cla.trailer_emails(message)), emails)
+    """What they give is in tests/vectors/authors.json."""
 
     def test_a_hostile_message_takes_no_time(self) -> None:
         # A commit message is its author's to write, so reading one takes no more than its length.
