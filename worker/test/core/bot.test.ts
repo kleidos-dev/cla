@@ -687,6 +687,22 @@ describe("a release", () => {
     ]);
   });
 
+  it("never approves a run with more jobs than were read: one of the rest may reach a self-hosted runner", async () => {
+    const pr = ready();
+    const r = run(pr);
+    const jobs = Array.from({ length: 100 }, () => ({ labels: ["ubuntu-latest"] }));
+    w.gh.answer(/\/jobs/, () => json({ total_count: 101, jobs }), 1);
+    await release(b, ask(pr));
+    expect(r.approved).toBe(false);
+    expect(logged()[0]).toEqual({ msg: "approve refused", repo: SANDBOX, pr: pr.number, reason: "self_hosted" });
+    w.gh.answer(/\/jobs/, () => json({ total_count: 1 }), 1);
+    await release(b, ask(pr));
+    expect(r.approved).toBe(false);
+    w.gh.answer(/\/jobs/, () => json({ total_count: 100, jobs }), 1);
+    await release(b, ask(pr));
+    expect(r.approved).toBe(true);
+  });
+
   it("approves a run whose jobs do not exist yet, or name no label", async () => {
     const pr = ready();
     const r = run(pr, { jobs: [{ runner_group_name: null }] });

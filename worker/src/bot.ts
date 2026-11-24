@@ -185,7 +185,9 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
 
 /** Whether a held run may target a self-hosted runner: any job whose labels are not all GitHub-hosted standard labels. */
 async function mayRunSelfHosted(bot: Bot, repo: string, runId: number, token: string): Promise<boolean> {
-  const { jobs } = (await bot.gh.request<{ jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data;
+  const { jobs, total_count } = (await bot.gh.request<{ total_count?: number; jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data;
+  // A job that was not read may be any job.
+  if ((total_count ?? 0) > (jobs?.length ?? 0)) return true;
   return Boolean(jobs?.some((j) => (j.labels ?? []).some((l) => !HOSTED_LABEL.test(l)) || (j.runner_group_name != null && j.runner_group_name !== "GitHub Actions")));
 }
 
