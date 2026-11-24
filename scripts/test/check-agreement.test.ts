@@ -126,6 +126,16 @@ describe("check-agreement.mjs", () => {
     }
   });
 
+  it("a binding text that is listed and missing is refused by name, and the other versions still checked", () => {
+    const root = tree((t) => rmSync(t.file("1", "addendum.md")));
+    assert.deepEqual(verdict(root), { ok: false, log: [], error: ["check-agreement: v1: addendum.md is listed in SHA256SUMS and cannot be read"] });
+  });
+
+  it("a version with no SHA256SUMS is refused by name", () => {
+    const root = tree((t) => rmSync(t.file("2", "SHA256SUMS")));
+    assert.deepEqual(verdict(root), { ok: false, log: [okLine("1")], error: ["check-agreement: v2: agreements/v2/SHA256SUMS cannot be read"] });
+  });
+
   it("an empty line of SHA256SUMS is no line, though it changes the set digest", () => {
     const root = tree((t) => writeFileSync(t.file("1", "SHA256SUMS"), readFileSync(t.file("1", "SHA256SUMS"), "utf8") + "\n"));
     const set = sha(readFileSync(join(root, "agreements/v1/SHA256SUMS")));

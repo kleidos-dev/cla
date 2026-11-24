@@ -30,6 +30,14 @@ export function sentenceFor(version, set) {
 export function check(root, { log = console.log, error = console.error } = {}) {
   const config = JSON.parse(readFileSync(join(root, "registry/config.json"), "utf8"));
   const sha = (/** @type {Buffer} */ b) => createHash("sha256").update(b).digest("hex");
+  /** The bytes of a file, or null when it cannot be read: a report, not a stack trace. */
+  const read = (/** @type {string} */ path) => {
+    try {
+      return readFileSync(path);
+    } catch {
+      return null;
+    }
+  };
   let failed = false;
   const fail = (/** @type {string} */ m) => {
     error(`check-agreement: ${m}`);
@@ -38,7 +46,11 @@ export function check(root, { log = console.log, error = console.error } = {}) {
 
   for (const [version, info] of Object.entries(config.versions)) {
     const dir = join(root, info.path);
-    const sums = readFileSync(join(dir, "SHA256SUMS"));
+    const sums = read(join(dir, "SHA256SUMS"));
+    if (!sums) {
+      fail(`v${version}: ${info.path}/SHA256SUMS cannot be read`);
+      continue;
+    }
     const listed = new Map();
     for (const line of sums.toString("utf8").split("\n").filter(Boolean)) {
       const m = /^([0-9a-f]{64}) {2}([a-z.]+)$/.exec(line);
@@ -49,8 +61,10 @@ export function check(root, { log = console.log, error = console.error } = {}) {
       if (!listed.has(name)) fail(`v${version}: SHA256SUMS does not list ${name}`);
     }
     for (const [name, digest] of listed) {
-      const actual = sha(readFileSync(join(dir, name)));
-      if (actual !== digest) fail(`v${version}: ${name} hashes to ${actual}, SHA256SUMS says ${digest}`);
+      const bytes = read(join(dir, name));
+      const actual = bytes && sha(bytes);
+      if (!actual) fail(`v${version}: ${name} is listed in SHA256SUMS and cannot be read`);
+      else if (actual !== digest) fail(`v${version}: ${name} hashes to ${actual}, SHA256SUMS says ${digest}`);
       if (info.files[name] !== digest) fail(`v${version}: config.json names ${info.files[name]} for ${name}, SHA256SUMS ${digest}`);
     }
     const set = sha(sums);
