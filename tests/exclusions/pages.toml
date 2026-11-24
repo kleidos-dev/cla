@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The axe violations of the sign pages that stay, by rule and page, each
+# with its reason. tests/pages/pages.test.mts fails on a violation that is
+# not here and on an entry that axe no longer finds.
+
+[[entry]]
+kind = "axe rule"
+file = "agreements/v2/individual.md"
+function = "/agreement"
+text = "link-name"
+reason = "boundary"
+why = """The individual template ends with an empty Markdown link, [](https://contributoragreements.org/...), which the
+page renders as a link with no text. The template is the chooser's binding text, hashed into SHA256SUMS and the
+acceptance sentence: it cannot change, and how the page renders it is the owner's call."""
+test = "scripts/test/check-agreement.test.ts: a changed byte of a binding text is refused with both digests"
+
+[[entry]]
+kind = "axe rule"
+file = "agreements/v2/entity.md"
+function = "/agreement/entity"
+text = "link-name"
+reason = "boundary"
+why = """The entity template ends with the same empty link to contributoragreements.org as the individual one, and is
+as binding and as frozen."""
+test = "scripts/test/check-agreement.test.ts: a changed byte of a binding text is refused with both digests"

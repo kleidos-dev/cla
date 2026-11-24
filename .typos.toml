@@ -36,6 +36,8 @@ informativo = "informativo"
 mis = "mis"
 momento = "momento"
 responde = "responde"
+# axe, the accessibility engine the page tests run (@axe-core/playwright).
+axe = "axe"
 
 [files]
 # The Spanish texts (the translations of the agreement and its summary,

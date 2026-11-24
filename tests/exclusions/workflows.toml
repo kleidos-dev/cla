@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The lines of the workflows' run blocks that can be deleted with every case
+# of tests/workflows/ still passing, each with its reason. The tests fail on
+# a line that survives and is not here, and on an entry that no longer
+# survives or whose text is gone. `function` is the job and the step.
+
+[[entry]]
+kind = "mutant"
+file = ".github/workflows/record.yml"
+function = "record/Record"
+text = "set -euo pipefail"
+operator = "line deleted"
+reason = "equivalent"
+why = """Every check exits by itself (`|| { echo ...; exit 2; }`), the recorder's failure is caught by `|| rc=$?` and
+passed on by `exit "$rc"`, no variable can be unset (GitHub sets each env: entry, an empty input as ""), and there
+is no pipe: -e, -u and pipefail change nothing the step does."""
+
+[[entry]]
+kind = "mutant"
+file = ".github/workflows/record.yml"
+function = "signin/Record"
+text = "set -euo pipefail"
+operator = "line deleted"
+reason = "equivalent"
+why = """Every check exits by itself, the recorder is the last command so its exit code is the step's, no variable
+can be unset (GitHub sets each env: entry) and there is no pipe: -e, -u and pipefail change nothing."""
+
+[[entry]]
+kind = "mutant"
+file = ".github/workflows/verify.yml"
+function = "verify/Verify"
+text = "set -euo pipefail"
+operator = "line deleted"
+reason = "equivalent"
+why = """The runner starts a run block with `bash -e` already (a step with no shell:), so -e holds without the line:
+a failing date or verifier still ends the step before the marker moves. No variable is read before it is set and
+there is no pipe, so -u and pipefail change nothing either."""

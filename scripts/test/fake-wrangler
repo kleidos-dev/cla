@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# A stand-in for wrangler in the tests of the setup scripts (a shell script:
+# a test starts it eight times a run, and Node would take ten times longer).
+# It appends one line to FAKE_WRANGLER_LOG, a file the test owns outside the
+# folders it searches: its working directory, its standard input and each
+# argument, each as "-" and its base64, so that support.ts reads them back
+# byte for byte. It fails the secret FAKE_WRANGLER_FAIL names (echoing the
+# value, as a careless tool might), fails whoami or secret list on request
+# (secret list with 7), and kills itself on the call FAKE_WRANGLER_DIE
+# names: whoami, list, or a secret's name.
+input=$(cat; printf x)
+input=${input%x}
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+line="-$(b64 "$(pwd -P)") -$(b64 "$input")"
+for a in "$@"; do line="$line -$(b64 "$a")"; done
+printf '%s\n' "$line" >>"$FAKE_WRANGLER_LOG"
+case "$1 $2" in
+  "whoami "*) call="whoami" ;;
+  "secret list") call="list" ;;
+  *) call=$3 ;;
+esac
+if [ -n "$call" ] && [ "$call" = "${FAKE_WRANGLER_DIE:-}" ]; then kill -KILL $$; fi
+if [ "$call" = whoami ]; then [ "${FAKE_WRANGLER_WHOAMI:-}" = fail ] && exit 1; exit 0; fi
+if [ "$call" = list ]; then [ "${FAKE_WRANGLER_LIST:-}" = fail ] && exit 7; exit 0; fi
+if [ "$1" = secret ] && [ -n "$3" ] && [ "$3" = "${FAKE_WRANGLER_FAIL:-}" ]; then
+  printf 'fake wrangler: refused %s\n' "$input"
+  printf 'fake wrangler: refused %s\n' "$input" >&2
+  exit 1
+fi
+printf 'fake wrangler: stored %s\n' "${3:-}"

@@ -1,0 +1,47 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# A stand-in for the gh CLI in the tests of create-signin-app.ts, logging as
+# fake-wrangler does, to FAKE_GH_LOG. It answers the calls the script makes
+# (the admin permission from FAKE_GH_ADMIN, the deployment branch policies
+# from FAKE_GH_POLICIES), fails the call FAKE_GH_FAIL names (admin, put,
+# policies, post or secret, echoing what it was given, as a careless tool
+# might), and kills itself on the call FAKE_GH_DIE names.
+input=$(cat; printf x)
+input=${input%x}
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+line="-$(b64 "$(pwd -P)") -$(b64 "$input")"
+path=
+post=
+put=
+for a in "$@"; do
+  line="$line -$(b64 "$a")"
+  case "$a" in
+    repos/*) path=$a ;;
+    POST) post=1 ;;
+    PUT) put=1 ;;
+  esac
+done
+printf '%s\n' "$line" >>"$FAKE_GH_LOG"
+if [ "$1 $2" = "secret set" ]; then call="secret"
+elif [ "$path" = repos/kleidos-dev/cla ]; then call="admin"
+else
+  case "$path" in
+    */deployment-branch-policies) if [ -n "$post" ]; then call="post"; else call="policies"; fi ;;
+    *) if [ -n "$put" ]; then call="put"; else call=; fi ;;
+  esac
+fi
+if [ -n "$call" ] && [ "$call" = "${FAKE_GH_DIE:-}" ]; then kill -KILL $$; fi
+if [ -n "$call" ] && [ "$call" = "${FAKE_GH_FAIL:-}" ]; then
+  printf 'fake gh: refused %s\n' "$input"
+  printf 'fake gh: refused %s\n' "$input" >&2
+  exit 1
+fi
+case "$call" in
+  admin) printf '%s\n' "${FAKE_GH_ADMIN-true}" ;;
+  policies) printf '%s\n' "${FAKE_GH_POLICIES:-}" ;;
+  secret) printf 'fake gh: stored\n' ;;
+  put | post) ;;
+  *) exit 9 ;;
+esac

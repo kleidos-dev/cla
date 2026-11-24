@@ -19,23 +19,31 @@
     "test:forced": "node test/tools/force.mjs",
     "test:mutation": "stryker run",
     "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && git verify-commit HEAD && git fetch --quiet origin main && git merge-base --is-ancestor HEAD origin/main && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
-    "test:scripts": "node --test ../scripts/test/"
+    "test:scripts": "cd .. && node --test --experimental-test-coverage --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs' --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 scripts/test/*.test.ts && node tests/tools/node/selftest.mjs && node tests/tools/node/scripts-mcdc.mjs coverage/scripts-mcdc.json scripts/test/*.test.ts && python3 tests/tools/ratchet.py check scripts --conditions coverage/scripts-mcdc.json",
+    "test:scripts-mutation": "cd .. && node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60 && python3 tests/tools/ratchet.py check scripts --mutants coverage/scripts-mutation.json",
+    "test:workflows": "node --test ../tests/workflows/*.test.mts",
+    "test:pages": "node --test ../tests/pages/pages.test.mts"
   },
   "devDependencies": {
+    "@actions/expressions": "0.3.62",
+    "@axe-core/playwright": "4.14.0",
     "@cloudflare/vitest-plugin": "1.9.0",
     "@cloudflare/workers-types": "5.20261123.1",
     "@eslint/js": "10.0.1",
     "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/instrumenter": "10.1.1",
     "@stryker-mutator/vitest-runner": "10.1.1",
     "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-istanbul": "5.1.1",
     "eslint": "10.15.0",
     "fast-check": "4.11.0",
+    "playwright-core": "1.65.1",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.73.0",
     "vitest": "5.1.1",
-    "wrangler": "4.166.0"
+    "wrangler": "4.166.0",
+    "yaml": "2.9.1"
   },
   "overrides": {
     "@stryker-mutator/core": {

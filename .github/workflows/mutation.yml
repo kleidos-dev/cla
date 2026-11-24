@@ -3,8 +3,9 @@
 #
 # The mutants, every Monday and by hand: what a test noticed, where ci.yml
 # measures what a test ran. Each job plants its share of them in the Worker's
-# core, inside the Workers runtime, and holds the survivors to
-# tests/floors/worker-core.toml and tests/exclusions/worker-core.toml, so a
+# core, inside the Workers runtime, or in the setup scripts and the agreement
+# gate (tests/tools/node/scripts-mut.mjs), and holds the survivors to
+# tests/floors/<area>.toml and tests/exclusions/<area>.toml, so a
 # survivor nobody listed, a listed one that is now killed, and a file with
 # fewer mutants than it has are red. The shares are made from the area's own
 # list of files: none can be left out. Nothing is written anywhere: a red job
@@ -16,6 +17,12 @@ on:
     # Monday 05:00 Europe/Madrid in winter.
     - cron: "0 4 * * 1"
   workflow_dispatch:
+    inputs:
+      area:
+        description: "the area whose mutants to plant: all, worker-core or scripts"
+        type: choice
+        options: [all, worker-core, scripts]
+        default: all
 
 permissions:
   contents: read
@@ -27,6 +34,7 @@ concurrency:
 jobs:
   mutants:
     name: "🧬 Mutants of the Worker's core (${{ matrix.share }})"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-core'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -62,6 +70,7 @@ jobs:
 
   forced:
     name: "🧬 Forced conditions of the Worker's core"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-core'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -83,3 +92,32 @@ jobs:
       - name: No survivor that is not listed
         working-directory: worker
         run: python3 ../tests/tools/ratchet.py check worker-core --forced coverage/force.json
+
+  scripts:
+    name: "🧬 Mutants of the setup scripts and the agreement gate"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'scripts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every mutant, sixty seconds each at most, two at a time
+        run: node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scripts-mutation
+          path: coverage/scripts-mutation.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: No survivor that is not listed
+        run: python3 tests/tools/ratchet.py check scripts --mutants coverage/scripts-mutation.json

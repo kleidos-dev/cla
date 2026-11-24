@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The misses of the setup scripts and the agreement gate that stay, each
+# with one of the four reasons of the testing standard (unreachable,
+# equivalent, boundary, tool) and why. tests/tools/ratchet.py fails on a miss
+# that is not here, on an entry that is no longer missed and on one whose
+# text is gone.
+
+[[entry]]
+kind = "condition"
+file = "scripts/create-github-app.ts"
+function = "main"
+text = 'stored.join(", ")'
+on = 'stored.join(", ") || "nothing"'
+count = 2
+reason = "tool"
+why = """The instrumenter (worker/test/tools/mcdc.mjs) takes a `||` used as a value as a decision whose outcome is the
+truth of its value. With a non-empty literal after it, that value is true whatever the condition is, so no two
+vectors can differ in the outcome: MC/DC cannot be shown, though the condition decides which text is shown. Both
+of its values are tested, by what the terminal and the page say."""
+test = "scripts/test/create-github-app.test.ts: stores the six secrets in order (a list); when no secret is stored it says nothing was"
+
+[[entry]]
+kind = "condition"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = 'stored.join(", ")'
+on = 'stored.join(", ") || "nothing"'
+count = 2
+reason = "tool"
+why = """The same default after `||` as in create-github-app.ts: the value of the decision is always a non-empty
+text, so the instrumenter, which judges it by its truth, sees one outcome only."""
+test = "scripts/test/create-signin-app.test.ts: stores the client id and secret (a list); when no secret is stored it says nothing was"
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-github-app.ts"
+function = "exchange"
+text = 'typeof c.id !== "number"'
+on = 'if (typeof c.id !== "number" || !Number.isSafeInteger(c.id) || c.id <= 0) throw new Error("the conversion has no id");'
+operator = "ConditionalExpression"
+replacement = "false"
+reason = "equivalent"
+why = """Number.isSafeInteger is false for every value that is not a number, so the condition after it refuses all
+that the typeof test does: the typeof test is there for the type checker, which takes no Number.isSafeInteger as
+a guard of the type and needs it before `c.id <= 0`."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-signin-app.ts"
+function = "exchange"
+text = 'typeof all.id !== "number"'
+on = 'if (typeof all.id !== "number" || !Number.isSafeInteger(all.id) || all.id <= 0) throw new Error("the conversion has no id");'
+operator = "ConditionalExpression"
+replacement = "false"
+reason = "equivalent"
+why = """As in create-github-app.ts: Number.isSafeInteger refuses every value that is not a number; the typeof test
+narrows the type for `all.id <= 0` and the id the script returns."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-github-app.ts"
+function = "main"
+text = '""'
+on = 'const code = url.searchParams.get("code") ?? "";'
+operator = "StringLiteral"
+replacement = '"Stryker was here!"'
+reason = "equivalent"
+why = """The default stands for a redirect with no code, and only the pattern ^[A-Za-z0-9_-]{1,100}$ reads it: the
+empty text and "Stryker was here!" both fail it (a space, an exclamation mark), so both end in the same refusal,
+exit 3. The default must be some text that fails the pattern: null would be read as "null", which matches."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = '""'
+on = 'const code = url.searchParams.get("code") ?? "";'
+operator = "StringLiteral"
+replacement = '"Stryker was here!"'
+reason = "equivalent"
+why = """As in create-github-app.ts: any default that fails the code's pattern is refused the same way."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-github-app.ts"
+function = "main"
+text = '""'
+on = 'const got = url.searchParams.get("state") ?? "";'
+operator = "StringLiteral"
+replacement = '"Stryker was here!"'
+reason = "equivalent"
+why = """The default stands for a redirect with no state, and only sameText() compares it with this run's state: 43
+characters of base64url, which neither the empty text nor "Stryker was here!" (17 characters, with spaces) can
+equal, so both are refused the same way and the script keeps waiting."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = '""'
+on = 'const got = url.searchParams.get("state") ?? "";'
+operator = "StringLiteral"
+replacement = '"Stryker was here!"'
+reason = "equivalent"
+why = """As in create-github-app.ts: no default of another length or alphabet can equal the 43-character state."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-github-app.ts"
+function = "main"
+text = "process.argv.slice(2)"
+on = "main(settings(process.argv.slice(2), process.env)).then("
+operator = "MethodExpression"
+replacement = "process.argv"
+reason = "equivalent"
+why = """settings() only asks whether one argument is exactly --test. The two entries the slice drops are the
+absolute paths of node and of the script, which cannot be --test, so the answer is the same with or without
+them."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = "process.argv.slice(2)"
+on = "main(settings(process.argv.slice(2), process.env)).then("
+operator = "MethodExpression"
+replacement = "process.argv"
+reason = "equivalent"
+why = """As in create-github-app.ts: the paths of node and of the script are never --test."""
+
+[[entry]]
+kind = "mutant"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = "false"
+on = "const gh: Gh = (args, input, keep = false) => run(s.gh, args, input, { keep });"
+operator = "BooleanLiteral"
+replacement = "true"
+reason = "equivalent"
+why = """The default serves the three calls that do not read gh's output: the environment's PUT, the policy's POST
+and secret set. With it true, their output is read into a text nobody uses and printed nowhere, so the terminal,
+the exit code and every call are the same; run() itself is tested both ways (create-signin-app.test.ts, "run
+keeps the command's output only when asked")."""
+
+[[entry]]
+kind = "mutant"
+file = "worker/scripts/check-agreement.mjs"
+function = "check"
+text = '"utf8"'
+on = 'const config = JSON.parse(readFileSync(join(root, "registry/config.json"), "utf8"));'
+operator = "StringLiteral"
+replacement = '""'
+reason = "equivalent"
+why = """With an empty encoding readFileSync returns the bytes, and JSON.parse reads a Buffer through its toString(),
+which decodes UTF-8: the same text, the same object."""
+
+[[entry]]
+kind = "mutant"
+file = "worker/scripts/check-agreement.mjs"
+function = "check"
+text = "{ return null; }"
+on = "} catch {"
+operator = "BlockStatement"
+replacement = "{}"
+reason = "equivalent"
+why = """An empty catch returns undefined instead of null, and the only reader asks `!bytes`, which is true for
+both: the file is refused by name either way."""
