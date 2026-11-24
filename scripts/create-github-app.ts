@@ -99,8 +99,9 @@ export function run(wrangler: string, args: string[], input?: string): Promise<{
     const child = spawn(wrangler, args, { cwd: WORKER_DIR, stdio: ["pipe", "ignore", "ignore"], env: process.env });
     child.on("error", () => resolve({ code: 127 }));
     child.on("close", (code) => resolve({ code: code ?? 1 }));
-    child.stdin.on("error", () => undefined);
-    child.stdin.end(input ?? "");
+    // Out of file descriptors (EMFILE, ENFILE) Node starts nothing and gives the child no pipes; its "error" event answers 127.
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(input ?? "");
   });
 }
 
@@ -275,5 +276,13 @@ export async function main(s: Settings): Promise<number> {
   return code;
 }
 
-// main() does not reject: what can fail is answered inside it, and the server's callback is outside its chain.
-if (import.meta.main) void main(settings(process.argv.slice(2), process.env)).then((code) => process.exit(code));
+// A failure main() does not answer (spawn() throws for ENOMEM, for one) ends the run with one line, not a stack trace.
+if (import.meta.main) {
+  main(settings(process.argv.slice(2), process.env)).then(
+    (code) => process.exit(code),
+    (e: unknown) => {
+      console.error(e instanceof Error ? e.message : "unknown error");
+      process.exit(1);
+    },
+  );
+}

@@ -22,6 +22,7 @@ export const here = dirname(fileURLToPath(import.meta.url));
 export const WORKER_DIR = join(here, "..", "..", "worker") + "/";
 export const FAKE_WRANGLER = join(here, "fake-wrangler");
 export const FAKE_GH = join(here, "fake-gh");
+export const BREAK_SPAWN = join(here, "break-spawn.ts");
 export const ORG_ID = 357318718;
 export const CODE = "abc123def456";
 
@@ -257,10 +258,18 @@ export interface Child {
   tmp: string;
 }
 
-export async function runChild(script: string, args: string[], env: Record<string, string>, drive?: (base: string) => Promise<void>): Promise<Child> {
+/** How a child is started: a module it loads first (--import), and the most file descriptors it may hold (ulimit -n). */
+export interface ChildOptions {
+  preload?: string;
+  descriptors?: number;
+}
+
+export async function runChild(script: string, args: string[], env: Record<string, string>, drive?: (base: string) => Promise<void>, opts: ChildOptions = {}): Promise<Child> {
   const work = scratch("cla-work-");
   const tmp = scratch("cla-tmp-");
-  const child = spawn(process.execPath, [...hookArgs(), script, ...args], { cwd: work, env: { PATH: process.env.PATH ?? "", HOME: work, TMPDIR: tmp, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+  const node = [...hookArgs(), ...(opts.preload ? ["--import", opts.preload] : []), script, ...args];
+  const [cmd, argv] = opts.descriptors ? ["/bin/sh", ["-c", `ulimit -n ${opts.descriptors} && exec "$0" "$@"`, process.execPath, ...node]] : [process.execPath, node];
+  const child = spawn(cmd, argv, { cwd: work, env: { PATH: process.env.PATH ?? "", HOME: work, TMPDIR: tmp, ...env }, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   let stdout = "";
   let stderr = "";

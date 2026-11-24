@@ -21,9 +21,7 @@ exclusions = 15
 # and no less. A number that falls needs a dated line in a table [lowered],
 # such as "condition scripts/create-github-app.ts 2026-11-24" = "why".
 [measured]
-"scripts/create-github-app.ts" = { condition = 32, mutant = 294 }
-"scripts/create-signin-app.ts" = { condition = 47, mutant = 422 }
+"scripts/create-github-app.ts" = { condition = 33, mutant = 301 }
+"scripts/create-signin-app.ts" = { condition = 48, mutant = 429 }
 "worker/scripts/check-agreement.mjs" = { condition = 14, mutant = 94 }
 
-[lowered]
-"mutant scripts/create-signin-app.ts 2026-11-24" = "run() reaches standard input with a non-null assertion, not ?.: the two OptionalChaining mutants it could never tell apart are gone."

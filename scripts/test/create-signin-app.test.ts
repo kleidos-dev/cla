@@ -13,7 +13,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { WORKER_SECRETS, ensureEnvironment, escapeHtml, exchange, main, manifest, printable, run, sameText, settings } from "../create-signin-app.ts";
 import type { Settings } from "../create-signin-app.ts";
-import { CODE, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
+import { BREAK_SPAWN, CODE, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
 import type { GitHub, Output } from "./support.ts";
 
 const SCRIPT = join(here, "..", "create-signin-app.ts");
@@ -591,6 +591,29 @@ describe("the script, as the owner runs it", () => {
       }
     } finally {
       cleanup(r.work, r.tmp);
+    }
+  });
+
+  it("out of file descriptors, wrangler cannot start: exit 2 with the sign-in hint, no trace, nothing run", async () => {
+    const r = await runChild(SCRIPT, ["--test"], { ...env(), BREAK_SPAWN: "descriptors" }, undefined, { preload: BREAK_SPAWN, descriptors: 256 });
+    cleanup(r.work, r.tmp);
+    assert.equal(r.code, 2, r.out);
+    assert.equal(r.stderr, "wrangler is not signed in: run `npx wrangler login` in worker/ first, then this script again.\n");
+    assert.deepEqual(wcalls(), []);
+      assert.deepEqual(gcalls(), []);
+  });
+
+  it("a failure main() does not answer ends the run with its message on one line and exit 1", async () => {
+    for (const [how, text] of [
+      ["error", "spawn ENOMEM"],
+      ["value", "unknown error"],
+    ] as const) {
+      const r = await runChild(SCRIPT, ["--test"], { ...env(), BREAK_SPAWN: how }, undefined, { preload: BREAK_SPAWN });
+      cleanup(r.work, r.tmp);
+      assert.equal(r.code, 1, r.out);
+      assert.equal(r.stderr, `${text}\n`, how);
+      assert.deepEqual(wcalls(), []);
+      assert.deepEqual(gcalls(), []);
     }
   });
 
