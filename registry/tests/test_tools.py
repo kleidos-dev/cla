@@ -381,16 +381,24 @@ class Mutate(Planted):
         functions = {mutator.describe(m)["function"] for m in mutator.mutants}
         self.assertIn("unused", functions)
         self.assertLess(int(sampled[1]), len(mutator.mutants), "not those test_other alone runs")
-        self.assertEqual(mutate.changed_tests(self.root / "tests", "HEAD"), {"test_planted"})
+        self.assertEqual(
+            mutate.changed_tests(self.root / "tests", "HEAD"), ({"test_planted"}, False)
+        )
         code, found, said = self.results(*asked)
         self.assertEqual(code, 1, said)
         self.assertIn("n <= LIMIT", said)
         self.assertNotIn("unused", {f["function"] for f in found}, "test_planted never runs it")
         (self.root / "tests" / "helper.py").write_text("X = 1\n", "utf-8")
         subprocess.run([*git, "add", "."], cwd=self.root, check=True, capture_output=True)
-        self.assertIsNone(mutate.changed_tests(self.root / "tests", "HEAD"), "a helper: every test")
+        changed = mutate.changed_tests(self.root / "tests", "HEAD")
+        self.assertEqual(changed, ({"test_planted"}, True), "a helper beside it: every test too")
         every = self.run_tool("mutate.py", *asked, "--count")
+        self.assertIn("other mutants test_planted runs, seed 3", every.stdout, "named first")
         self.assertIn("other mutants every test runs, seed 3", every.stdout)
+        self.write(MODULE, SUITE)
+        alone = self.run_tool("mutate.py", *asked, "--count")
+        self.assertNotIn("test_planted runs", alone.stdout)
+        self.assertIn("other mutants every test runs, seed 3", alone.stdout, "a helper alone")
 
     def test_a_sample_says_so(self) -> None:
         done = self.run_tool("mutate.py", "--sample", "2", "--seed", "7", "--count")

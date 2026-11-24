@@ -557,9 +557,10 @@ def choose(mutator: Mutator, args: argparse.Namespace) -> list[Mutant]:
 TESTED_BY = ("tests/tools/py", "pyproject.toml", "requirements.txt", ".python-version")
 
 
-def changed_tests(tests: Path, since: str) -> set[str] | None:
-    """The test modules whose files changed since a revision, by name; None when anything else
-    the suite reads or runs under changed (a helper, a fixture, a vector, a tool): every test."""
+def changed_tests(tests: Path, since: str) -> tuple[set[str], bool]:
+    """The test modules whose files changed since a revision, by name, and whether anything else
+    the suite reads or runs under changed too (a helper, a fixture, a vector, a tool), which is
+    every test."""
 
     def git(*args: str) -> str:
         return subprocess.run(
@@ -569,35 +570,41 @@ def changed_tests(tests: Path, since: str) -> set[str] | None:
     root = Path(git("rev-parse", "--show-toplevel").strip())
     paths = [str(root / p) for p in TESTED_BY]
     changed = git("diff", "--name-only", "--no-renames", since, "--", str(tests), *paths).split()
-    modules = set()
+    modules, every = set(), False
     for name in changed:
         path = root / name
-        if path.parent != tests or not re.fullmatch(r"test_\w+\.py", path.name):
-            return None
-        modules.add(path.stem)
-    return modules
+        if path.parent == tests and re.fullmatch(r"test_\w+\.py", path.name):
+            modules.add(path.stem)
+        else:
+            every = True
+    return modules, every
 
 
 def tests_sample(
-    mutator: Mutator, chosen: list[Mutant], reach: Reach, modules: set[str] | None, args: Any
+    mutator: Mutator, chosen: list[Mutant], reach: Reach, changed: tuple[set[str], bool], args: Any
 ) -> list[Mutant]:
-    """At most ``--tests-sample`` mutants besides the chosen ones, of the statements the changed
-    test modules run (of every statement, for None), drawn by the seed."""
+    """At most ``--tests-sample`` mutants besides the chosen ones, drawn by the seed: of the
+    statements the changed test modules run first, then, for a change of every test, of the rest
+    with what is left, so that a helper touched beside a weakened module does not spread it thin."""
+    modules, every = changed
     taken = {id(m) for m in chosen}
 
     def theirs(m: Mutant) -> bool:
-        return modules is None or any(
-            t.split(".")[0] in modules for t in reach.tests(mutator.lines(m))
-        )
+        return any(t.split(".")[0] in modules for t in reach.tests(mutator.lines(m)))
 
-    pool = [m for m in mutator.mutants if id(m) not in taken and theirs(m)]
-    picked = random.Random(args.seed).sample(pool, min(args.tests_sample, len(pool)))  # noqa: S311
-    which = "every test" if modules is None else ", ".join(sorted(modules))
-    # Flushed now: the processes forked from here would otherwise take the line with them.
-    print(
-        f"notice: {len(picked)} of the {len(pool)} other mutants {which} runs, seed {args.seed}",
-        flush=True,
-    )
+    pool = [m for m in mutator.mutants if id(m) not in taken]
+    named = [m for m in pool if theirs(m)]
+    rest = [m for m in pool if not theirs(m)] if every else []
+    picked: list[Mutant] = []
+    for which, tier in ((", ".join(sorted(modules)), named), ("every test", rest)):
+        n = min(args.tests_sample - len(picked), len(tier))
+        if tier and n > 0:
+            picked += random.Random(args.seed).sample(tier, n)  # noqa: S311  no secret
+            # Flushed now: the processes forked from here would otherwise take the line with them.
+            print(
+                f"notice: {n} of the {len(tier)} other mutants {which} runs, seed {args.seed}",
+                flush=True,
+            )
     return picked
 
 
@@ -658,10 +665,12 @@ def main(argv: list[str] | None = None) -> int:
         return merged(mutator, args.merged, listed, file)
     chosen = choose(mutator, args)
     os.environ["REGISTER_MEASURED"] = "1"  # the tests of this tool do not run in it
-    modules = changed_tests(tests, args.since) if args.since and args.tests_sample else set()
-    reach = reach_of(source, tests) if modules != set() else None
+    changed = (
+        changed_tests(tests, args.since) if args.since and args.tests_sample else (set(), False)
+    )
+    reach = reach_of(source, tests) if changed != (set(), False) else None
     if reach is not None:
-        chosen += tests_sample(mutator, chosen, reach, modules, args)
+        chosen += tests_sample(mutator, chosen, reach, changed, args)
     counts = collections.Counter(m.operator for m in chosen)
     print(
         f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}",

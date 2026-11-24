@@ -89,15 +89,21 @@ export function changedLines(since) {
 /** What the tests of the area run under besides their own files: a change to any of these is a change to every test. */
 export const TESTED_BY = ["scripts/test", "tests/tools/node", "scripts/tsconfig.json", "worker/package.json", "worker/package-lock.json"];
 
-/** The measured files whose tests a change since a revision touches: a test file's own (TESTS), or all of them for anything else. */
+/**
+ * The measured files whose tests a change since a revision touches, in tiers sampled in turn: the files of the
+ * changed test files first (TESTS), then, when anything else the tests run under changed too, every other
+ * file, so that a helper touched beside a weakened test file does not spread the sample thin.
+ */
 export function testedFiles(changed) {
-  const out = new Set();
+  const named = new Set();
+  let all = false;
   for (const path of changed) {
     const of = MEASURED.filter((f) => TESTS[f].includes(path));
-    if (of.length === 0) return [...MEASURED];
-    for (const f of of) out.add(f);
+    if (of.length === 0) all = true;
+    for (const f of of) named.add(f);
   }
-  return MEASURED.filter((f) => out.has(f));
+  const first = MEASURED.filter((f) => named.has(f));
+  return [first, all ? MEASURED.filter((f) => !named.has(f)) : []].filter((tier) => tier.length > 0);
 }
 
 /** The paths of the tests and of what they run under that changed since a revision, by git's own diff. */
@@ -174,22 +180,25 @@ export async function campaign({ files = MEASURED, workers = 2, limitMs = 60_000
   const jobs = [];
   const others = [];
   const report = { schemaVersion: "2", thresholds: { high: 100, low: 100 }, files: {} };
-  for (const file of new Set([...files, ...tested])) {
+  for (const file of new Set([...files, ...tested.flat()])) {
     const source = readFileSync(join(ROOT, file), "utf8");
     const all = await mutantsOf(file, source);
     report.files[file] = { language: file.endsWith(".ts") ? "typescript" : "javascript", source, mutants: [] };
     for (const m of all) {
       const at = m.location.start.line + 1;
       if (files.includes(file) && !(lines && !lines.get(file)?.has(at))) jobs.push({ file, source, m });
-      else if (tested.includes(file)) others.push({ file, source, m });
+      else if (tested.flat().includes(file)) others.push({ file, source, m });
     }
   }
   const chosen = sample(jobs, max, seed);
   if (chosen.length < jobs.length) log(`notice: ${chosen.length} of ${jobs.length} mutants, a sample by seed ${seed}`);
-  if (testsMax > 0 && others.length > 0) {
-    const more = sample(others, testsMax, seed);
-    log(`notice: ${more.length} of the ${others.length} other mutants of ${tested.join(", ")}, for the changed tests, a sample by seed ${seed}`);
+  let budget = testsMax;
+  for (const tier of tested) {
+    const pool = others.filter((j) => tier.includes(j.file));
+    const more = sample(pool, Math.min(budget, pool.length), seed);
+    if (more.length > 0) log(`notice: ${more.length} of the ${pool.length} other mutants of ${tier.join(", ")}, for the changed tests, a sample by seed ${seed}`);
     chosen.push(...more);
+    budget -= more.length;
   }
   const copies = Array.from({ length: Math.max(1, Math.min(workers, chosen.length)) }, copyTree);
   // The unmutated tests must pass in a copy, and their count is what a survivor must reach.

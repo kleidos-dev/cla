@@ -120,26 +120,32 @@ export async function patterns(lines, read, { max = Infinity, seed = 1, log = ()
 export const TESTED_BY = ["worker/package.json", "worker/package-lock.json", "worker/tsconfig.json", "worker/stryker.config.json", "worker/vitest.config.ts", "worker/vitest.mcdc.config.mjs", "worker/vitest.stryker.config.mjs", "registry/tests/normalize-vectors.json", "registry/tests/vectors"];
 
 /**
- * The sources (relative to worker/) that the changed test files are for. A test file of worker/test/ is for the
- * sources it imports and for the one its name names (core/keys.test.ts: src/keys.ts; edge/web-sign.test.ts:
- * src/web.ts); a file that is gone, a helper, a tool, a configuration or a shared vector is for every source,
- * as is a test file that names none. `read` gives a test file's text, or null when it is gone.
+ * The sources (relative to worker/) that the changed test files are for, and whether the change is for every
+ * source as well. A test file of worker/test/ is for the sources it imports and for the one its name names
+ * (core/keys.test.ts: src/keys.ts; edge/web-sign.test.ts: src/web.ts); a test file that is gone or names none,
+ * a helper, a tool, a configuration or a shared vector is for every source. The named sources come first, so
+ * that a helper touched beside a weakened test file does not spread the sample thin. `read` gives a test
+ * file's text, or null when it is gone.
  */
 export function coveredBy(changed, sources, read) {
   const known = new Set(sources);
   const out = new Set();
+  let all = false;
   for (const path of changed) {
     const test = /^worker\/(test\/.+)\.test\.ts$/.exec(path);
     const text = test ? read(path) : null;
-    if (text === null) return [...known].sort();
+    if (text === null) {
+      all = true;
+      continue;
+    }
     const name = basename(test[1]);
     const found = [`src/${name}.ts`, `src/${name.split("-")[0]}.ts`];
     for (const m of text.matchAll(/from\s+["'](?:\.\.\/)+src\/([^"']+)["']/g)) found.push(`src/${m[1].replace(/\.ts$/, "")}.ts`);
     const mine = found.filter((f) => known.has(f));
-    if (mine.length === 0) return [...known].sort();
+    if (mine.length === 0) all = true;
     for (const f of mine) out.add(f);
   }
-  return [...out].sort();
+  return { files: [...out].sort(), all };
 }
 
 /** A seeded choice of at most `max` mutants of whole files, besides those `planted` holds already: the patterns and how many they add. */
@@ -178,10 +184,13 @@ if (import.meta.main) {
     const root = join(worker, "..");
     const changed = git("diff", "--name-only", "--no-renames", values.since, "--", "test", ...TESTED_BY.map((p) => join(root, p))).split("\n").filter(Boolean);
     if (changed.length > 0) {
-      const files = coveredBy(changed, sourceFiles(), (p) => (existsSync(join(root, p)) ? readFileSync(join(root, p), "utf8") : null));
-      const more = await sampled(files, read, { max: testsMax, seed, log, planted });
-      console.error(`${more.planted} mutants of the sources of the ${changed.length} changed test files`);
-      out.push(...more.patterns);
+      const every = sourceFiles();
+      const { files, all } = coveredBy(changed, every, (p) => (existsSync(join(root, p)) ? readFileSync(join(root, p), "utf8") : null));
+      // The sources the changed test files name first, then, for a change of everything, the others with what is left.
+      const named = files.length > 0 ? await sampled(files, read, { max: testsMax, seed, log, planted }) : { patterns: [], planted: 0 };
+      const rest = all && named.planted < testsMax ? await sampled(every.filter((f) => !files.includes(f)), read, { max: testsMax - named.planted, seed, log, planted }) : { patterns: [], planted: 0 };
+      console.error(`${named.planted + rest.planted} mutants of the sources of the ${changed.length} changed test files`);
+      out.push(...named.patterns, ...rest.patterns);
     }
   }
   console.log([...new Set(out)].join(","));
