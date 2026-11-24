@@ -9,11 +9,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import worker from "../../src/index";
-import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, readTransaction } from "../../src/session";
+import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, SESSION_TTL, readTransaction } from "../../src/session";
 import { b64urlEncode, must, nowSeconds, utf8 } from "../../src/util";
 import { CLIENT_ID, SIGNIN_CLIENT_ID } from "../fakegh";
 import type { FakePr, User } from "../fakegh";
-import { CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, NEAR_ORIGINS, openPr, restoring, sent, sessionHeader, sessionSet, transactionHeader, world } from "./support";
+import { CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, NEAR_ORIGINS, openPr, restoring, sent, sessionHeader, sessionSet, transactionHeader, world } from "./support";
 import type { World } from "./support";
 
 restoring();
@@ -147,6 +147,36 @@ describe("the callback", () => {
     expect(lines(w)).toEqual([{ msg: "signed in", repo: SANDBOX, pr: p.number, outcome: "must_sign" }]);
     const exchange = must(w.gh.seen(/^POST \/login\/oauth\/access_token$/)[0]);
     expect(exchange.body).toEqual({ client_id: CLIENT_ID, client_secret: "test-client-secret-value", code: s.code, redirect_uri: `${ORIGIN}/auth/callback`, code_verifier: "v".repeat(43), repository_id: must(w.gh.repos.get(SANDBOX)).id });
+  });
+
+  it("keeps the session an hour from the callback, no longer", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const s = await started(w, p, alice);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-24T12:00:00Z"));
+    try {
+      const r = await get(w, `/auth/callback?code=${s.code}&state=${s.state}`, s.cookie);
+      expect(SESSION_TTL).toBe(3600);
+      expect(must(await sessionSet(w, r)).exp).toBe(Date.parse("2026-11-24T13:00:00Z") / 1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("of an author who already signed revokes the token at once and keeps none", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const id = w.gh.next();
+    w.gh.comments.push({ id, repo: p.repo, pr: p.number, body: CONFIG.versions["1"].sentence, user: alice, created_at: "2026-11-02T10:00:00Z", updated_at: "2026-11-02T10:00:00Z", via_app: true });
+    await w.gh.record(id, 1);
+    const s = await started(w, p, alice);
+    const r = await get(w, `/auth/callback?code=${s.code}&state=${s.state}`, s.cookie);
+    expect(r.status).toBe(303);
+    const session = must(await sessionSet(w, r));
+    expect([session.token, session.app, session.for]).toEqual([undefined, undefined, undefined]);
+    expect(w.gh.revokedGrants).toHaveLength(1);
+    expect(lines(w)).toEqual([{ msg: "signed in", repo: SANDBOX, pr: p.number, outcome: "signed" }]);
   });
 
   it("of a sign-in version exchanges the code with the sign-in app, naming no repository", async () => {

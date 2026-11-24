@@ -95,6 +95,21 @@ describe("the strings of both languages", () => {
   });
 });
 
+describe("the sentences that say what was signed, recorded or binding", () => {
+  it("are these, word for word, in both languages", () => {
+    expect([S.en.accept.error, S.es.accept.error]).toEqual(["Tick the box to accept. Nothing was signed.", "Marca la casilla para aceptar. No se ha firmado nada."]);
+    expect([S.en.status.edited, S.es.status.edited]).toEqual([
+      "Your acceptance comment on this pull request was edited or deleted, so it cannot be recorded. Nothing is kept from it. To accept, sign in again below.",
+      "Tu comentario de aceptación en este pull request se editó o se borró, así que no se puede anotar. No se guarda nada de él. Para aceptar, vuelve a entrar abajo.",
+    ]);
+    expect([S.en.status.recordFailed, S.es.status.recordFailed]).toEqual([
+      "Your acceptance could not be recorded: GitHub did not confirm the sign-in, or it had expired. Nothing was recorded. To accept, sign in again below.",
+      "No se pudo anotar tu aceptación: GitHub no confirmó la sesión, o había caducado. No se ha anotado nada. Para aceptar, vuelve a entrar abajo.",
+    ]);
+    expect([S.en.accept.binding, S.es.accept.binding]).toEqual([null, 'Solo el texto inglés obliga: <a href="/agreement?lang=en" hreflang="en" lang="en">Kleidos Contributor Agreement</a>. Lo que sigue es una traducción informativa.']);
+  });
+});
+
 describe("the check that a Spanish page shows no English", () => {
   it("finds an English page string, a way back or a message there, written plainly or escaped", () => {
     expect(englishIn(`<title>${S.en.start.title} · x</title>`)).toEqual([S.en.start.title]);

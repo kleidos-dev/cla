@@ -242,7 +242,12 @@ describe("an acceptance that is refused", () => {
     }
     const es = await agree(w, { ...form, csrf: forOther, lang: "es", accept: "yes" }, { cookie });
     expect(await expectMessage(es, 403, "csrf", "es")).toContain(`<a class="btn btn-block" href="/sign/${SANDBOX}/${form.pr ?? ""}?lang=es">Volver a la página de firma</a>`);
-    expect(lines(w)).toEqual(Array(5).fill({ msg: "agree refused", reason: "csrf" }));
+    // A session with no token, or one for another pull request, is refused for its CSRF token first.
+    for (const extra of [{}, { token: "ghu_x", for: "kleidos-dev/other#1" }]) {
+      const c = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", sid: "other", ...extra });
+      await expectMessage(await agree(w, { ...form, csrf: "", accept: "yes" }, { cookie: c }), 403, "csrf");
+    }
+    expect(lines(w)).toEqual(Array(7).fill({ msg: "agree refused", reason: "csrf" }));
     expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });
   });
 

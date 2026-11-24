@@ -194,6 +194,14 @@ describe("a signed delivery", () => {
     expect(batches).not.toHaveBeenCalled();
   });
 
+  it("of the register's Record run, through the front door, re-evaluates the pull request it recorded", async () => {
+    const w = await world();
+    const run = { event: "workflow_dispatch", path: ".github/workflows/record.yml", head_branch: "main", conclusion: "success", display_title: `Record sign ${SANDBOX}#7 4242` };
+    const r = await webhook(w, "workflow_run", { action: "completed", workflow_run: run, repository: { full_name: REGISTRY, id: 5, owner }, installation: { id: 1 } }, { delivery: DELIVERY });
+    expect(r.status).toBe(202);
+    expect(w.queue.sent).toEqual([{ body: { kind: "evaluate", repo: SANDBOX, pr: 7 } }]);
+  });
+
   it("delivered twice is queued twice: a repeated delivery only makes the state be computed again", async () => {
     const w = await world();
     const payload = { action: "synchronize", pull_request: { number: 7 }, repository, installation: { id: 1 } };
@@ -216,11 +224,14 @@ describe("a delivery too large to read", () => {
     expect(w.queue.sent).toEqual([]);
   });
 
-  it("is read when it is exactly at the limit", async () => {
+  it("is read when it is exactly at the limit of 2 MiB, and refused one byte over it", async () => {
+    expect(MAX_WEBHOOK_BYTES).toBe(2_097_152);
     const w = await world();
     const body = `{"pad":"${"x".repeat(MAX_WEBHOOK_BYTES - 10)}"}`;
     expect(body.length).toBe(MAX_WEBHOOK_BYTES);
     expect((await deliver(w, body)).status).toBe(202);
+    const over = await deliver(w, `{"pad":"${"x".repeat(MAX_WEBHOOK_BYTES - 9)}"}`);
+    expect([over.status, await over.text()]).toEqual([413, "too large\n"]);
   });
 });
 

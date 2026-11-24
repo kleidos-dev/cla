@@ -64,7 +64,13 @@ describe("an inline rule", () => {
   });
 
   it("a link keeps only a target that is an address of a kept kind from its first character to its last", () => {
-    for (const target of ["xhttps://a.example/", "xhttp://a.example/", "xmailto:a@b.example", 'http://a.example/"x', "http://a.example/'x", "http://a.example/<x", 'mailto:a@b.example"x', "MAILTO:a@b.example", "Mailto:a@b.example"]) expect(renderInline(`[x](${target})`), target).toBe("x");
+    for (const target of ["//evil.example", "//evil.example/sign", "///evil.example", "/\\evil.example", "xhttps://a.example/", "xhttp://a.example/", "xmailto:a@b.example", 'http://a.example/"x', "http://a.example/'x", "http://a.example/<x", 'mailto:a@b.example"x', "MAILTO:a@b.example", "Mailto:a@b.example"]) expect(renderInline(`[x](${target})`), target).toBe("x");
+  });
+
+  it("a relative target is only what the caller rewrites, never a name every object has", () => {
+    const links = { "PRIVACY.md": "/privacy?lang=en" };
+    expect(renderInline("[x](PRIVACY.md)", { links })).toBe('<a href="/privacy?lang=en">x</a>');
+    for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"]) expect(renderInline(`[x](${name})`, { links }), name).toBe("x");
   });
 
   it("a bare address is a link when a space or a bracket comes before it, without the punctuation after it", () => {
@@ -80,6 +86,11 @@ describe("an inline rule", () => {
 });
 
 describe("a heading", () => {
+  it("is one to six hashes and a space on one line: seven, none, or a line cut by U+2028 is a paragraph", () => {
+    expect(html("###### a")).toBe("<h6>a</h6>");
+    for (const md of ["####### a", "#a", " # a", "# a\u2028b"]) expect(html(md), md).toMatch(/^<p>/);
+  });
+
   it("of levels 2 to 5 after the shift has an id, and of 1 or 6 none", () => {
     const r = renderMarkdown("# a\n## b\n#### c\n##### d", { headingShift: 1, idPrefix: "p" });
     expect(r.headings.map((h) => [h.level, h.id])).toEqual([
@@ -106,6 +117,11 @@ describe("a heading", () => {
 });
 
 describe("a list", () => {
+  it("numbers an item with one to three digits only, and ends an item's line at U+2028 or U+2029", () => {
+    expect(html("999. a")).toBe("<ol>\n<li>\na\n</li>\n</ol>");
+    for (const md of ["1000. a", "1234. a", "- a\u2029b", "- a\u2028b"]) expect(html(md), md).toMatch(/^<p>/);
+  });
+
   it("nests by indent and closes each level it leaves", () => {
     expect(html("- a\n  - b\n    - c\n- d")).toBe(["<ul>", "<li>", "a", "<ul>", "<li>", "b", "<ul>", "<li>", "c", "</li>", "</ul>", "</li>", "</ul>", "</li>", "<li>", "d", "</li>", "</ul>"].join("\n"));
   });
