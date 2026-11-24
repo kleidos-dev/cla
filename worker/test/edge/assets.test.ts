@@ -132,6 +132,37 @@ describe("the bundled versions as they are", () => {
     expect(Object.keys(agreement.filesOf(1)).sort()).toEqual(["SHA256SUMS", "addendum.es.md", "addendum.md", "entity.md", "individual.es.md", "individual.md", "summary.es.md"]);
     expect(agreement.FALLBACK_VERSION).toBe(1);
   });
+
+  it("are each the files of their own folder, the informative Spanish ones included, which no SHA256SUMS lists", async () => {
+    const { agreement } = await fresh();
+    const folders: Record<number, Record<string, () => Promise<{ default: string }>>> = {
+      1: {
+        SHA256SUMS: () => import("../../../agreements/v1/SHA256SUMS"),
+        "addendum.es.md": () => import("../../../agreements/v1/addendum.es.md"),
+        "addendum.md": () => import("../../../agreements/v1/addendum.md"),
+        "entity.md": () => import("../../../agreements/v1/entity.md"),
+        "individual.es.md": () => import("../../../agreements/v1/individual.es.md"),
+        "individual.md": () => import("../../../agreements/v1/individual.md"),
+        "summary.es.md": () => import("../../../agreements/v1/summary.es.md"),
+      },
+      2: {
+        SHA256SUMS: () => import("../../../agreements/v2/SHA256SUMS"),
+        "addendum.es.md": () => import("../../../agreements/v2/addendum.es.md"),
+        "addendum.md": () => import("../../../agreements/v2/addendum.md"),
+        "entity.md": () => import("../../../agreements/v2/entity.md"),
+        "individual.es.md": () => import("../../../agreements/v2/individual.es.md"),
+        "individual.md": () => import("../../../agreements/v2/individual.md"),
+        "summary.es.md": () => import("../../../agreements/v2/summary.es.md"),
+      },
+    };
+    for (const [v, files] of Object.entries(folders)) {
+      const want: Record<string, string> = {};
+      for (const [name, load] of Object.entries(files)) want[name] = (await load()).default;
+      expect(agreement.filesOf(Number(v)), `version ${v}`).toEqual(want);
+    }
+    // The two versions' Spanish texts differ, so a version served with the other's would be seen.
+    for (const name of ["addendum.es.md", "individual.es.md", "summary.es.md"]) expect(agreement.filesOf(1)[name], name).not.toBe(agreement.filesOf(2)[name]);
+  });
 });
 
 const BUTTON = "../../src/assets/button/";

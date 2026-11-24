@@ -15,7 +15,7 @@ import { ASSETS, STYLESHEET, stylesheetPath } from "../../src/html";
 import worker, { handleQueue } from "../../src/index";
 import { escapeHtml } from "../../src/html";
 import { S } from "../../src/i18n";
-import { b64urlEncode, must } from "../../src/util";
+import { b64urlEncode, must, sha256Hex } from "../../src/util";
 import { CONFIG, CONFIG_V2, ORIGIN, batch, call, expectMessage, lines, restoring, world } from "./support";
 import type { World } from "./support";
 
@@ -138,8 +138,16 @@ describe("the public files", () => {
     expect(r.headers.get("cache-control")).toBe("public, max-age=31536000, immutable, no-transform");
   });
 
-  it("serves the fonts and the mark with their own types", async () => {
+  it("serves the fonts and the mark with their own types, each the file of its own name", async () => {
     const w = await world({ configure: false });
+    // The SHA-256 of worker/src/assets/fonts/*.woff2 and worker/src/assets/mark.svg as copied in (AGENTS.md, "Other repositories").
+    const files: Record<string, string> = {
+      "/assets/fonts/kleidos-sans-text.woff2": "64fffd2283a61d6415c0a3a526d4ebbf21d619e3f0f3046001b203cc22a4e12e",
+      "/assets/fonts/kleidos-sans-display.woff2": "ad67d1e44b22773e1325224ad3e1ed08d7dc552d11e84a0f0f4997fc28d3feaa",
+      "/assets/fonts/kleidos-mono.woff2": "58abf4b4985ac7d741a7cdf3dc280f82614644c046cc2618ef417eeec6961527",
+      "/assets/mark.svg": "f3fa7340393c32eb5bf151f3b42cbd5ca9f5102628027cd409c0d3434a71a690",
+    };
+    const served: Record<string, string> = {};
     for (const [path, asset] of Object.entries(ASSETS)) {
       const r = await call(w, path);
       expect(r.status, path).toBe(200);
@@ -147,7 +155,9 @@ describe("the public files", () => {
       expect(r.headers.get("cache-control")).toBe("public, max-age=300, no-transform");
       const body = new Uint8Array(await r.arrayBuffer());
       expect(body).toEqual(typeof asset.body === "string" ? new TextEncoder().encode(asset.body) : new Uint8Array(asset.body));
+      served[path] = await sha256Hex(body);
     }
+    expect(served).toEqual(files);
     expect(Object.fromEntries(Object.entries(ASSETS).map(([path, a]) => [path, a.type]))).toEqual({
       "/assets/fonts/kleidos-sans-text.woff2": "font/woff2",
       "/assets/fonts/kleidos-sans-display.woff2": "font/woff2",

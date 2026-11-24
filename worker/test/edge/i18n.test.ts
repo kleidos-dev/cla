@@ -107,6 +107,57 @@ describe("the one-message pages", () => {
     expect(Object.keys(MESSAGES)).toHaveLength(36);
   });
 
+  it("say what happened in their own words, word for word in both languages", () => {
+    // Read against each page that shows it: a sentence swapped with another, or one that says the opposite, is a page that lies.
+    // notConfigured is the page's own string, held by the test after this one.
+    expect(Object.fromEntries(Object.entries(MESSAGES).filter(([k]) => k !== "notConfigured"))).toEqual({
+      notServed: { en: ["Not served","This repository is not served by the Kleidos CLA bot."], es: ["Repositorio no atendido","El bot del CLA de Kleidos no atiende este repositorio."] },
+      headMoved: { en: ["The pull request changed","The pull request received new commits while it was being read. Nothing was posted. Reload this page."], es: ["El pull request ha cambiado","El pull request recibió commits nuevos mientras se leía. No se ha publicado nada. Vuelve a cargar esta página."] },
+      ghRateLimited: { en: ["GitHub is rate limiting","GitHub asked us to slow down. Wait a minute and reload this page."], es: ["GitHub está limitando las peticiones","GitHub nos ha pedido que vayamos más despacio. Espera un minuto y vuelve a cargar esta página."] },
+      ghNotFound: { en: ["Not found","GitHub does not know this pull request."], es: ["No encontrado","GitHub no conoce este pull request."] },
+      ghUnavailable: { en: ["GitHub unavailable","GitHub did not answer as expected. Nothing was posted. Wait a minute and reload this page."], es: ["GitHub no responde","GitHub no ha respondido como se esperaba. No se ha publicado nada. Espera un minuto y vuelve a cargar esta página."] },
+      tooManySign: { en: ["Too many requests","Too many requests from your network. Wait a minute and reload this page."], es: ["Demasiadas peticiones","Hay demasiadas peticiones desde tu red. Espera un minuto y vuelve a cargar esta página."] },
+      tooManyAuth: { en: ["Too many requests","Too many sign-in attempts from your network. Wait a minute and try again."], es: ["Demasiadas peticiones","Hay demasiados intentos de entrar desde tu red. Espera un minuto y vuelve a intentarlo."] },
+      tooManyAgree: { en: ["Too many requests","Too many attempts. Wait a minute and try again. Nothing was posted."], es: ["Demasiadas peticiones","Demasiados intentos. Espera un minuto y vuelve a intentarlo. No se ha publicado nada."] },
+      noTarget: { en: ["Not found","There is no pull request to sign for at this address."], es: ["No encontrado","En esta dirección no hay ningún pull request que firmar."] },
+      closed: { en: ["Pull request closed","This pull request is closed, so there is nothing to sign on it. Open or reopen a pull request and follow its link."], es: ["Pull request cerrado","Este pull request está cerrado, así que no hay nada que firmar en él. Abre o reabre un pull request y sigue su enlace."] },
+      locked: { en: ["Pull request locked","This pull request is locked, so no acceptance can be posted on it. Write to mail@kleidos.dev."], es: ["Pull request bloqueado","Este pull request está bloqueado, así que no se puede publicar ninguna aceptación en él. Escribe a mail@kleidos.dev."] },
+      badLink: { en: ["Bad link","This sign-in link is not valid. Go back to the pull request and follow its link again."], es: ["Enlace no válido","Este enlace para entrar no es válido. Vuelve al pull request y sigue su enlace otra vez."] },
+      oauthExpired: { en: ["Session expired","The sign-in took too long or was already used. Go back to the pull request and follow its link again."], es: ["Sesión caducada","La entrada tardó demasiado o ya se usó. Vuelve al pull request y sigue su enlace otra vez."] },
+      oauthState: { en: ["Sign-in refused","This sign-in did not start here. Nothing was signed. Follow the pull request's link again."], es: ["Entrada rechazada","Esta entrada no empezó aquí. No se ha firmado nada. Sigue otra vez el enlace del pull request."] },
+      oauthCancelled: { en: ["Authorization cancelled","GitHub's authorization was cancelled, so nothing was signed or posted."], es: ["Autorización cancelada","Se canceló la autorización de GitHub, así que no se ha firmado ni publicado nada."] },
+      oauthCode: { en: ["Sign-in refused","GitHub's answer was not valid. Follow the pull request's link again."], es: ["Entrada rechazada","La respuesta de GitHub no era válida. Sigue otra vez el enlace del pull request."] },
+      oauthExchange: { en: ["Sign-in refused","GitHub did not accept this sign-in (it may have been used already). Follow the pull request's link again."], es: ["Entrada rechazada","GitHub no ha aceptado esta entrada (puede que ya se hubiera usado). Sigue otra vez el enlace del pull request."] },
+      oauthUser: { en: ["Sign-in refused","GitHub's answer was not valid."], es: ["Entrada rechazada","La respuesta de GitHub no era válida."] },
+      refusedOrigin: { en: ["Refused","This form did not come from cla.kleidos.dev, so nothing was posted."], es: ["Rechazado","Este formulario no venía de cla.kleidos.dev, así que no se ha publicado nada."] },
+      refusedStale: { en: ["Refused","This form is out of date. Reload the page and try again."], es: ["Rechazado","Este formulario está desfasado. Vuelve a cargar la página e inténtalo otra vez."] },
+      formUnreadable: { en: ["Refused","The form could not be read, so nothing was posted. Reload the page and try again."], es: ["Rechazado","No se pudo leer el formulario, así que no se ha publicado nada. Vuelve a cargar la página e inténtalo otra vez."] },
+      sessionExpired: { en: ["Session expired","Your sign-in has expired, so nothing was posted. Go back to the pull request and follow its link again."], es: ["Sesión caducada","Tu sesión ha caducado, así que no se ha publicado nada. Vuelve al pull request y sigue su enlace otra vez."] },
+      formInvalid: { en: ["Refused","The form is not valid, so nothing was posted."], es: ["Rechazado","El formulario no es válido, así que no se ha publicado nada."] },
+      csrf: { en: ["Refused","This form is out of date or was not made for you, so nothing was posted. Reload the sign page and try again."], es: ["Rechazado","Este formulario está desfasado o no se hizo para ti, así que no se ha publicado nada. Vuelve a cargar la página de firma e inténtalo otra vez."] },
+      signInAgain: { en: ["Sign in again","Sign in again on this pull request's page to accept. Nothing was posted."], es: ["Vuelve a entrar","Vuelve a entrar en la página de este pull request para aceptar. No se ha publicado nada."] },
+      signInAgainGitHub: { en: ["Sign in again","GitHub did not accept the comment with your sign-in (it may have expired or been revoked). Nothing was posted."], es: ["Vuelve a entrar","GitHub no aceptó el comentario con tu sesión (puede que caducara o se revocara). No se ha publicado nada."] },
+      paused: { en: ["Signing paused","The agreement is being updated, so signing is paused. Nothing was posted. Try again later."], es: ["Firma en pausa","El acuerdo se está actualizando, así que la firma está en pausa. No se ha publicado nada. Inténtalo más tarde."] },
+      changed: { en: ["The agreement changed","The text on your page is not the current one, so nothing was posted. Reload the sign page."], es: ["El acuerdo ha cambiado","El texto de tu página no es el actual, así que no se ha publicado nada. Vuelve a cargar la página de firma."] },
+      postedClosed: { en: ["Nothing posted","This pull request is closed, so nothing was posted."], es: ["No se ha publicado nada","Este pull request está cerrado, así que no se ha publicado nada."] },
+      postedLocked: { en: ["Nothing posted","This pull request is locked, so nothing was posted."], es: ["No se ha publicado nada","Este pull request está bloqueado, así que no se ha publicado nada."] },
+      postedPrivate: { en: ["Nothing posted","There is no pull request to sign for at this address."], es: ["No se ha publicado nada","En esta dirección no hay ningún pull request que firmar."] },
+      postedNotUser: { en: ["Nothing posted","Only a personal account can sign. Nothing was posted."], es: ["No se ha publicado nada","Solo puede firmar una cuenta personal. No se ha publicado nada."] },
+      postedSigned: { en: ["Nothing posted","You have already accepted this agreement. Nothing was posted."], es: ["No se ha publicado nada","Ya has aceptado este acuerdo. No se ha publicado nada."] },
+      postedNotNeeded: { en: ["Nothing posted","This account does not need to sign on this pull request, so nothing was posted."], es: ["No se ha publicado nada","Esta cuenta no tiene que firmar en este pull request, así que no se ha publicado nada."] },
+      recorderUnreachable: { en: ["Not recorded","The register could not be asked to record your acceptance, so nothing was recorded. Sign in again in a minute."], es: ["No anotado","No se pudo pedir al registro que anotara tu aceptación, así que no se ha anotado nada. Vuelve a entrar dentro de un minuto."] },
+    });
+  });
+
+  it("say nothing was posted where the refusal comes before posting, and only there", () => {
+    const nothing = Object.entries(MESSAGES)
+      .filter(([, m]) => /nothing was posted|so nothing was signed or posted/i.test(m.en[1]))
+      .map(([k]) => k)
+      .sort();
+    expect(nothing).toEqual(["changed", "csrf", "formInvalid", "formUnreadable", "ghUnavailable", "headMoved", "oauthCancelled", "paused", "postedClosed", "postedLocked", "postedNotNeeded", "postedNotUser", "postedSigned", "refusedOrigin", "sessionExpired", "signInAgain", "signInAgainGitHub", "tooManyAgree"]);
+    for (const k of nothing) expect(MESSAGES[k as keyof typeof MESSAGES].es[1], k).toMatch(/no se ha publicado nada|ni publicado nada/i);
+  });
+
   it("say not configured in the words of the page that says it", () => {
     expect(MESSAGES.notConfigured.en[1]).toBe(S.en.notConfigured);
     expect(MESSAGES.notConfigured.es[1]).toBe(S.es.notConfigured);
