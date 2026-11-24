@@ -114,6 +114,11 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: worker/package-lock.json
+      - name: No floor raised and no measure lowered without a dated reason
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          python3 tests/tools/ratchet.py base FETCH_HEAD
       - working-directory: worker
         run: npm ci
       - name: Vitest in the Workers runtime, GitHub mocked

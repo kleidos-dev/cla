@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const decoder = new TextDecoder(undefined, { fatal: true, ignoreBOM: true });
 
 export function utf8(s: string): Uint8Array<ArrayBuffer> {
   return encoder.encode(s) as Uint8Array<ArrayBuffer>;
@@ -34,20 +34,12 @@ export function b64urlEncode(bytes: Uint8Array): string {
 
 export function b64urlDecode(s: string): Uint8Array<ArrayBuffer> | null {
   if (!/^[A-Za-z0-9_-]*$/.test(s) || s.length % 4 === 1) return null;
-  const b64 = s.replaceAll("-", "+").replaceAll("_", "/") + "===".slice((s.length + 3) % 4);
-  try {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  } catch {
-    return null;
-  }
+  // Of this alphabet and length, atob takes everything, with or without its padding.
+  return Uint8Array.from(atob(s.replaceAll("-", "+").replaceAll("_", "/")), (c) => c.charCodeAt(0));
 }
 
 export function hex(bytes: ArrayBuffer | Uint8Array): string {
-  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  return Array.from(u, (b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function sha256Hex(data: string | Uint8Array<ArrayBuffer>): Promise<string> {
@@ -74,6 +66,11 @@ export function isLogin(s: unknown): s is string {
   return typeof s === "string" && LOGIN_RE.test(s);
 }
 
+/** A positive integer a number holds exactly: an id, a pull request's number. */
+export function posInt(v: unknown): v is number {
+  return Number.isSafeInteger(v) && (v as number) > 0;
+}
+
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
@@ -84,7 +81,7 @@ export function nowSeconds(): number {
  * same list, so both sides normalize a comment to the same string.
  */
 // eslint-disable-next-line no-control-regex -- U+001C to U+001F are white space to Python, so they are listed on purpose.
-const WHITESPACE = /[\t\n\v\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
+const WHITESPACE = /[\t\n\u000b\f\r\u001c-\u001f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/gu;
 
 /**
  * The acceptance sentence as the recorder compares it: Unicode NFC, every
@@ -104,8 +101,8 @@ export function clientIp(req: Request): string {
  * Null when it is too large.
  */
 export async function readCapped(req: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
-  const declared = Number.parseInt(req.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declared) && declared > max) {
+  const declared = Number.parseInt(String(req.headers.get("content-length")), 10);
+  if (declared > max) {
     await req.body?.cancel();
     return null;
   }

@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "vitest": { "configFile": "vitest.stryker.config.mjs", "related": false },
+  "mutate": ["src/*.ts", "!src/*.d.ts"],
+  "coverageAnalysis": "perTest",
+  "inPlace": true,
+  "disableTypeChecks": false,
+  "concurrency": 1,
+  "timeoutMS": 5000,
+  "reporters": ["json", "clear-text", "progress-append-only"],
+  "clearTextReporter": { "allowColor": false, "logTests": false, "reportTests": false, "reportMutants": true, "reportScoreTable": true },
+  "jsonReporter": { "fileName": "coverage/mutation.json" }
+}

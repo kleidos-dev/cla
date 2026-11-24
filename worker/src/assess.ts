@@ -62,9 +62,12 @@ export interface Assessment {
   entityCovered: { account: Account; entity: string }[];
   unknownCommits: string[];
   unlistedBots: { login: string; commit: string }[];
+  /** GitHub cut the list of commits, or of the open pull requests that may share the head: not everybody who must sign is known. */
   tooManyCommits: boolean;
   acceptances: Acceptance[];
   botComment: { id: number; body: string } | null;
+  /** More comments than were read: the bot's own may be among the rest. */
+  commentsCut?: boolean;
 }
 
 const COMMITS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid message authoredDate parents{totalCount} authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}`;
@@ -144,18 +147,21 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
       if (ca.unidentified > 0 || ca.tooMany) unknownCommits.push(commit.oid.slice(0, 7));
       for (const a of ca.accounts) add(a, ca.date);
     }
-    if (!commits.pageInfo.hasNextPage || seen >= MAX_COMMITS) {
+    cursor = commits.pageInfo.hasNextPage ? commits.pageInfo.endCursor : null;
+    // A page that is empty, or that does not say where the next one starts, ends the list whatever it promises.
+    if (cursor === null || commits.nodes.length === 0 || seen >= MAX_COMMITS) {
       // Fewer commits seen than GitHub counts: the list was cut, so not every author is known.
       if (seen < commits.totalCount) tooManyCommits = true;
       break;
     }
-    cursor = commits.pageInfo.endCursor;
   }
 
   if (pr.state === "open") {
     const open = await gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
+    if (open.truncated) tooManyCommits = true;
     for (const other of open.items) {
-      if (other.number !== pr.number && other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
+      // The pull request itself is among them, opened by the same account on the same date.
+      if (other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
     }
   }
 
@@ -200,15 +206,10 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
     }
   }
 
-  return { repo, pr, opener, required, signed, missing, exempt, entityCovered, unknownCommits, unlistedBots, tooManyCommits, acceptances, botComment };
+  return { repo, pr, opener, required, signed, missing, exempt, entityCovered, unknownCommits, unlistedBots, tooManyCommits, acceptances, botComment, commentsCut: comments.truncated };
 }
 
 /** Whether everything that blocks the check is cleared. */
 export function allClear(a: Assessment): boolean {
   return a.missing.length === 0 && a.unknownCommits.length === 0 && a.unlistedBots.length === 0 && !a.tooManyCommits;
-}
-
-/** Whether the pull request needs the bot's comment at all. */
-export function needsComment(a: Assessment): boolean {
-  return !allClear(a) || a.signed.size > 0;
 }

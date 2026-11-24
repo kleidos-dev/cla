@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { isLogin, must, stripEnd } from "./util";
+import { isLogin, must, posInt, stripEnd } from "./util";
 
 export interface Account {
   id: number;
@@ -31,46 +31,60 @@ export interface CommitAuthors {
   tooMany: boolean;
 }
 
-const NOREPLY = /^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$/i;
+const NOREPLY = /^([1-9]\d{0,11})\+([^@]+)@users\.noreply\.github\.com$/i;
 const TRAILER_KEY = "co-authored-by:";
-/** A trailer's email with its closing bracket. */
-const TRAILER_EMAIL = /^[^<>\s]+>$/;
+/**
+ * A trailer's email with its closing bracket: any run without brackets and
+ * without what both JavaScript and Python take as white space. A character
+ * only one of them takes as white space (U+0085, U+FEFF, U+001C to U+001F)
+ * stays in the address, so a trailer either side would count is counted by
+ * both.
+ */
+const TRAILER_EMAIL = /^[^<>\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+>$/;
 /** What `^` and `$` take as the end of a line. */
 const LINE_END = /[\n\r\u2028\u2029]/;
 
-/** `<id>+<login>@users.noreply.github.com`, GitHub's own no-reply address, names the account. */
-export function parseNoreply(email: string | null): Account | null {
-  if (!email) return null;
-  const m = NOREPLY.exec(email.trim());
+/**
+ * `<id>+<login>@users.noreply.github.com`, GitHub's own no-reply address,
+ * names the account. Null for anything GitHub could not have written: no
+ * such id, no such login, a blank more.
+ */
+export function parseNoreply(email: unknown): Account | null {
+  const m = typeof email === "string" ? NOREPLY.exec(email) : null;
   if (!m) return null;
-  const id = Number.parseInt(must(m[1]), 10);
   const login = must(m[2]);
-  if (!Number.isSafeInteger(id) || id <= 0 || !isLogin(login)) return null;
-  return { id, login, type: login.endsWith("[bot]") ? "Bot" : "User" };
+  if (!isLogin(login)) return null;
+  return { id: Number(m[1]), login, type: login.endsWith("[bot]") ? "Bot" : "User" };
 }
 
-/**
- * The emails of the `Co-authored-by:` trailers of a commit message, lower-cased.
- * Anybody writes a commit message, so each line is read once, with no
- * backtracking. registry/cla.py trailer_emails does the same, with a line feed
- * as the only end of a line.
- */
-export function coAuthorEmails(message: string): string[] {
+/** The emails of the trailers among the lines, lower-cased. */
+function trailers(lines: string[]): string[] {
   const out: string[] = [];
-  for (const line of message.split(LINE_END)) {
+  for (const line of lines) {
     if (line.slice(0, TRAILER_KEY.length).toLowerCase() !== TRAILER_KEY) continue;
     const bracket = line.lastIndexOf("<");
-    if (bracket < 0) continue;
+    if (bracket === -1) continue;
     const address = stripEnd(line.slice(bracket + 1), " \t");
     if (TRAILER_EMAIL.test(address)) out.push(address.slice(0, -1).toLowerCase());
   }
   return out;
 }
 
+/**
+ * The emails of the `Co-authored-by:` trailers of a commit message, lower-cased.
+ * Anybody writes a commit message, so each line is read once, with no
+ * backtracking. Git ends a line at a line feed alone and JavaScript at three
+ * more characters: a trailer that either reading has counts. registry/cla.py
+ * trailer_emails does the same.
+ */
+export function coAuthorEmails(message: string): string[] {
+  const emails = trailers(message.split(LINE_END));
+  const known = new Set(emails);
+  return [...emails, ...trailers(message.split("\n")).filter((e) => !known.has(e))];
+}
+
 function actorAccount(a: GitActor): Account | null {
-  if (a.user && typeof a.user.databaseId === "number" && a.user.databaseId > 0 && isLogin(a.user.login)) {
-    return { id: a.user.databaseId, login: a.user.login, type: "User" };
-  }
+  if (a.user && posInt(a.user.databaseId) && isLogin(a.user.login)) return { id: a.user.databaseId, login: a.user.login, type: "User" };
   return parseNoreply(a.email);
 }
 
@@ -86,7 +100,7 @@ export function commitAuthors(c: CommitNode): CommitAuthors {
   let unidentified = 0;
   const listed = new Set<string>();
   for (const a of c.authors.nodes) {
-    if (a.email) listed.add(a.email.toLowerCase());
+    if (typeof a.email === "string") listed.add(a.email.toLowerCase());
     const acc = actorAccount(a);
     if (acc) accounts.set(acc.id, acc);
     else unidentified++;

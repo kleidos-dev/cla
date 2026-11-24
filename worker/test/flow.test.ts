@@ -269,7 +269,7 @@ describe("evaluation", () => {
     const config = JSON.parse(must(w.gh.files.get("main:registry/config.json"))) as { versions: { "1": { sentence: string } } };
     w.gh.comments.push({ id: w.gh.next(), repo: SANDBOX, pr: pr.number, body: `  ${config.versions["1"].sentence.replace(/ /g, "  ")}\n`, user: alice, created_at: "2026-11-01T10:00:00Z", updated_at: "2026-11-01T10:00:00Z", via_app: false });
     await opened(w, pr);
-    expect(w.gh.dispatches).toEqual([expect.objectContaining({ kind: "sign", repo: SANDBOX, pr: String(pr.number) })]);
+    expect(w.gh.dispatches).toEqual([{ kind: "sign", repo: SANDBOX, pr: String(pr.number), comment_id: String(must(w.gh.comments[0]).id) }]);
     expect(must(w.gh.botComments(SANDBOX, pr.number)[0]).body).toContain("acceptance was posted but is not in the register yet");
   });
 
@@ -288,6 +288,7 @@ describe("evaluation", () => {
     const pr = openPr(w, alice, { repo: "kleidos-dev/boards" });
     await opened(w, pr);
     expect(w.gh.checkRuns).toHaveLength(0);
+    expect(w.gh.writes()).toEqual([]);
     w.gh.installations.set(9, { account: 4242 });
     w.gh.addRepo("stranger/repo", { installation: 9, account: 4242 });
     const cfg = JSON.parse(must(w.gh.files.get("main:registry/config.json"))) as { served_repositories: Record<string, unknown> };
@@ -296,6 +297,7 @@ describe("evaluation", () => {
     const pr2 = openPr(w, alice, { repo: "stranger/repo" });
     await opened(w, pr2);
     expect(w.gh.checkRuns).toHaveLength(0);
+    expect(w.gh.writes()).toEqual([]);
   });
 
   it("GitHub's rate limit is retried with its delay, a 5xx with backoff", async () => {

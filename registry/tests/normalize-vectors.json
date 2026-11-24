@@ -1,5 +1,5 @@
 {
-  "comment": "Shared by registry/tests/test_text.py and worker/test/texts.test.ts: both normalizations must give these outputs.",
+  "comment": "Shared by registry/tests/test_text.py and worker/test/core/util.test.ts: both normalizations must give these outputs.",
   "vectors": [
     {
       "in": "  a \n\t b  ",

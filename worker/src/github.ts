@@ -41,7 +41,7 @@ export interface Page<T> {
   truncated: boolean;
 }
 
-type Auth = { token: string } | { basic: [string, string] } | { jwt: true } | { none: true };
+type Auth = "jwt" | { token: string } | { basic: [string, string] };
 
 export type Permissions = Partial<Record<"pull_requests" | "checks" | "contents" | "actions" | "metadata", "read" | "write">>;
 
@@ -66,7 +66,7 @@ export function resetGitHubCaches(): void {
 }
 
 function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
-  const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, "");
+  const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
   if (pem.includes("BEGIN RSA PRIVATE KEY")) throw new Error("APP_PRIVATE_KEY must be PKCS#8");
   const bytes = b64urlDecode(stripEnd(body.replaceAll("+", "-").replaceAll("/", "_"), "="));
   if (!bytes) throw new Error("APP_PRIVATE_KEY is not PEM");
@@ -95,10 +95,10 @@ export async function appJwt(env: ConfiguredEnv): Promise<string> {
 
 function classify(res: Response): GitHubError {
   const requestId = res.headers.get("x-github-request-id") ?? undefined;
-  const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
-  const reset = Number.parseInt(res.headers.get("x-ratelimit-reset") ?? "", 10);
+  const retryAfter = Number.parseInt(String(res.headers.get("retry-after")), 10);
+  const reset = Number.parseInt(String(res.headers.get("x-ratelimit-reset")), 10);
   if (res.status === 429 || (res.status === 403 && (Number.isFinite(retryAfter) || res.headers.get("x-ratelimit-remaining") === "0"))) {
-    const delay = Number.isFinite(retryAfter) ? retryAfter : Number.isFinite(reset) ? Math.max(1, reset - nowSeconds()) : 60;
+    const delay = Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : Number.isFinite(reset) ? Math.max(1, reset - nowSeconds()) : 60;
     return new GitHubError(res.status, "rate_limited", Math.min(delay, 3600), requestId);
   }
   if (res.status >= 500) return new GitHubError(res.status, "transient", undefined, requestId);
@@ -114,9 +114,9 @@ export class GitHub {
 
   async request<T>(method: string, url: string, auth: Auth, body?: unknown, accept = "application/vnd.github+json"): Promise<Resp<T>> {
     const headers = new Headers({ "user-agent": UA, accept, "x-github-api-version": "2022-11-28" });
-    if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
-    else if ("jwt" in auth) headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
-    else if ("basic" in auth) headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
+    if (auth === "jwt") headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
+    else if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
+    else headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
     let payload: string | null = null;
     if (body !== undefined) {
       headers.set("content-type", "application/json");
@@ -132,19 +132,23 @@ export class GitHub {
     if (res.status === 204) return { status: 204, data: undefined as T, headers: res.headers };
     if (!res.ok) {
       await res.body?.cancel();
+      // The retry of a cached token GitHub no longer takes buys another instead of sending it again.
+      if (res.status === 401) this.forgetToken(headers.get("authorization"));
       throw classify(res);
     }
-    const text = await res.text();
-    let data: T;
-    if (accept.includes("raw")) data = text as T;
-    else {
-      try {
-        data = (text ? JSON.parse(text) : undefined) as T;
-      } catch {
-        throw new GitHubError(res.status, "bad_response");
-      }
+    const text = await res.text().catch(() => {
+      throw new GitHubError(res.status, "transient");
+    });
+    if (accept.includes("raw")) return { status: res.status, data: text as T, headers: res.headers };
+    let data: unknown;
+    try {
+      data = text ? JSON.parse(text) : undefined;
+    } catch {
+      throw new GitHubError(res.status, "bad_response");
     }
-    return { status: res.status, data, headers: res.headers };
+    // Every read asks for something: an empty answer, or null, is one GitHub did not finish.
+    if (method === "GET" && (data === undefined || data === null)) throw new GitHubError(res.status, "transient");
+    return { status: res.status, data: data as T, headers: res.headers };
   }
 
   /** The installation that serves a repository, refused unless its account is on the allowlist. */
@@ -153,7 +157,7 @@ export class GitHub {
     const hit = state.installations.get(repo);
     let inst = hit && hit.expires > now ? hit : null;
     if (!inst) {
-      const r = await this.request<{ id: number; account: { id: number } }>("GET", `/repos/${repo}/installation`, { jwt: true });
+      const r = await this.request<{ id: number; account: { id: number } }>("GET", `/repos/${repo}/installation`, "jwt");
       inst = { id: r.data.id, account: r.data.account.id, expires: now + 600 };
       state.installations.set(repo, inst);
     }
@@ -164,7 +168,7 @@ export class GitHub {
   /** An installation token narrowed to the given repositories (names under the installation's account) and permissions. */
   async token(repos: string[], permissions: Permissions): Promise<string> {
     const installation = await this.installationFor(must(repos[0]));
-    for (const r of repos.slice(1)) {
+    for (const r of repos) {
       if ((await this.installationFor(r)) !== installation) throw new NotAllowedError("repositories_span_installations");
     }
     const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort(byCodeUnits);
@@ -172,25 +176,28 @@ export class GitHub {
     const now = nowSeconds();
     const hit = state.tokens.get(key);
     if (hit && hit.expires - 300 > now) return hit.token;
-    const r = await this.request<{ token: string; expires_at: string }>("POST", `/app/installations/${installation}/access_tokens`, { jwt: true }, { repositories: names, permissions });
-    const expires = Math.floor(Date.parse(r.data.expires_at) / 1000) || now + 3600;
+    const r = await this.request<{ token: string; expires_at: string }>("POST", `/app/installations/${installation}/access_tokens`, "jwt", { repositories: names, permissions });
+    const end = Date.parse(r.data.expires_at);
+    const expires = Number.isFinite(end) ? Math.floor(end / 1000) : now + 3600;
     state.tokens.set(key, { token: r.data.token, expires });
     return r.data.token;
   }
 
-  forgetToken(token: string): void {
-    for (const [k, v] of state.tokens) if (v.token === token) state.tokens.delete(k);
+  private forgetToken(authorization: string | null): void {
+    for (const [k, v] of state.tokens) if (`Bearer ${v.token}` === authorization) state.tokens.delete(k);
   }
 
   async graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
-    const r = await this.request<{ data?: T; errors?: { type?: string; message?: string }[] }>("POST", "/graphql", { token }, { query, variables });
-    if (r.data.errors?.length) {
-      if (r.data.errors.some((e) => e.type === "RATE_LIMITED")) throw new GitHubError(200, "rate_limited", 60);
-      if (r.data.errors.some((e) => e.type === "NOT_FOUND")) throw new GitHubError(200, "not_found");
+    const r = await this.request<{ data?: T; errors?: { type?: string; message?: string }[] } | null | undefined>("POST", "/graphql", { token }, { query, variables });
+    const answer = r.data;
+    if (!answer) throw new GitHubError(r.status, "transient");
+    if (answer.errors?.length) {
+      if (answer.errors.some((e) => e.type === "RATE_LIMITED")) throw new GitHubError(200, "rate_limited", 60);
+      if (answer.errors.some((e) => e.type === "NOT_FOUND")) throw new GitHubError(200, "not_found");
       throw new GitHubError(200, "bad_response");
     }
-    if (!r.data.data) throw new GitHubError(200, "bad_response");
-    return r.data.data;
+    if (!answer.data) throw new GitHubError(200, "bad_response");
+    return answer.data;
   }
 
   /** Follows `Link: rel="next"` up to a page limit; returns every item and whether the list was cut. */
@@ -198,8 +205,9 @@ export class GitHub {
     const items: T[] = [];
     let url: string | null = path.includes("?") ? `${path}&per_page=100` : `${path}?per_page=100`;
     for (let page = 0; url && page < maxPages; page++) {
-      const r: Resp<T[]> = await this.request<T[]>("GET", url, auth);
-      items.push(...r.data);
+      const r: Resp<unknown> = await this.request("GET", url, auth);
+      if (!Array.isArray(r.data)) throw new GitHubError(r.status, "transient");
+      items.push(...(r.data as T[]));
       url = nextLink(r.headers.get("link"));
     }
     return { items, truncated: url !== null };

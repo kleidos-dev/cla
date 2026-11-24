@@ -45,7 +45,7 @@ export function isConfigured(env: Env): env is ConfiguredEnv {
 
 function parseAllowlist(raw: string | undefined): Set<number> {
   return new Set(
-    (raw ?? "")
+    String(raw)
       .split(",")
       .map((s) => s.trim())
       .filter((s) => /^[1-9][0-9]{0,15}$/.test(s))
@@ -73,7 +73,7 @@ export function botApp(env: ConfiguredEnv): OAuthApp {
  * of any other app.
  */
 export function signinApp(env: Env, configured: string | null | undefined): OAuthApp | null {
-  if (!env.SIGNIN_CLIENT_ID || !env.SIGNIN_CLIENT_SECRET || typeof configured !== "string" || configured !== env.SIGNIN_CLIENT_ID) return null;
+  if (!env.SIGNIN_CLIENT_ID || !env.SIGNIN_CLIENT_SECRET || configured !== env.SIGNIN_CLIENT_ID) return null;
   return { kind: "signin", clientId: env.SIGNIN_CLIENT_ID, clientSecret: env.SIGNIN_CLIENT_SECRET };
 }
 

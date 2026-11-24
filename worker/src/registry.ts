@@ -3,7 +3,7 @@
 import type { GitHub } from "./github";
 import { GitHubError } from "./github";
 import type { Unchecked } from "./util";
-import { nowSeconds } from "./util";
+import { nowSeconds, posInt } from "./util";
 
 export interface VersionInfo {
   path: string;
@@ -36,7 +36,8 @@ export interface Entity {
   version: number;
   set_sha256: string;
   signed_at: string;
-  covered: { github_id: number; from: string; until?: string | null }[];
+  /** Absent or null when an entity lists nobody, which the recorder takes as an empty list. */
+  covered?: { github_id: number; from: string; until?: string | null }[] | null;
 }
 
 interface RecordBase {
@@ -72,6 +73,8 @@ export type SignatureRecord = CommentRecord | SigninRecord;
 export const CONFIG_PATH = "registry/config.json";
 export const ENTITIES_PATH = "registry/entities.json";
 export const SIGNATURES_BRANCH = "signatures";
+/** GitHub lists at most this many files of a directory. */
+const DIRECTORY_LIMIT = 1000;
 export const RECORD_WORKFLOW = "record.yml";
 /** github-actions[bot], the author of every commit the recorder makes. */
 export const ACTIONS_BOT_ID = 41898282;
@@ -93,10 +96,6 @@ const SIGNIN_KEYS = [...RECORD_KEYS, "sentence_sha256", "recorder_commit"];
 const SIGNIN_EVIDENCE_KEYS = ["authorized_at", "signin_client_id", "context_pr_url", "site_commit", "lang"];
 const HEX40 = /^[0-9a-f]{40}$/;
 const CLIENT_ID = /^[A-Za-z0-9.]{16,40}$/;
-
-function posInt(v: unknown): v is number {
-  return typeof v === "number" && Number.isSafeInteger(v) && v > 0;
-}
 
 function sameKeys(o: object, keys: string[]): boolean {
   const k = Object.keys(o);
@@ -172,10 +171,9 @@ export function resetRegistryCache(): void {
 }
 
 function isConfig(v: unknown): v is Config {
-  if (typeof v !== "object" || v === null) return false;
-  const c = v as Unchecked<Config>;
+  const c = v as Unchecked<Config> | null;
   return (
-    c.schema === 1 &&
+    c?.schema === 1 &&
     typeof c.current_version === "number" &&
     Array.isArray(c.accepted_versions) &&
     typeof c.versions === "object" &&
@@ -214,13 +212,11 @@ export class Registry {
     const now = nowSeconds();
     if (hit && hit.expires > now) return hit.value;
     const text = await this.raw(path, ref);
-    let value: unknown = null;
-    if (text !== null) {
-      try {
-        value = JSON.parse(text);
-      } catch {
-        throw new GitHubError(200, "bad_response");
-      }
+    let value: unknown;
+    try {
+      value = JSON.parse(text ?? "null");
+    } catch {
+      throw new GitHubError(200, "bad_response");
     }
     cache.set(key, { value, expires: now + ttl });
     return value;
@@ -246,12 +242,11 @@ export class Registry {
    */
   async signature(id: number): Promise<SignatureRecord | null> {
     const text = await this.raw(`signatures/individual/${id}.json`, SIGNATURES_BRANCH);
-    if (text === null) return null;
     let rec: unknown;
     try {
-      rec = JSON.parse(text);
+      rec = JSON.parse(String(text));
     } catch {
-      return null;
+      // A file that is not JSON is no record.
     }
     if (!isSignatureRecord(rec, id)) return null;
     const commit = await this.lastCommit(id);
@@ -282,20 +277,29 @@ export class Registry {
     return (await this.lastCommit(id))?.sha ?? null;
   }
 
-  /** The pull request numbers of a repository that have a coverage record (one directory listing). */
-  async coverageNumbers(repo: string): Promise<Set<number>> {
+  /**
+   * The pull request numbers of a repository that have a coverage record:
+   * one directory listing, and the file of each number asked about once the
+   * listing is as long as GitHub lets one be.
+   */
+  async coverageNumbers(repo: string, asked: number[]): Promise<Set<number>> {
+    const out = new Set<number>();
+    let files: unknown;
     try {
-      const r = await this.gh.request<{ name: string; type: string }[]>("GET", `/repos/${this.repo}/contents/coverage/${repo}?ref=${SIGNATURES_BRANCH}`, { token: await this.readToken() });
-      const out = new Set<number>();
-      for (const f of Array.isArray(r.data) ? r.data : []) {
-        const m = /^([1-9][0-9]{0,9})\.json$/.exec(f.name);
-        if (m && f.type === "file") out.add(Number(m[1]));
-      }
-      return out;
+      files = (await this.gh.request("GET", `/repos/${this.repo}/contents/coverage/${repo}?ref=${SIGNATURES_BRANCH}`, { token: await this.readToken() })).data;
     } catch (e) {
-      if (e instanceof GitHubError && e.kind === "not_found") return new Set();
+      if (e instanceof GitHubError && e.kind === "not_found") return out;
       throw e;
     }
+    if (!Array.isArray(files)) return out;
+    for (const f of files as { name: string; type: string }[]) {
+      const m = /^([1-9][0-9]{0,9})\.json$/.exec(f.name);
+      if (m && f.type === "file") out.add(Number(m[1]));
+    }
+    if (files.length >= DIRECTORY_LIMIT) {
+      for (const n of asked) if (!out.has(n) && (await this.raw(`coverage/${repo}/${n}.json`, SIGNATURES_BRANCH)) !== null) out.add(n);
+    }
+    return out;
   }
 
   /** Dispatches the registry's recorder; it re-reads everything from GitHub itself. */
@@ -345,7 +349,7 @@ export class Registry {
     );
     const title = `Record signin ${repo}#${pr} ${id}`;
     const from = Date.parse(since) - 60_000;
-    const runs = (r.data.workflow_runs ?? []).filter((x) => (x.display_title ?? "").split(/\s+/).join(" ") === title && Date.parse(x.created_at ?? "") >= from);
+    const runs = r.data.workflow_runs?.filter((x) => x.display_title?.split(/\s+/).join(" ") === title && Date.parse(String(x.created_at)) >= from) ?? [];
     if (runs.length === 0) return null;
     if (runs.some((x) => x.status === "completed" && x.conclusion === "success")) return "succeeded";
     if (runs.some((x) => x.status !== "completed")) return "running";
@@ -370,9 +374,7 @@ export function coveringEntity(entities: Entity[], config: Config, id: number, d
   for (const e of entities) {
     const v = config.versions[String(e.version)];
     if (!v || !config.accepted_versions.includes(e.version) || v.set_sha256 !== e.set_sha256) continue;
-    for (const c of e.covered) {
-      if (c.github_id === id && c.from <= date && (!c.until || date <= c.until)) return e;
-    }
+    if (e.covered?.some((c) => c.github_id === id && c.from <= date && (!c.until || date <= c.until))) return e;
   }
   return null;
 }

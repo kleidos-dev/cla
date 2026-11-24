@@ -58,8 +58,8 @@ async function githubEntry(bot: Bot, repo: string, sha: string, token: string): 
 export async function githubState(bot: Bot, repo: string, baseSha: string, sha: string, token: string): Promise<GithubState> {
   try {
     const cmp = (await bot.gh.request<{ merge_base_commit?: { sha?: string } }>("GET", `/repos/${repo}/compare/${baseSha}...${sha}?per_page=1`, { token })).data;
-    const base = cmp.merge_base_commit?.sha;
-    if (!base || !SHA.test(base)) return "unknown";
+    const base = String(cmp.merge_base_commit?.sha);
+    if (!SHA.test(base)) return "unknown";
     const before = await githubEntry(bot, repo, base, token);
     const after = await githubEntry(bot, repo, sha, token);
     if (before === undefined || after === undefined) return "unknown";
@@ -93,7 +93,8 @@ async function upsertCheck(bot: Bot, a: Assessment, ctx: TextContext, token: str
 }
 
 async function upsertComment(bot: Bot, a: Assessment, ctx: TextContext, token: string): Promise<void> {
-  if (allClear(a) && !a.botComment) return;
+  // A comment that was not found among those read may still be there: a second one is never risked.
+  if (!a.botComment && (allClear(a) || a.commentsCut)) return;
   const body = commentBody(a, ctx);
   if (a.botComment) {
     if (a.botComment.body !== body) await bot.gh.request("PATCH", `/repos/${a.repo}/issues/comments/${a.botComment.id}`, { token }, { body });
@@ -156,10 +157,10 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     pendingRecord = true;
     if (now - Date.parse(acc.createdAt) > LATE_AFTER_MS) late.add(acc.account);
     const chosen = byAccount.get(acc.account);
-    if (!chosen || (acc.commentId === msg.record_comment && chosen.commentId !== msg.record_comment)) byAccount.set(acc.account, acc);
+    if (!chosen || acc.commentId === msg.record_comment) byAccount.set(acc.account, acc);
   }
   // A sign-in handed to the recorder posts no comment: the account the sign page named is waited for until its record shows.
-  if (msg.await_signin && a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
+  if (a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
   for (const acc of byAccount.values()) {
     // Only a first look dispatches: the delayed re-checks that follow it just watch for the record.
     const asked = msg.record_comment === acc.commentId || now - Date.parse(acc.createdAt) > RECORD_AFTER_MS;
@@ -169,27 +170,25 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     }
   }
   const clear = allClear(a);
-  const github: GithubState = clear ? await githubState(bot, msg.repo, a.pr.base.sha, a.pr.head.sha, token) : "untouched";
-  const ctx = await textContext(bot, config, a, { github, autoApprove: repoConf.auto_approve, lateRecording: [...late] });
+  // Whether .github/ changes is only asked once everybody is clear, and only matters then.
+  const state: Partial<Pick<TextContext, "github">> = clear ? { github: await githubState(bot, msg.repo, a.pr.base.sha, a.pr.head.sha, token) } : {};
+  const ctx = await textContext(bot, config, a, { ...state, autoApprove: repoConf.auto_approve, lateRecording: [...late] });
   await upsertCheck(bot, a, ctx, token);
   await upsertComment(bot, a, ctx, token);
-  if (clear && repoConf.auto_approve && github === "untouched") {
+  if (repoConf.auto_approve && state.github === "untouched") {
     await send(bot.env, { kind: "release", repo: msg.repo, pr: msg.pr, sha: a.pr.head.sha });
   }
-  if (!clear && pendingRecord && attempt < RECORD_DELAYS.length) {
-    await send(
-      bot.env,
-      { kind: "evaluate", repo: msg.repo, pr: msg.pr, attempt: attempt + 1, ...(msg.record_comment ? { record_comment: msg.record_comment } : {}), ...(msg.await_signin ? { await_signin: msg.await_signin } : {}) },
-      RECORD_DELAYS[attempt],
-    );
-  }
+  // Only an account that is missing is waited for, so nothing is once everybody is clear.
+  if (pendingRecord && attempt < RECORD_DELAYS.length) await send(bot.env, { ...msg, attempt: attempt + 1 }, RECORD_DELAYS[attempt]);
   log("evaluated", { repo: msg.repo, pr: msg.pr, outcome: clear ? "success" : "action_required", count: a.missing.length, attempt });
 }
 
 /** Whether a held run may target a self-hosted runner: any job whose labels are not all GitHub-hosted standard labels. */
 async function mayRunSelfHosted(bot: Bot, repo: string, runId: number, token: string): Promise<boolean> {
-  const jobs = (await bot.gh.request<{ jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data.jobs ?? [];
-  return jobs.some((j) => (j.labels ?? []).some((l) => !HOSTED_LABEL.test(l)) || (j.runner_group_name != null && j.runner_group_name !== "GitHub Actions"));
+  const { jobs, total_count } = (await bot.gh.request<{ total_count?: number; jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data;
+  // A job that was not read may be any job.
+  if ((total_count ?? 0) > (jobs?.length ?? 0)) return true;
+  return Boolean(jobs?.some((j) => (j.labels ?? []).some((l) => !HOSTED_LABEL.test(l)) || (j.runner_group_name != null && j.runner_group_name !== "GitHub Actions")));
 }
 
 /**
@@ -265,11 +264,11 @@ export async function coverage(bot: Bot, msg: Extract<QueueMessage, { kind: "cov
 
 /** An installation on an account that is not on the allowlist is removed. */
 export async function installation(bot: Bot, msg: Extract<QueueMessage, { kind: "installation" }>): Promise<void> {
-  const inst = (await bot.gh.request<{ id: number; account: { id: number } | null }>("GET", `/app/installations/${msg.installation}`, { jwt: true })).data;
+  const inst = (await bot.gh.request<{ id: number; account: { id: number } | null }>("GET", `/app/installations/${msg.installation}`, "jwt")).data;
   // allowedAccounts throws on an empty allowlist, so a misconfiguration never removes anything.
   const allowed = allowedAccounts(bot.env);
   if (inst.account && allowed.has(inst.account.id)) return;
-  await bot.gh.request("DELETE", `/app/installations/${msg.installation}`, { jwt: true });
+  await bot.gh.request("DELETE", `/app/installations/${msg.installation}`, "jwt");
   log("installation removed", { installation: msg.installation });
 }
 
@@ -299,11 +298,11 @@ const COVERAGE_SETTLE_MS = 30 * 60 * 1000;
  */
 export async function cron(bot: Bot): Promise<void> {
   const allowed = allowedAccounts(bot.env);
-  const insts = await bot.gh.paginate<{ id: number; account: { id: number } | null }>("/app/installations", { jwt: true }, 3);
+  const insts = await bot.gh.paginate<{ id: number; account: { id: number } | null }>("/app/installations", "jwt", 3);
   for (const i of insts.items) if (!i.account || !allowed.has(i.account.id)) await send(bot.env, { kind: "installation", installation: i.id });
 
   const since = Date.now() - 7 * 3600 * 1000;
-  const deliveries = await bot.gh.paginate<{ id: number; guid: string; status_code: number; delivered_at: string; redelivery: boolean }>("/app/hook/deliveries", { jwt: true }, 5);
+  const deliveries = await bot.gh.paginate<{ id: number; guid: string; status_code: number; delivered_at: string; redelivery: boolean }>("/app/hook/deliveries", "jwt", 5);
   const ok = new Set(deliveries.items.filter((d) => d.status_code >= 200 && d.status_code < 300).map((d) => d.guid));
   const failed = deliveries.items.filter((d) => !ok.has(d.guid) && !d.redelivery && Date.parse(d.delivered_at) > since);
   const retried = new Set<string>();
@@ -311,7 +310,7 @@ export async function cron(bot: Bot): Promise<void> {
     if (retried.size >= MAX_REDELIVERIES) break;
     if (retried.has(d.guid)) continue;
     retried.add(d.guid);
-    await bot.gh.request("POST", `/app/hook/deliveries/${d.id}/attempts`, { jwt: true }).catch(() => undefined);
+    await bot.gh.request("POST", `/app/hook/deliveries/${d.id}/attempts`, "jwt").catch(() => undefined);
   }
 
   const config = await bot.registry.config();
@@ -322,11 +321,19 @@ export async function cron(bot: Bot): Promise<void> {
       const token = await bot.gh.token([repo], { pull_requests: "read" });
       const open = await bot.gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
       for (const pr of open.items) await send(bot.env, { kind: "evaluate", repo, pr: pr.number });
-      const closed = await bot.gh.request<{ number: number; merged_at: string | null }[]>("GET", `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`, { token });
+      const closed = await bot.gh.paginate<{ number: number; merged_at: string | null }>(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { token }, 3);
       const now = Date.now();
-      const merged = closed.data.filter((p) => p.merged_at && now - Date.parse(p.merged_at) < COVERAGE_WINDOW_MS && now - Date.parse(p.merged_at) > COVERAGE_SETTLE_MS && p.merged_at.slice(0, 10) >= coverageFrom);
+      const merged = closed.items.filter((p) => {
+        // One closed without merging has no date, so no age: every comparison with it is false.
+        const at = String(p.merged_at);
+        const age = now - Date.parse(at);
+        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at.slice(0, 10) >= coverageFrom;
+      });
       if (merged.length) {
-        const have = await bot.registry.coverageNumbers(repo);
+        const have = await bot.registry.coverageNumbers(
+          repo,
+          merged.map((p) => p.number),
+        );
         for (const p of merged) {
           if (have.has(p.number)) continue;
           missingCoverage++;
