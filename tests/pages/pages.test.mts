@@ -80,18 +80,18 @@ const violations = new Set<string>();
 before(async () => {
   await server.listen();
   gh.pulls.set(`${SANDBOX}#${PR}`, { repo: SANDBOX, number: PR, state: "open", merged: false, locked: false, user: alice, head: { sha: fake.sha(), repo: "alice/cla-sandbox" }, files: [{ filename: "README.md" }], commits: [fake.commit(alice)] });
-  wall = await fence({
-    "cla.kleidos.dev": (url, init) => {
+  wall = await fence([
+    ["cla.kleidos.dev", (url, init) => {
       // Each context is its own visitor, so the rate limits of one never reach another.
       init.headers.set("cf-connecting-ip", `203.0.113.${(ip % 250) + 1}`);
       return server.fetch(url.href, { method: init.method, headers: init.headers, redirect: "manual", ...(init.body ? { body: init.body } : {}) });
-    },
-    "github.com": (url) => {
+    }],
+    ["github.com", (url) => {
       if (url.pathname !== "/login/oauth/authorize") return new Response("", { status: 404 });
       const code = gh.issueCode(signer, url.searchParams.get("code_challenge") ?? "", url.searchParams.get("client_id") ?? "");
       return new Response(null, { status: 302, headers: { location: `${ORIGIN}/auth/callback?code=${code}&state=${encodeURIComponent(url.searchParams.get("state") ?? "")}` } });
-    },
-  });
+    }],
+  ]);
   browser = await chromium.launch({ proxy: { server: wall.server } });
 });
 

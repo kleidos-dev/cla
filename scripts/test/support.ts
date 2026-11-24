@@ -24,7 +24,7 @@ export const ORG_ID = 357318718;
 export const CODE = "abc123def456";
 
 /** What a hostile answer tries on the terminal: a line of its own, colors, an 8-bit control sequence, a line separator, reversed text. */
-export const FORGED = "x\r\nForged line \u001b[8m \u009b2J   ‮";
+export const FORGED = "x\r\nForged line \u001b[8m \u009b2J \u2028 \u202e";
 
 /** Nothing of GitHub's answer made a line of its own, and no character of the output is other than visible ASCII. */
 export function assertPlain(out: string): void {

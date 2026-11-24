@@ -135,7 +135,7 @@ describe("the small parts", () => {
     assert.equal(sameText("abc", "abc"), true);
     assert.equal(sameText("abc", "abx"), false);
     assert.equal(sameText("abc", "ab"), false);
-    assert.equal(printable(" ~a\x1f\x7f\u0080 "), " ~a????");
+    assert.equal(printable(" ~a\x1f\x7f\u0080\u2028"), " ~a????");
     assert.equal(printable("s".repeat(201)), "s".repeat(200));
   });
 

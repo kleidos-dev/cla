@@ -127,7 +127,7 @@ describe("the small parts", () => {
 
   it("printable keeps visible ASCII, turns everything else into ?, and cuts at 200", () => {
     assert.equal(printable(" ~az09"), " ~az09");
-    assert.equal(printable("a\x1fb\x7fc\u0080d e\r\n"), "a?b?c?d?e??");
+    assert.equal(printable("a\x1fb\x7fc\u0080d\u2028e\r\n"), "a?b?c?d?e??");
     assert.equal(printable("s".repeat(200)), "s".repeat(200));
     assert.equal(printable("s".repeat(201)), "s".repeat(200));
     assert.equal(printable("é".repeat(300)), "?".repeat(200));

@@ -48,14 +48,18 @@ function certificate(): { key: Buffer; cert: Buffer } {
 
 const HOP = /^(host|connection|content-length|accept-encoding|transfer-encoding|upgrade|te|keep-alive|proxy-connection)$/i;
 
-export async function fence(hosts: Record<string, Handler>): Promise<Fence> {
+/** The handler of a host the test serves, found by comparing names: a Host header is never used as a key. */
+function route(hosts: readonly (readonly [string, Handler])[], host: string): Handler | null {
+  for (const [name, handler] of hosts) if (name === host) return handler;
+  return null;
+}
+
+export async function fence(hosts: readonly (readonly [string, Handler])[]): Promise<Fence> {
   const stray: string[] = [];
-  // A Map, not the object: a Host header such as "constructor" must find nothing.
-  const routes = new Map(Object.entries(hosts));
   const tls = createTlsServer(certificate(), (req, res) => {
     void (async () => {
       const host = req.headers.host ?? "";
-      const handler = routes.get(host);
+      const handler = route(hosts, host);
       if (!handler) {
         stray.push(`${req.method ?? ""} https://${host}${req.url ?? ""}`);
         res.writeHead(502).end();
