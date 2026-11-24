@@ -9,11 +9,12 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { CHECK_NAME } from "../../src/assess";
+import worker from "../../src/index";
 import type { MapOptions } from "../../src/webhook";
 import { MAX_WEBHOOK_BYTES, mapEvent, verifySignature } from "../../src/webhook";
 import { must, utf8 } from "../../src/util";
 import { APP_ID, ORG_ID, REGISTRY } from "../fakegh";
-import { SANDBOX, WEBHOOK_SECRET, call, lines, restoring, sign, webhook, world } from "./support";
+import { ORIGIN, SANDBOX, WEBHOOK_SECRET, call, lines, queueDown, restoring, sign, webhook, world } from "./support";
 import type { World } from "./support";
 
 restoring();
@@ -156,6 +157,18 @@ describe("a signed delivery", () => {
     expect(await r.text()).toBe("accepted\n");
     expect(w.queue.sent).toEqual([{ body: { kind: "evaluate", repo: SANDBOX, pr: 7 } }]);
     expect(lines(w)).toEqual([{ msg: "webhook", event: "pull_request", action: "opened", delivery: DELIVERY, count: 1 }]);
+  });
+
+  it("is not accepted when the queue refuses its messages, so GitHub records the delivery as failed", async () => {
+    const w = await world();
+    queueDown(w);
+    const body = JSON.stringify({ action: "opened", pull_request: { number: 7 }, repository, installation: { id: 1 } });
+    const headers = { "x-github-event": "pull_request", "x-github-delivery": DELIVERY, "x-github-hook-installation-target-id": String(APP_ID), "x-hub-signature-256": await sign(WEBHOOK_SECRET, body) };
+    const r = await worker.fetch(new Request(`${ORIGIN}/webhook`, { method: "POST", headers, body }), w.env);
+    expect(r.status).toBe(500);
+    expect(await r.text()).toBe("internal error\n");
+    expect(w.queue.sent).toEqual([]);
+    expect(lines(w)).toEqual([{ msg: "unhandled", reason: "Error" }]);
   });
 
   it("with no action, or one that is not text, is logged without one, and queues nothing at all", async () => {
