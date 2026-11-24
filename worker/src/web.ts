@@ -33,8 +33,9 @@ export interface Target {
 export function parseSignPath(path: string): Target | null {
   const m = SIGN_PATH.exec(path);
   if (!m || m[2] === "." || m[2] === "..") return null;
+  // At most ten digits, so always a safe integer.
   const pr = Number(m[3]);
-  if (!Number.isSafeInteger(pr) || pr > 2_147_483_647) return null;
+  if (pr > 2_147_483_647) return null;
   return { repo: `${m[1]}/${m[2]}`, pr, path: `/sign/${m[1]}/${m[2]}/${pr}` };
 }
 
@@ -43,17 +44,19 @@ export function sentenceFor(version: number, setSha256: string): string {
   return `I have read and I accept the Kleidos Contributor Agreement, version ${version} (SHA-256 ${setSha256.slice(0, 12)}), made of the Contributor Agreement text and its Addendum. I understand that it lets José M. Requena Plens license my contributions under other terms as well, including paid commercial licences. I am of legal age and I am entitled to license what I contribute.`;
 }
 
-export interface Signing {
-  on: boolean;
-  reason?: string;
+interface SigningFacts {
   /** The version offered: the registry's current_version. */
   version: number;
   setSha256: string;
   /** How it is accepted: kleidos-cla posts the sentence ("comment") or the signer signs in with the identity-only app ("signin"). */
   flow: "comment" | "signin";
-  /** The app the signer signs in with; null when signing is off. */
-  app: OAuthApp | null;
 }
+
+/** Signing on, with the app the signer signs in with, or off, with why. */
+export type Signing = (SigningFacts & { on: true; app: OAuthApp }) | (SigningFacts & { on: false; reason: string; app: null });
+
+/** The state of a signing that is on. */
+type SigningOn = Extract<Signing, { on: true }>;
 
 const COMMIT = /^[0-9a-f]{40}$/;
 
@@ -162,12 +165,12 @@ function agreementTexts(lang: Lang, kind: "individual" | "entity", prefix: strin
 }
 
 function toc(t: Strings, parts: [Heading[], Heading[]], labels: [string, string]): string {
+  // Every bundled text opens with its title, so each part has a first heading.
   const [ca, ad] = parts;
-  if (!ca[0] || !ad[0]) return "";
   const li = (h: Heading) => `<li><a href="#${h.id}">${h.html}</a></li>`;
   return `<details class="toc" open><summary class="eyebrow">${t.agreement.toc}</summary><ol>
-<li><a href="#${ca[0].id}">${labels[0]}</a><ol>${ca.filter((h) => h.level === 4).map(li).join("")}</ol></li>
-<li><a href="#${ad[0].id}">${labels[1]}</a><ol>${ad.filter((h) => h.level === 3).map(li).join("")}</ol></li>
+<li><a href="#${must(ca[0]).id}">${labels[0]}</a><ol>${ca.filter((h) => h.level === 4).map(li).join("")}</ol></li>
+<li><a href="#${must(ad[0]).id}">${labels[1]}</a><ol>${ad.filter((h) => h.level === 3).map(li).join("")}</ol></li>
 </ol></details>`;
 }
 
@@ -181,10 +184,10 @@ function alertCard(html: string): string {
 }
 
 /** Step 1: what this is and who still signs, and one button. No legal text: that comes once signed in. */
-function startBody(lang: Lang, t: Target, a: Assessment | null, signing: Signing, extra: { again?: boolean; notice?: string; who?: string } = {}): string {
+function startBody(lang: Lang, t: Target, a: Assessment, signing: Signing, extra: { again?: boolean; notice?: string; who?: string } = {}): string {
   const s = S[lang].start;
   const signingOn = signing.on;
-  const still = a ? (a.missing.length ? a.missing.map((m) => `@${escapeHtml(m.login)}`).join(", ") : allClear(a) ? s.nobody : "—") : "";
+  const still = a.missing.length ? a.missing.map((m) => `@${escapeHtml(m.login)}`).join(", ") : allClear(a) ? s.nobody : "—";
   const action = signingOn
     ? `<a class="btn btn-primary btn-block" href="${loginHref(t, lang)}">${extra.again ? s.buttonAgain : s.button}</a>\n<p class="note">${s.note}</p>`
     : alertCard(S[lang].status.paused);
@@ -195,7 +198,7 @@ ${extra.notice ?? ""}
 <p class="lede">${s.lede}</p>
 <div class="card">
 <p class="card-row"><span class="eyebrow">${S[lang].prLabel}</span>${prLink(t)}</p>
-${a ? `<p class="card-row"><span class="eyebrow">${s.stillLabel}</span><span>${still}</span></p>` : ""}
+<p class="card-row"><span class="eyebrow">${s.stillLabel}</span><span>${still}</span></p>
 </div>
 ${action}
 ${extra.who ?? ""}
@@ -339,14 +342,14 @@ function signTitle(lang: Lang, t: Target, step: "start" | "accept"): string {
   return `${S[lang][step].title} · ${t.repo}#${t.pr}`;
 }
 
-/** Step 2 for a signed-in signer whose token is for this pull request; `error` when the box was not ticked. */
-async function acceptPage(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, signing: Signing, error: boolean): Promise<Response> {
-  return page(await acceptBody(lang, env, s, t, keys, signing, error), { title: signTitle(lang, t, "accept"), lang, path: t.path, status: error ? 400 : 200 });
+/** Step 2 again for a signer who did not tick the box: the error beside it. */
+async function acceptAgain(lang: Lang, env: ConfiguredEnv, s: Session, t: Target, keys: Keys, signing: Signing): Promise<Response> {
+  return page(await acceptBody(lang, env, s, t, keys, signing, true), { title: signTitle(lang, t, "accept"), lang, path: t.path, status: 400 });
 }
 
 /** Whether a session's token can take the acceptance now: issued for this pull request, by the app the current version signs in with. */
-function tokenFor(session: Session, t: Target, signing: Signing): boolean {
-  return Boolean(session.token) && session.for === `${t.repo}#${t.pr}` && signing.app !== null && (session.app ?? "bot") === signing.app.kind;
+function tokenFor(session: Session, t: Target, signing: SigningOn): boolean {
+  return Boolean(session.token) && session.for === `${t.repo}#${t.pr}` && (session.app ?? "bot") === signing.app.kind;
 }
 
 function entryUrl(env: ConfiguredEnv, id: number, commit: string | null): string {
@@ -423,7 +426,7 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       case "exempt":
         return page(statusBody(lang, t, st0.nothingTitle, st0.exempt(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "entity":
-        return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(s.entity ?? "an entity")), "info", who), { title: st0.nothingTitle, lang, path: t.path });
+        return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(must(s.entity))), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "signed": {
         await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr });
         const entry = `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/signatures/signatures/individual/${session.id}.json">${st0.entry}</a>`;
@@ -432,9 +435,9 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       case "not_author":
         return page(statusBody(lang, t, st0.nothingTitle, st0.notAuthor(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "must_sign": {
+        // A session with a token was written by the callback, which writes no acceptance into it, so there is no notice here.
         if (signing.on && tokenFor(session, t, signing)) {
-          const body = await acceptBody(lang, env, session, t, keys, signing, false);
-          return page(notice ? body.replace(`${where(S[lang].accept.where)}\n`, `${where(S[lang].accept.where)}\n${notice}\n`) : body, { title: signTitle(lang, t, "accept"), lang, path: t.path });
+          return page(await acceptBody(lang, env, session, t, keys, signing, false), { title: signTitle(lang, t, "accept"), lang, path: t.path });
         }
         return page(startBody(lang, t, s.a, signing, { again: true, notice, who }), { title: signTitle(lang, t, "start"), lang, path: t.path });
       }
@@ -469,10 +472,11 @@ export async function login(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
   const ret = url.searchParams.get("return") ?? "";
   const st = await guard(lang, () => servedTarget(bot, ret));
   if (st instanceof Response) return st;
-  if (!st || st.t.path !== ret) return messagePage(lang, 400, "badLink");
+  // parseSignPath gives back the very path it read, so a valid return is exactly the sign page's own.
+  if (!st) return messagePage(lang, 400, "badLink");
   // The app asked is the one the current version signs in with: kleidos-cla for version 1, the identity-only app for a sign-in version.
   const signing = await signingState(st.config, env);
-  if (!signing.on || !signing.app) return messagePage(lang, 503, "paused", { href: `${st.t.path}?lang=${lang}`, label: BACK.sign[lang] });
+  if (!signing.on) return messagePage(lang, 503, "paused", { href: `${st.t.path}?lang=${lang}`, label: BACK.sign[lang] });
   const t: { state: string; verifier: string } = { state: randomB64url(32), verifier: randomB64url(32) };
   const authorize = new URL(`${WEB}/login/oauth/authorize`);
   authorize.searchParams.set("client_id", signing.app.clientId);
@@ -607,7 +611,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
     // A token of the other app (the current version changed flow since the sign-in) cannot take this acceptance.
     if (!tokenFor(session, t, signing)) return messagePage(lang, 401, "signInAgain", back);
     // The box was not ticked: the same page again, with the error beside the box and nothing posted.
-    if (form.get("accept") !== "yes") return acceptPage(lang, env, session, t, keys, signing, true);
+    if (form.get("accept") !== "yes") return acceptAgain(lang, env, session, t, keys, signing);
     if (version !== signing.version || form.get("set_sha256") !== signing.setSha256) return messagePage(lang, 409, "changed", back);
     if (!(await env.RL_AGREE_IP.limit({ key: clientIp(req) })).success || !(await env.RL_AGREE_ACCOUNT.limit({ key: String(session.id) })).success) {
       return messagePage(lang, 429, "tooManyAgree");
@@ -674,7 +678,7 @@ export async function agree(req: Request, env: ConfiguredEnv, bot: Bot, keys: Ke
  * authorization was not deleted since (SECURITY.md). The session forgets
  * the token at once: a reload or a second click cannot hand it over again.
  */
-async function agreeBySignin(lang: Lang, env: ConfiguredEnv, bot: Bot, keys: Keys, session: Session, t: Target, signing: Signing, back: { href: string; label: string }): Promise<Response> {
+async function agreeBySignin(lang: Lang, env: ConfiguredEnv, bot: Bot, keys: Keys, session: Session, t: Target, signing: SigningOn, back: { href: string; label: string }): Promise<Response> {
   const token = must(session.token);
   try {
     await bot.registry.dispatchSignin({ repo: t.repo, pr: t.pr, github_id: session.id, version: signing.version, lang, site_commit: env.BUILD_COMMIT, signin_token: token });
