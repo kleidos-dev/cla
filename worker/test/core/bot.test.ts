@@ -10,7 +10,7 @@ import type { ConfiguredEnv } from "../../src/env";
 import { GitHubError } from "../../src/github";
 import type { QueueMessage } from "../../src/messages";
 import type { FakeComment, FakePr, Seen } from "../fakegh";
-import { APP_ID, BASE_GITHUB_TREE, BASE_SHA, BOT_ID, REGISTRY, commit, sha } from "../fakegh";
+import { APP_ID, BASE_GITHUB_TREE, BASE_SHA, BOT_ID, ORG_ID, REGISTRY, commit, sha } from "../fakegh";
 import type { FakeQueue, World } from "../helpers";
 import { CONFIG, SANDBOX, openPr, world } from "../helpers";
 
@@ -369,6 +369,22 @@ describe("an acceptance on the pull request", () => {
     expect(dispatched()).toEqual([String(a.id)]);
   });
 
+  it("just posted does not stand in for another account's, which is late: each is recorded by its own comment", async () => {
+    const pr = openPr(w, alice, { commits: [commit(bob)] });
+    const [posted, due] = [comment(pr, { created_at: time(NOW) }), comment(pr, { user: bob, created_at: time(NOW - HOUR) })];
+    await evaluate(b, evaluation(pr, { record_comment: posted.id }));
+    expect(dispatched()).toEqual([String(posted.id), String(due.id)]);
+  });
+
+  it("that is late is told as the late account's, who need not be the opener", async () => {
+    const pr = openPr(w, alice, { commits: [commit(bob)] });
+    comment(pr, { created_at: time(NOW - MINUTE) });
+    comment(pr, { user: bob, created_at: time(NOW - HOUR) });
+    await evaluate(b, evaluation(pr));
+    const body = w.gh.botComments(SANDBOX, pr.number)[0]?.body ?? "";
+    expect(body.match(/\S+(?='s acceptance was posted but is not in the register yet)/g)).toEqual(["[bob](https://github.com/bob)"]);
+  });
+
   it("that is still not recorded after ten minutes is told as late, once per account", async () => {
     const pr = openPr(w, alice);
     const late = "@alice's acceptance was posted but is not in the register yet.";
@@ -604,6 +620,8 @@ describe("a release", () => {
     ["has not concluded", [{ conclusion: null, app: { id: APP_ID } }]],
     ["is another app's success", [{ conclusion: "success", app: { id: APP_ID + 1 } }]],
     ["is nobody's success", [{ conclusion: "success", app: null }]],
+    // Every other conclusion GitHub can give: one is enough, and it is "success".
+    ...["neutral", "failure", "skipped", "stale", "cancelled", "timed_out", "startup_failure"].map((conclusion): [string, object[]] => [`concluded ${conclusion}`, [{ conclusion, app: { id: APP_ID } }]]),
     ["is another app's success beside our own refusal", [{ conclusion: "success", app: { id: 1 } }, { conclusion: "action_required", app: { id: APP_ID } }]],
   ])("whose check %s approves nothing", async (_what, check_runs) => {
     const pr = openPr(w, alice);
@@ -668,6 +686,9 @@ describe("a release", () => {
   it.each([
     ["self-hosted", { labels: ["self-hosted"] }],
     ["one label of its own beside a hosted one", { labels: ["ubuntu-latest", "bench"] }],
+    ["a label of another system", { labels: ["linux-x64"] }],
+    ["a label of another system that says a version", { labels: ["fedora-42"] }],
+    ["a label of a hosted system in other letters", { labels: ["Ubuntu-latest"] }],
     ["a label that only starts like a hosted one", { labels: ["ubuntu-latest bench"] }],
     ["a label that only ends like a hosted one", { labels: ["bench-ubuntu-latest"] }],
     ["a label without a version", { labels: ["ubuntu-"] }],
@@ -848,8 +869,15 @@ describe("an installation", () => {
     expect(w.gh.deletedInstallations).toEqual([66]);
   });
 
-  it("is never removed on an empty allowlist", async () => {
+  it("whose own number is an allowed account's is still on another account", async () => {
+    w.gh.installations.set(ORG_ID, { account: 4242 });
+    await installation(b, { kind: "installation", installation: ORG_ID });
+    expect(w.gh.deletedInstallations).toEqual([ORG_ID]);
+  });
+
+  it.each([{ id: 4242 }, null])("on the account %j is never removed on an empty allowlist", async (account) => {
     w.gh.installations.set(66, { account: 4242 });
+    w.gh.answer(/^GET \/app\/installations\/66$/, () => json({ id: 66, account }));
     w.env.ALLOWED_ACCOUNT_IDS = "";
     await expect(installation(b, { kind: "installation", installation: 66 })).rejects.toThrow("ALLOWED_ACCOUNT_IDS is empty");
     expect(w.gh.deletedInstallations).toEqual([]);
@@ -917,6 +945,16 @@ describe("the cron", () => {
       [{ kind: "installation", installation: 67 }, undefined],
     ]);
     expect(w.gh.deletedInstallations).toEqual([]);
+  });
+
+  it("reads three hundred installations, and no more", async () => {
+    only([]);
+    for (let i = 0; i < 298; i++) w.gh.installations.set(10_000 + i, { account: ORG_ID });
+    w.gh.installations.set(66, { account: 4242 });
+    w.gh.installations.set(67, { account: 4242 });
+    await cron(b);
+    expect(queued().map((s) => s.body)).toEqual([{ kind: "installation", installation: 66 }]);
+    expect(w.gh.seen(/^GET \/app\/installations\?/)).toHaveLength(3);
   });
 
   it("touches nothing on an empty allowlist", async () => {
