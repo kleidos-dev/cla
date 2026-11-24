@@ -136,17 +136,19 @@ export class GitHub {
       if (res.status === 401 && "token" in auth) this.forgetToken(auth.token);
       throw classify(res);
     }
-    const text = await res.text();
-    let data: T;
-    if (accept.includes("raw")) data = text as T;
-    else {
-      try {
-        data = (text ? JSON.parse(text) : undefined) as T;
-      } catch {
-        throw new GitHubError(res.status, "bad_response");
-      }
+    const text = await res.text().catch(() => {
+      throw new GitHubError(res.status, "transient");
+    });
+    if (accept.includes("raw")) return { status: res.status, data: text as T, headers: res.headers };
+    let data: unknown;
+    try {
+      data = text ? JSON.parse(text) : undefined;
+    } catch {
+      throw new GitHubError(res.status, "bad_response");
     }
-    return { status: res.status, data, headers: res.headers };
+    // Every read asks for something: an empty answer, or null, is one GitHub did not finish.
+    if (method === "GET" && (data === undefined || data === null)) throw new GitHubError(res.status, "transient");
+    return { status: res.status, data: data as T, headers: res.headers };
   }
 
   /** The installation that serves a repository, refused unless its account is on the allowlist. */
@@ -185,14 +187,16 @@ export class GitHub {
   }
 
   async graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
-    const r = await this.request<{ data?: T; errors?: { type?: string; message?: string }[] }>("POST", "/graphql", { token }, { query, variables });
-    if (r.data.errors?.length) {
-      if (r.data.errors.some((e) => e.type === "RATE_LIMITED")) throw new GitHubError(200, "rate_limited", 60);
-      if (r.data.errors.some((e) => e.type === "NOT_FOUND")) throw new GitHubError(200, "not_found");
+    const r = await this.request<{ data?: T; errors?: { type?: string; message?: string }[] } | null | undefined>("POST", "/graphql", { token }, { query, variables });
+    const answer = r.data;
+    if (!answer) throw new GitHubError(r.status, "transient");
+    if (answer.errors?.length) {
+      if (answer.errors.some((e) => e.type === "RATE_LIMITED")) throw new GitHubError(200, "rate_limited", 60);
+      if (answer.errors.some((e) => e.type === "NOT_FOUND")) throw new GitHubError(200, "not_found");
       throw new GitHubError(200, "bad_response");
     }
-    if (!r.data.data) throw new GitHubError(200, "bad_response");
-    return r.data.data;
+    if (!answer.data) throw new GitHubError(200, "bad_response");
+    return answer.data;
   }
 
   /** Follows `Link: rel="next"` up to a page limit; returns every item and whether the list was cut. */
@@ -200,8 +204,9 @@ export class GitHub {
     const items: T[] = [];
     let url: string | null = path.includes("?") ? `${path}&per_page=100` : `${path}?per_page=100`;
     for (let page = 0; url && page < maxPages; page++) {
-      const r: Resp<T[]> = await this.request<T[]>("GET", url, auth);
-      items.push(...r.data);
+      const r: Resp<unknown> = await this.request("GET", url, auth);
+      if (!Array.isArray(r.data)) throw new GitHubError(r.status, "transient");
+      items.push(...(r.data as T[]));
       url = nextLink(r.headers.get("link"));
     }
     return { items, truncated: url !== null };

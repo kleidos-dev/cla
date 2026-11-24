@@ -539,3 +539,47 @@ describe("an installation token GitHub no longer takes (401)", () => {
     expect(await gh.token([SANDBOX], { contents: "read" })).toBe(token);
   });
 });
+
+describe("an answer GitHub did not finish, or that holds nothing", () => {
+  const CALL = /^GET \/x$/;
+  const broken = () =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(utf8('{"a":'));
+        },
+        pull(c) {
+          c.error(new Error("connection reset"));
+        },
+      }),
+    );
+
+  it.each(["application/vnd.github+json", "application/vnd.github.raw+json"])("cut while its body is read (%s) is transient: it is asked again, not dropped", async (accept) => {
+    sent(broken);
+    const e = await failure(gh.request("GET", "/x", { token: "t" }, undefined, accept));
+    expect([e.status, e.kind, e.retryable]).toEqual([200, "transient", true]);
+  });
+
+  it.each(["", "null"])("read as %j where something was asked for is transient", async (body) => {
+    w.gh.answer(CALL, () => new Response(body));
+    const e = await failure(gh.request("GET", "/x", { token: "t" }));
+    expect([e.status, e.kind, e.retryable]).toEqual([200, "transient", true]);
+  });
+
+  it("of null to a write is an answer", async () => {
+    sent(() => new Response("null", { status: 201 }));
+    expect((await gh.request("POST", "/x", { token: "t" })).data).toBeNull();
+  });
+
+  it.each(["", "null"])("read as %j to a GraphQL query is transient", async (body) => {
+    w.gh.answer(/graphql/, () => new Response(body));
+    const e = await failure(gh.graphql("t", "q", {}));
+    expect([e.status, e.kind]).toEqual([200, "transient"]);
+  });
+
+  it.each([{}, { message: "x" }, "x", 5])("read as %j where a list was asked for is transient", async (body) => {
+    w.gh.answer(/^GET \/x\?per_page=100$/, () => json(body));
+    const e = await failure(gh.paginate("/x", { token: "t" }, 3));
+    expect([e.status, e.kind]).toEqual([200, "transient"]);
+  });
+});
