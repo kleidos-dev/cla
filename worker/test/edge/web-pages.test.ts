@@ -16,8 +16,9 @@ import { csrfToken } from "../../src/keys";
 import { NotAllowedError } from "../../src/github";
 import { Registry } from "../../src/registry";
 import { must } from "../../src/util";
+import { commit } from "../fakegh";
 import type { FakePr } from "../fakegh";
-import { Browser, CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, openPr, restoring, sessionHeader, transactionHeader, world } from "./support";
+import { Browser, CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, call, carol, expectMessage, keysOf, lines, openPr, restoring, sessionHeader, transactionHeader, world } from "./support";
 
 restoring();
 
@@ -154,15 +155,16 @@ describe("the last edges of the flows", () => {
     expect(w.gh.requests).toEqual([]);
   });
 
-  it("an acceptance posted earlier by another account is not the signer's: the signer's own is posted", async () => {
+  it("an acceptance posted earlier by another author is not the signer's: the signer's own is posted", async () => {
     const w = await world();
-    const p = openPr(w, alice);
+    const p = openPr(w, alice, { commits: [commit(alice), commit(carol)] });
     const b = new Browser(w, alice);
     await b.signIn(signPath(p));
     const form = Browser.form(await (await b.get(signPath(p))).text());
-    w.gh.comments.push({ id: w.gh.next(), repo: SANDBOX, pr: p.number, body: CONFIG.versions["1"].sentence, user: bob, created_at: "2026-11-02T10:00:00Z", updated_at: "2026-11-02T10:00:00Z", via_app: true });
+    w.gh.comments.push({ id: w.gh.next(), repo: SANDBOX, pr: p.number, body: CONFIG.versions["1"].sentence, user: carol, created_at: "2026-11-02T10:00:00Z", updated_at: "2026-11-02T10:00:00Z", via_app: true });
     expect((await b.post("/agree", { ...form, accept: "yes" })).status).toBe(303);
     expect(w.gh.comments.filter((c) => c.user.id === alice.id)).toHaveLength(1);
+    expect(w.gh.comments.filter((c) => c.user.id === carol.id)).toHaveLength(1);
   });
 
   it("a sign-in acceptance whose recorder's installation is not allowed is not handed over, and the log has no status", async () => {
