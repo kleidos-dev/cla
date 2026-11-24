@@ -281,7 +281,8 @@ export async function runChild(script: string, args: string[], env: Record<strin
   const work = scratch("cla-work-");
   const tmp = scratch("cla-tmp-");
   const node = [...hookArgs(), ...(opts.preload ? ["--import", opts.preload] : []), script, ...args];
-  const [cmd, argv] = opts.descriptors ? ["/bin/sh", ["-c", `ulimit -n ${opts.descriptors} && exec "$0" "$@"`, process.execPath, ...node]] : [process.execPath, node];
+  // The limit and the command reach the shell as arguments: its script is a constant.
+  const [cmd, argv] = opts.descriptors ? ["/bin/sh", ["-c", 'ulimit -n "$1" && shift && exec "$@"', "sh", String(opts.descriptors), process.execPath, ...node]] : [process.execPath, node];
   const child = spawn(cmd, argv, { cwd: work, env: { PATH: process.env.PATH ?? "", HOME: work, TMPDIR: tmp, ...env }, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   let stdout = "";
