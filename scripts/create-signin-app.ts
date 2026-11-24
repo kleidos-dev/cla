@@ -120,8 +120,9 @@ export function run(cmd: string, args: string[], input?: string, opts: { cwd?: s
     child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
     child.on("error", () => resolve({ code: 127, out: "" }));
     child.on("close", (code) => resolve({ code: code ?? 1, out }));
-    child.stdin?.on("error", () => undefined);
-    child.stdin?.end(input ?? "");
+    // Standard input is always a pipe (the first entry of stdio above); only standard output may be ignored.
+    child.stdin!.on("error", () => undefined);
+    child.stdin!.end(input ?? "");
   });
 }
 
