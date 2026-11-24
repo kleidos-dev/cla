@@ -303,6 +303,10 @@ class CrossCheck(unittest.TestCase):
                 "accepted_at is not the comment's creation time",
             ),
             (
+                {"created_at": "2026-12-01T10:22:31+00:00"},
+                "accepted_at is not the comment's creation time",
+            ),
+            (
                 {"body": SENTENCE + " x"},
                 "the comment's text does not hash to comment_body_sha256",
             ),
@@ -671,6 +675,21 @@ class Since(RegisterTest):
             history.witness.asked, ["comment 5001", "run 1001", "comment 5002", "run 1002"]
         )
 
+    def test_a_first_run_that_has_not_ended_leaves_the_check_where_it_was(self) -> None:
+        history = self.history()
+        root = history.sha(0)
+        self.assertEqual(history.verify(root), cla.Verified([], root))
+        history.record(comment_record(1))
+        history.witness.spoil_run(1001, status="queued")
+        self.assertEqual(history.verify(root), cla.Verified([], root))
+
+    def test_a_record_after_a_run_that_has_not_ended_still_has_its_form(self) -> None:
+        history = self.history()
+        history.record(comment_record(1))
+        history.witness.spoil_run(1001, status="queued")
+        bad = history.record(comment_record(2, method="x"))
+        self.assertEqual(history.found(), [(bad, f"{individual(2)}: malformed record")])
+
     def test_a_problem_after_a_run_that_has_not_ended_is_still_found(self) -> None:
         history = self.history()
         since = history.record(comment_record(1))
@@ -974,6 +993,17 @@ class HostileText(RegisterTest):
         history = self.history()
         bad = history.add(b"sign: \xff\xfe", {"x.txt": b""}, None, author=b"\xff")
         self.assertEqual(history.found(), [(bad, "GitHub does not know this commit on the branch")])
+        shown = history.record(comment_record(1), facts=OWNER, author=b"a\xffb")
+        self.assertEqual(
+            history.found()[1:],
+            [
+                (
+                    shown,
+                    "made by 'a\\\\xffb', not by the recorder "
+                    "(author, committer or GitHub's signature)",
+                )
+            ],
+        )
 
     def test_a_record_that_is_not_utf_8(self) -> None:
         history = self.history()

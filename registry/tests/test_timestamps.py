@@ -28,6 +28,7 @@ from support import (
     REPO,
     FakeGitHub,
     RegisterTest,
+    config_with,
     context,
     individual,
 )
@@ -473,6 +474,11 @@ class Authority(RegisterTest):
         self.assertEqual(
             made, cla.TSAStamper("https://tsa.invalid/", [], False, cla.tsa_transport, time.sleep)
         )
+        (root,) = CONFIG["timestamping"]["roots"]
+        made = cla.TSAStamper.from_config(
+            config_with(timestamping={**CONFIG["timestamping"], "roots": [root, root]})
+        )
+        self.assertEqual(made and made.roots, [PINNED, PINNED])
         for value in cast("tuple[Any, ...]", (None, [], {})):
             self.assertIsNone(cla.TSAStamper.from_config({"timestamping": value}))
         self.assertIsNone(cla.TSAStamper.from_config({}))

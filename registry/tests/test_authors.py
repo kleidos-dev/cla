@@ -68,7 +68,7 @@ class SharedVectors(unittest.TestCase):
 
     def test_every_kind_has_its_vectors(self) -> None:
         counts = {k: len(v) for k, v in VECTOR_FILE.items() if k != "comment"}
-        self.assertEqual(counts, {"noreply": 43, "trailers": 55, "commits": 27})
+        self.assertEqual(counts, {"noreply": 43, "trailers": 55, "commits": 28})
 
 
 class Noreply(unittest.TestCase):
@@ -283,7 +283,10 @@ class Entities(unittest.TestCase):
                 self.assertIs(self.covers(entity(**changed), config=config), False)
 
     def test_only_the_accounts_it_lists(self) -> None:
-        for covered in ([], [{"github_id": BOB, "from": "2026-11-01"}]):
+        for covered in (
+            [],
+            *([{"github_id": n, "from": "2026-11-01"}] for n in (BOB, CAROL + 1, str(CAROL))),
+        ):
             self.assertIs(self.covers(entity(covered=covered)), False)
         lists_none = entity()
         del lists_none["covered"]
@@ -395,6 +398,9 @@ class Coverage(RegisterTest):
         self.fake.merge([commit()], {"id": ALICE, "login": "alice"})
         with self.missing(ALICE):
             self.cover()
+        self.fake.merge([commit()], {"id": BOB, "login": "bob[bot]", "type": "Bot"})
+        with self.missing(BOB):
+            self.cover()
         self.assertEqual(self.fake.writes, [])
 
     def test_somebody_unknown_is_refused_though_all_others_signed(self) -> None:
@@ -446,6 +452,10 @@ class Coverage(RegisterTest):
     def test_a_pull_request_already_recorded_is_not_recorded_again(self) -> None:
         self.fake.merge([commit()])
         self.cover()
+        self.assertEqual(self.cover(), "already recorded")
+        self.assertEqual(len(self.fake.writes), 1)
+        # Whatever the file holds: this run is no verifier of it.
+        self.fake.files[self.PATH] = b""
         self.assertEqual(self.cover(), "already recorded")
         self.assertEqual(len(self.fake.writes), 1)
 

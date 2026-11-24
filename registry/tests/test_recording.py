@@ -391,6 +391,12 @@ class Sign(RegisterTest):
                 self.sign()
                 self.assertEqual(self.fake.files[individual(ALICE)], dump(self.expected()))
 
+    def test_a_record_with_nothing_in_it_is_replaced_and_its_token_goes(self) -> None:
+        self.fake.add_comment(1)
+        self.fake.files = {individual(ALICE): b"{}", individual(ALICE, "tsr"): b"old"}
+        self.sign()
+        self.assertEqual(self.fake.files, {individual(ALICE): dump(self.expected())})
+
     def test_a_record_nobody_can_read_is_a_failure(self) -> None:
         for content in (b"", b"[]", b"{", b"\xff"):
             with self.subTest(content):
@@ -446,7 +452,8 @@ class Written(RegisterTest):
             )
 
     def test_a_replaced_records_token_goes_with_it_when_no_new_one_came(self) -> None:
-        for before, deleted in ((b"old", [individual(ALICE, "tsr")]), (None, [])):
+        token = [individual(ALICE, "tsr")]
+        for before, deleted in ((b"old", token), (b"", token), (None, [])):
             self.setUp()
             if before is not None:
                 self.fake.files[individual(ALICE, "tsr")] = before
@@ -533,6 +540,17 @@ class Signin(RegisterTest):
         )
         self.assertIsNone(cla.check_record(CONFIG_V2, individual(ALICE), content))
         self.assertNotIn(TOKEN.encode(), content)
+
+    def test_the_sentence_is_hashed_as_it_was_published(self) -> None:
+        config = config_with(CONFIG_V2)
+        config["versions"]["2"]["sentence"] = sentence = f" {SENTENCE_V2.replace(' ', '  ', 1)}"
+        signin(self.fake, config=config)
+        content = self.fake.files[individual(ALICE)]
+        self.assertEqual(json.loads(content)["sentence_sha256"], cla.sha256(sentence))
+        self.assertIsNone(cla.check_record(config, individual(ALICE), content))
+        self.assertEqual(
+            cla.check_record(CONFIG_V2, individual(ALICE), content), "malformed record"
+        )
 
     def test_the_order_verify_commit_revoke(self) -> None:
         signin(self.fake)
