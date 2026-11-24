@@ -73,6 +73,13 @@ async function start(t: TestContext, s: Settings = base(), fake: Record<string, 
   return { out, done, base: opened };
 }
 
+/** main() that must end before it shows the page: a mutant that goes on fails here, not by hanging. */
+async function refused(t: TestContext, s: Settings = base(), fake: Record<string, string> = {}): ReturnType<typeof start> {
+  const r = await start(t, s, fake);
+  assert.equal(r.base, null, "the page was shown");
+  return r;
+}
+
 /** main() through to its end with the browser's round trip. */
 async function complete(t: TestContext, fake: Record<string, string> = {}): Promise<{ out: Output; code: number; page: { status: number; html: string }; port: number }> {
   const r = await start(t, base(), fake);
@@ -150,6 +157,16 @@ describe("run", () => {
     assert.deepEqual(await run(FAKE_WRANGLER, ["whoami"]), { code: 1 });
   });
 
+  it("a command that prints a lot is neither shown nor waited for", async (t) => {
+    t.after(setEnv({ FAKE_WRANGLER_LOG: wlog }));
+    const loud = join(logs, "loud");
+    writeFileSync(loud, "#!/bin/sh\nhead -c 1048576 /dev/zero | tr '\\0' s\nhead -c 1048576 /dev/zero | tr '\\0' s >&2\nexit 0\n");
+    chmodSync(loud, 0o755);
+    const out = capture(t);
+    assert.deepEqual(await run(loud, ["secret", "put", "X"], "v"), { code: 0 });
+    assert.deepEqual(out.lines, []);
+  });
+
   it("a command that dies before reading its input does not take the script down", async (t) => {
     t.after(setEnv({ FAKE_WRANGLER_LOG: wlog }));
     const quits = join(logs, "quits");
@@ -212,18 +229,18 @@ describe("exchange", () => {
 
 describe("main, before anything is shown", () => {
   it("says the test places only in test mode", async (t) => {
-    const quiet = await start(t, { ...base(), wrangler: join(logs, "missing") });
+    const quiet = await refused(t, { ...base(), wrangler: join(logs, "missing") });
     assert.equal(await quiet.done, 2);
     assert.deepEqual(quiet.out.lines.map((l) => l.stream), ["err"]);
     t.mock.restoreAll();
-    const loud = await start(t, { ...base(), test: true, wrangler: join(logs, "missing") });
+    const loud = await refused(t, { ...base(), test: true, wrangler: join(logs, "missing") });
     assert.equal(await loud.done, 2);
     assert.equal(loud.out.lines[0]!.text, `Test mode: GitHub web ${gh.url}, API ${gh.url}, wrangler ${join(logs, "missing")}.`);
     assert.equal(loud.out.lines[0]!.stream, "out");
   });
 
   it("no wrangler at the pinned place: exit 2, nothing run", async (t) => {
-    const r = await start(t, { ...base(), wrangler: join(logs, "missing") });
+    const r = await refused(t, { ...base(), wrangler: join(logs, "missing") });
     assert.equal(await r.done, 2);
     assert.deepEqual(r.out.lines, [{ stream: "err", text: `No wrangler at ${join(logs, "missing")}: run \`npm ci\` in worker/ first, then this script again.` }]);
     assert.deepEqual(calls(), []);
@@ -231,7 +248,7 @@ describe("main, before anything is shown", () => {
 
   it("wrangler not signed in, or killed: exit 2 before the Worker is asked", async (t) => {
     for (const fake of [{ FAKE_WRANGLER_WHOAMI: "fail" }, { FAKE_WRANGLER_DIE: "whoami" }]) {
-      const r = await start(t, base(), fake);
+      const r = await refused(t, base(), fake);
       assert.equal(await r.done, 2);
       assert.deepEqual(r.out.lines, [{ stream: "err", text: "wrangler is not signed in: run `npx wrangler login` in worker/ first, then this script again." }]);
       assert.deepEqual(calls().map((c) => c.args), [["whoami"]]);
@@ -241,7 +258,7 @@ describe("main, before anything is shown", () => {
   });
 
   it("a Worker wrangler cannot reach: exit 2 with wrangler's exit code, nothing created", async (t) => {
-    const r = await start(t, base(), { FAKE_WRANGLER_LIST: "fail" });
+    const r = await refused(t, base(), { FAKE_WRANGLER_LIST: "fail" });
     assert.equal(await r.done, 2);
     assert.deepEqual(r.out.lines, [{ stream: "err", text: "wrangler cannot reach the Worker kleidos-cla (exit 7): deploy it first with `npm run deploy` in worker/, then run this script again. Nothing was created." }]);
     assert.deepEqual(calls().map((c) => c.args), [["whoami"], ["secret", "list", "--name", "kleidos-cla"]]);

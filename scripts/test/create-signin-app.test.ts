@@ -84,6 +84,13 @@ async function start(t: TestContext, s: Settings = base(), fake: Record<string, 
   return { out, done, base: opened };
 }
 
+/** main() that must end before it shows the page: a mutant that goes on fails here, not by hanging. */
+async function refused(t: TestContext, s: Settings = base(), fake: Record<string, string> = {}): ReturnType<typeof start> {
+  const r = await start(t, s, fake);
+  assert.equal(r.base, null, "the page was shown");
+  return r;
+}
+
 async function complete(t: TestContext, fake: Record<string, string> = {}): Promise<{ out: Output; code: number; page: { status: number; html: string }; port: number }> {
   const r = await start(t, base(), fake);
   assert.ok(r.base, r.out.text());
@@ -144,6 +151,17 @@ describe("the small parts", () => {
     ]);
     assert.deepEqual(await run(FAKE_WRANGLER, ["whoami"], undefined, { cwd: logs }), { code: 0, out: "" });
     assert.equal(wcalls()[0]!.cwd, logs.replace(/^\/var\//, "/private/var/"));
+  });
+
+  it("a command that prints a lot is neither shown nor waited for, unless its output is kept", async (t) => {
+    const loud = join(logs, "loud");
+    writeFileSync(loud, "#!/bin/sh\nhead -c 1048576 /dev/zero | tr '\\0' s\nhead -c 1048576 /dev/zero | tr '\\0' s >&2\nexit 0\n");
+    chmodSync(loud, 0o755);
+    const out = capture(t);
+    assert.deepEqual(await run(loud, []), { code: 0, out: "" });
+    const kept = await run(loud, [], undefined, { keep: true });
+    assert.deepEqual([kept.code, kept.out.length, /^s+$/.test(kept.out)], [0, 1048576, true]);
+    assert.deepEqual(out.lines, []);
   });
 
   it("a command that cannot start is 127, one killed by a signal is 1, one that ignores its input does no harm", async (t) => {
@@ -271,11 +289,11 @@ describe("ensureEnvironment", () => {
 describe("main, before anything is shown", () => {
   it("says the test places only in test mode", async (t) => {
     const missing = join(logs, "missing");
-    const quiet = await start(t, { ...base(), wrangler: missing });
+    const quiet = await refused(t, { ...base(), wrangler: missing });
     assert.equal(await quiet.done, 2);
     assert.deepEqual(quiet.out.lines, [{ stream: "err", text: `No wrangler at ${missing}: run \`npm ci\` in worker/ first, then this script again.` }]);
     t.mock.restoreAll();
-    const loud = await start(t, { ...base(), test: true, wrangler: missing });
+    const loud = await refused(t, { ...base(), test: true, wrangler: missing });
     assert.equal(await loud.done, 2);
     assert.deepEqual(loud.out.lines[0], { stream: "out", text: `Test mode: GitHub web ${gh.url}, API ${gh.url}, wrangler ${missing}, gh ${FAKE_GH}.` });
     assert.deepEqual(wcalls(), []);
@@ -287,7 +305,7 @@ describe("main, before anything is shown", () => {
       [{ FAKE_WRANGLER_DIE: "whoami" }, "wrangler is not signed in: run `npx wrangler login` in worker/ first, then this script again."],
       [{ FAKE_WRANGLER_LIST: "fail" }, "wrangler cannot reach the Worker kleidos-cla (exit 7): deploy it first with `npm run deploy` in worker/, then run this script again. Nothing was created."],
     ] as const) {
-      const r = await start(t, base(), fake);
+      const r = await refused(t, base(), fake);
       assert.equal(await r.done, 2);
       assert.deepEqual(r.out.lines, [{ stream: "err", text }]);
       assert.deepEqual(gcalls(), []);
@@ -305,7 +323,7 @@ describe("main, before anything is shown", () => {
       [base(), { FAKE_GH_DIE: "admin" }],
       [{ ...base(), gh: join(logs, "no-gh") }, {}],
     ] as const) {
-      const r = await start(t, s, fake);
+      const r = await refused(t, s, fake);
       assert.equal(await r.done, 2, JSON.stringify(fake));
       assert.deepEqual(r.out.lines, [{ stream: "err", text }]);
       assert.ok(gcalls().every((c) => c.args[1] === REGISTRY));
@@ -316,7 +334,7 @@ describe("main, before anything is shown", () => {
 
   it("an environment that cannot be set to main only: exit 2, nothing shown", async (t) => {
     for (const fake of [{ FAKE_GH_FAIL: "put" }, { FAKE_GH_FAIL: "policies" }, { FAKE_GH_FAIL: "post" }, { FAKE_GH_POLICIES: "dev:branch" }]) {
-      const r = await start(t, base(), fake);
+      const r = await refused(t, base(), fake);
       assert.equal(await r.done, 2);
       assert.deepEqual(r.out.lines.at(-1), { stream: "err", text: "The Actions environment signin of kleidos-dev/cla could not be set to main only. Nothing was created." });
       assert.equal(gh.conversions.length, 0);

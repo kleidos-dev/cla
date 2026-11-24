@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The misses of the setup scripts and the agreement gate that stay, each
+# with one of the four reasons of the testing standard (unreachable,
+# equivalent, boundary, tool) and why. tests/tools/ratchet.py fails on a miss
+# that is not here, on an entry that is no longer missed and on one whose
+# text is gone.
+
+[[entry]]
+kind = "condition"
+file = "scripts/create-github-app.ts"
+function = "main"
+text = 'stored.join(", ")'
+on = 'stored.join(", ") || "nothing"'
+count = 2
+reason = "tool"
+why = """The instrumenter (worker/test/tools/mcdc.mjs) takes a `||` used as a value as a decision whose outcome is the
+truth of its value. With a non-empty literal after it, that value is true whatever the condition is, so no two
+vectors can differ in the outcome: MC/DC cannot be shown, though the condition decides which text is shown. Both
+of its values are tested, by what the terminal and the page say."""
+test = "scripts/test/create-github-app.test.ts: stores the six secrets in order (a list); when no secret is stored it says nothing was"
+
+[[entry]]
+kind = "condition"
+file = "scripts/create-signin-app.ts"
+function = "main"
+text = 'stored.join(", ")'
+on = 'stored.join(", ") || "nothing"'
+count = 2
+reason = "tool"
+why = """The same default after `||` as in create-github-app.ts: the value of the decision is always a non-empty
+text, so the instrumenter, which judges it by its truth, sees one outcome only."""
+test = "scripts/test/create-signin-app.test.ts: stores the client id and secret (a list); when no secret is stored it says nothing was"

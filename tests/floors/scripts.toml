@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What the tests of the setup scripts and the agreement gate miss
+# (tests/tools/ratchet.py). Lines, branches and functions are held at 100 by
+# node --test itself (ci.yml), so only the conditions and the mutants are
+# counted here. A number only falls; one that goes up needs a dated line in
+# [raised], such as "mutant 2026-11-24" = "why", which a maintainer reviews.
+files = [
+  "scripts/create-github-app.ts",
+  "scripts/create-signin-app.ts",
+  "worker/scripts/check-agreement.mjs",
+]
+
+[misses]
+condition = 4
+mutant = 0
+exclusions = 4
+
+# What there is of each in each file: what a run must have measured, no more
+# and no less. A number that falls needs a dated line in a table [lowered],
+# such as "condition scripts/create-github-app.ts 2026-11-24" = "why".
+[measured]
+"scripts/create-github-app.ts" = { condition = 32, mutant = 294 }
+"scripts/create-signin-app.ts" = { condition = 47, mutant = 424 }
+"worker/scripts/check-agreement.mjs" = { condition = 14, mutant = 93 }
