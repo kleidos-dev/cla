@@ -292,6 +292,8 @@ describe("signing", () => {
     });
     const r = await handleFetch(new Request(`${ORIGIN}/agree`, { method: "POST", headers: { cookie: b.cookieHeader(), origin: ORIGIN, "content-type": "application/x-www-form-urlencoded" }, body: big, duplex: "half" } as RequestInit), w.env);
     expect(r.status).toBe(400);
+    expect(w.gh.comments.filter((c) => c.user.id !== BOT_ID)).toHaveLength(0);
+    expect(w.gh.dispatches).toHaveLength(0);
   });
 
   it("the logs carry no account id", async () => {
@@ -299,6 +301,7 @@ describe("signing", () => {
     const { b, form } = await signedIn(w);
     await b.post("/agree", { ...form, accept: "yes" });
     await drain(w);
+    expect(w.logs.map((l) => (JSON.parse(l) as { msg: string }).msg)).toEqual(expect.arrayContaining(["signed in", "recorder dispatched", "evaluated"]));
     for (const line of w.logs) expect(line).not.toContain(String(alice.id));
   });
 
@@ -362,8 +365,8 @@ describe("webhook and cron", () => {
       w.env.ALLOWED_ACCOUNT_IDS = ids;
       w.gh.installations.set(66, { account: 4242 });
       expect(isConfigured(w.env), ids).toBe(false);
-      expect(() => allowedAccounts(w.env)).toThrow();
-      await expect(cron(makeBot(w.env as ConfiguredEnv))).rejects.toThrow();
+      expect(() => allowedAccounts(w.env)).toThrow("ALLOWED_ACCOUNT_IDS is empty");
+      await expect(cron(makeBot(w.env as ConfiguredEnv))).rejects.toThrow("ALLOWED_ACCOUNT_IDS is empty");
       w.queue.sent.push({ body: { kind: "installation", installation: 1 } }, { body: { kind: "installation", installation: 66 } });
       await drain(w);
       expect(w.gh.deletedInstallations, ids).toEqual([]);
