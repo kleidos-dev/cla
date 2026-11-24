@@ -174,6 +174,12 @@ describe("the signature of an account", () => {
     expect(await registry.signature(alice.id)).not.toBeNull();
   });
 
+  it("is not taken for absent on an error that only looks like GitHub's", async () => {
+    vi.spyOn(registry.gh, "request").mockRejectedValue({ kind: "not_found" });
+    await expect(registry.signature(alice.id)).rejects.toEqual({ kind: "not_found" });
+    await expect(registry.coverageNumbers(SANDBOX, [])).rejects.toEqual({ kind: "not_found" });
+  });
+
   it("that cannot be read is an error, not the absence of one", async () => {
     w.gh.answer(exactly(RECORD), () => new Response(null, { status: 500 }));
     await expect(registry.signature(alice.id)).rejects.toMatchObject({ kind: "transient" });

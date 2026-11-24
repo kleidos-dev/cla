@@ -157,7 +157,7 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     pendingRecord = true;
     if (now - Date.parse(acc.createdAt) > LATE_AFTER_MS) late.add(acc.account);
     const chosen = byAccount.get(acc.account);
-    if (!chosen || (acc.commentId === msg.record_comment && chosen.commentId !== msg.record_comment)) byAccount.set(acc.account, acc);
+    if (!chosen || acc.commentId === msg.record_comment) byAccount.set(acc.account, acc);
   }
   // A sign-in handed to the recorder posts no comment: the account the sign page named is waited for until its record shows.
   if (msg.await_signin && a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
@@ -325,7 +325,12 @@ export async function cron(bot: Bot): Promise<void> {
       for (const pr of open.items) await send(bot.env, { kind: "evaluate", repo, pr: pr.number });
       const closed = await bot.gh.paginate<{ number: number; merged_at: string | null }>(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { token }, 3);
       const now = Date.now();
-      const merged = closed.items.filter((p) => p.merged_at && now - Date.parse(p.merged_at) < COVERAGE_WINDOW_MS && now - Date.parse(p.merged_at) > COVERAGE_SETTLE_MS && p.merged_at.slice(0, 10) >= coverageFrom);
+      const merged = closed.items.filter((p) => {
+        // One closed without merging has no date, so no age: every comparison with it is false.
+        const at = String(p.merged_at);
+        const age = now - Date.parse(at);
+        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at.slice(0, 10) >= coverageFrom;
+      });
       if (merged.length) {
         const have = await bot.registry.coverageNumbers(
           repo,

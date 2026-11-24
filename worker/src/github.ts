@@ -177,7 +177,8 @@ export class GitHub {
     const hit = state.tokens.get(key);
     if (hit && hit.expires - 300 > now) return hit.token;
     const r = await this.request<{ token: string; expires_at: string }>("POST", `/app/installations/${installation}/access_tokens`, { jwt: true }, { repositories: names, permissions });
-    const expires = Math.floor(Date.parse(r.data.expires_at) / 1000) || now + 3600;
+    const end = Date.parse(r.data.expires_at);
+    const expires = Number.isFinite(end) ? Math.floor(end / 1000) : now + 3600;
     state.tokens.set(key, { token: r.data.token, expires });
     return r.data.token;
   }

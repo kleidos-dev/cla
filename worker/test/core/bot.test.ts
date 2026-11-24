@@ -528,9 +528,11 @@ describe("whether a commit changes .github/", () => {
     await expect(state()).rejects.toMatchObject({ kind });
   });
 
-  it("is an error when the Worker's own code fails", async () => {
+  it("is an error when the Worker's own code fails, whatever the error looks like", async () => {
     w.gh.answer(/git\/trees/, () => json({ tree: [null] }));
     await expect(state()).rejects.toThrow(TypeError);
+    vi.spyOn(b.gh, "request").mockRejectedValue({ kind: "not_found" });
+    await expect(githubState(b, SANDBOX, BASE_SHA, head, "t")).rejects.toEqual({ kind: "not_found" });
   });
 });
 
@@ -716,9 +718,11 @@ describe("a release", () => {
   it("stops when the Worker's own code fails", async () => {
     const pr = ready();
     run(pr);
+    // It looks like GitHub's refusal and is not.
+    const bug = Object.assign(new TypeError("bug"), { kind: "forbidden" });
     const request = b.gh.request.bind(b.gh);
-    vi.spyOn(b.gh, "request").mockImplementation((method, url, ...rest) => (url.endsWith("/approve") ? Promise.reject(new TypeError("bug")) : request(method, url, ...rest)));
-    await expect(release(b, ask(pr))).rejects.toThrow("bug");
+    vi.spyOn(b.gh, "request").mockImplementation((method, url, ...rest) => (url.endsWith("/approve") ? Promise.reject(bug) : request(method, url, ...rest)));
+    await expect(release(b, ask(pr))).rejects.toBe(bug);
   });
 
   it.each([
@@ -1071,5 +1075,13 @@ describe("the cron", () => {
     await expect(cron(b)).rejects.toBeInstanceOf(GitHubError);
     expect(queued().map((s) => s.body)).toEqual([{ kind: "evaluate", repo: REGISTRY, pr: first.number }]);
     expect(logged()).toEqual([]);
+  });
+
+  it("stops at an error of the Worker's own, whatever it looks like", async () => {
+    only();
+    const bug = Object.assign(new TypeError("bug"), { kind: "not_found" });
+    vi.spyOn(b.registry, "coverageNumbers").mockRejectedValue(bug);
+    merged(HOUR);
+    await expect(cron(b)).rejects.toBe(bug);
   });
 });
