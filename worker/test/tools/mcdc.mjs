@@ -214,7 +214,7 @@ export function summarize(decisions, seen) {
       }
       const values = new Set(vectors.map((v) => v[i]).filter((x) => x !== "-"));
       const why = values.size === 2 ? "not independent" : values.size === 1 ? `only ${values.has("T") ? "true" : "false"}` : "never evaluated";
-      misses.push({ kind: "condition", file: `worker/${d.file}`, function: d.function, text: d.text === text ? text : `${text} in ${d.text}`, line: d.line, why });
+      misses.push({ kind: "condition", file: `worker/${d.file}`, function: d.function, text, on: d.text === text ? "" : d.text, line: d.line, why });
     });
   }
   return { totals, misses };

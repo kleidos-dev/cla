@@ -131,3 +131,19 @@ repos:
         # the other hooks' reach, see the exclude above).
         always_run: true
         stages: [pre-commit]
+      # A miss of a test measure is listed with its reason in
+      # tests/exclusions/, never hidden from the tool by a comment.
+      - id: test-pragmas
+        name: no inline pragma hides a miss from a test measure
+        entry: python3 tests/tools/ratchet.py pragmas
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: test-ratchet
+        name: the test ratchet reports what is planted
+        entry: python3 tests/tools/ratchet.py selftest
+        language: system
+        files: '^tests/tools/ratchet\.py$'
+        pass_filenames: false
+        stages: [pre-commit]

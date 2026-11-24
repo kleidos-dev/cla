@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What the tests of the Worker's core miss (tests/tools/ratchet.py). A number
+# only falls; one that goes up needs a dated line in [raised], such as
+# "mutant 2026-11-24" = "why", which a maintainer reviews.
+files = [
+  "worker/src/assess.ts",
+  "worker/src/authors.ts",
+  "worker/src/bot.ts",
+  "worker/src/env.ts",
+  "worker/src/github.ts",
+  "worker/src/keys.ts",
+  "worker/src/log.ts",
+  "worker/src/registry.ts",
+  "worker/src/session.ts",
+  "worker/src/util.ts",
+]
+
+[misses]
+line = 0
+branch = 0
+function = 0
+condition = 0
+forced = 0
+mutant = 0
+exclusions = 0

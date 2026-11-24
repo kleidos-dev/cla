@@ -11,8 +11,8 @@ export default defineConfig({
     coverage: {
       provider: "istanbul",
       include: ["src/**/*.ts"],
-      // Paths relative to the repository, as SonarCloud reads them.
-      reporter: ["text-summary", ["lcovonly", { projectRoot: ".." }]],
+      // lcov with paths relative to the repository, as SonarCloud reads them, and what tests/tools/ratchet.py reads.
+      reporter: ["text-summary", "json", ["lcovonly", { projectRoot: ".." }]],
     },
   },
 });

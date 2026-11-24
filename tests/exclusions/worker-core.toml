@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The misses of the Worker's core that stay, each with one of the four reasons
+# of the testing standard (unreachable, equivalent, boundary, tool) and why.
+# tests/tools/ratchet.py fails on a miss that is not here, on an entry that is
+# no longer missed and on one whose text is gone.
