@@ -109,8 +109,12 @@ class Refused(Exception):
     """The input is not something the register records; nothing is written."""
 
 
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 def now() -> str:
-    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso(utcnow())
 
 
 def iso(d: dt.datetime) -> str:
@@ -825,7 +829,7 @@ def record_signin(
                 "site_commit": site_commit,
                 "lang": lang,
             },
-            "recorded_at": iso(max(dt.datetime.now(dt.UTC), accepted)),
+            "recorded_at": iso(max(utcnow(), accepted)),
             "recorder_run_id": ctx.run_id,
             "recorder_commit": ctx.commit,
         }
@@ -1542,9 +1546,7 @@ def verify_coverage(
     recorder run may still be queued, and the Worker's cron re-dispatches a
     missing one."""
     findings: list[Finding] = []
-    settled = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=settle_minutes)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    settled = iso(utcnow() - dt.timedelta(minutes=settle_minutes))
     for repo in config["served_repositories"]:
         owner, name = repo.split("/")
         pulls = gh.get(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
