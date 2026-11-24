@@ -41,7 +41,7 @@ export interface Page<T> {
   truncated: boolean;
 }
 
-type Auth = { token: string } | { basic: [string, string] } | { jwt: true };
+type Auth = "jwt" | { token: string } | { basic: [string, string] };
 
 export type Permissions = Partial<Record<"pull_requests" | "checks" | "contents" | "actions" | "metadata", "read" | "write">>;
 
@@ -66,7 +66,7 @@ export function resetGitHubCaches(): void {
 }
 
 function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
-  const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, "");
+  const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
   if (pem.includes("BEGIN RSA PRIVATE KEY")) throw new Error("APP_PRIVATE_KEY must be PKCS#8");
   const bytes = b64urlDecode(stripEnd(body.replaceAll("+", "-").replaceAll("/", "_"), "="));
   if (!bytes) throw new Error("APP_PRIVATE_KEY is not PEM");
@@ -95,8 +95,8 @@ export async function appJwt(env: ConfiguredEnv): Promise<string> {
 
 function classify(res: Response): GitHubError {
   const requestId = res.headers.get("x-github-request-id") ?? undefined;
-  const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
-  const reset = Number.parseInt(res.headers.get("x-ratelimit-reset") ?? "", 10);
+  const retryAfter = Number.parseInt(String(res.headers.get("retry-after")), 10);
+  const reset = Number.parseInt(String(res.headers.get("x-ratelimit-reset")), 10);
   if (res.status === 429 || (res.status === 403 && (Number.isFinite(retryAfter) || res.headers.get("x-ratelimit-remaining") === "0"))) {
     const delay = Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : Number.isFinite(reset) ? Math.max(1, reset - nowSeconds()) : 60;
     return new GitHubError(res.status, "rate_limited", Math.min(delay, 3600), requestId);
@@ -114,8 +114,8 @@ export class GitHub {
 
   async request<T>(method: string, url: string, auth: Auth, body?: unknown, accept = "application/vnd.github+json"): Promise<Resp<T>> {
     const headers = new Headers({ "user-agent": UA, accept, "x-github-api-version": "2022-11-28" });
-    if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
-    else if ("jwt" in auth) headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
+    if (auth === "jwt") headers.set("authorization", `Bearer ${await appJwt(this.env)}`);
+    else if ("token" in auth) headers.set("authorization", `Bearer ${auth.token}`);
     else headers.set("authorization", `Basic ${btoa(`${auth.basic[0]}:${auth.basic[1]}`)}`);
     let payload: string | null = null;
     if (body !== undefined) {
@@ -157,7 +157,7 @@ export class GitHub {
     const hit = state.installations.get(repo);
     let inst = hit && hit.expires > now ? hit : null;
     if (!inst) {
-      const r = await this.request<{ id: number; account: { id: number } }>("GET", `/repos/${repo}/installation`, { jwt: true });
+      const r = await this.request<{ id: number; account: { id: number } }>("GET", `/repos/${repo}/installation`, "jwt");
       inst = { id: r.data.id, account: r.data.account.id, expires: now + 600 };
       state.installations.set(repo, inst);
     }
@@ -168,7 +168,7 @@ export class GitHub {
   /** An installation token narrowed to the given repositories (names under the installation's account) and permissions. */
   async token(repos: string[], permissions: Permissions): Promise<string> {
     const installation = await this.installationFor(must(repos[0]));
-    for (const r of repos.slice(1)) {
+    for (const r of repos) {
       if ((await this.installationFor(r)) !== installation) throw new NotAllowedError("repositories_span_installations");
     }
     const names = [...new Set(repos.map((r) => must(r.split("/")[1])))].sort(byCodeUnits);
@@ -176,7 +176,7 @@ export class GitHub {
     const now = nowSeconds();
     const hit = state.tokens.get(key);
     if (hit && hit.expires - 300 > now) return hit.token;
-    const r = await this.request<{ token: string; expires_at: string }>("POST", `/app/installations/${installation}/access_tokens`, { jwt: true }, { repositories: names, permissions });
+    const r = await this.request<{ token: string; expires_at: string }>("POST", `/app/installations/${installation}/access_tokens`, "jwt", { repositories: names, permissions });
     const end = Date.parse(r.data.expires_at);
     const expires = Number.isFinite(end) ? Math.floor(end / 1000) : now + 3600;
     state.tokens.set(key, { token: r.data.token, expires });

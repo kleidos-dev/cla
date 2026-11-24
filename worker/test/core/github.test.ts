@@ -78,7 +78,7 @@ describe("a request", () => {
   it("signs in as an app with its id and secret, or with its JWT", async () => {
     const seen = sent();
     await gh.request("DELETE", "/applications/x/grant", { basic: ["id", "se:cret"] });
-    await gh.request("GET", "/app", { jwt: true });
+    await gh.request("GET", "/app", "jwt");
     expect(must(seen[0]).req.headers.get("authorization")).toBe(`Basic ${btoa("id:se:cret")}`);
     expect(must(seen[1]).req.headers.get("authorization")).toBe(`Bearer ${await appJwt(env)}`);
   });
@@ -340,6 +340,12 @@ describe("an installation token", () => {
     expect(bought()).toHaveLength(2);
   });
 
+  it("is another for names that would join to the same text", async () => {
+    for (const r of ["a", "bc", "ab", "c"]) w.gh.addRepo(`kleidos-dev/${r}`);
+    const first = await gh.token(["kleidos-dev/a", "kleidos-dev/bc"], { contents: "read" });
+    expect(await gh.token(["kleidos-dev/ab", "kleidos-dev/c"], { contents: "read" })).not.toBe(first);
+  });
+
   it("is another for the same names in another installation", async () => {
     w.gh.addRepo("other-org/cla-sandbox", { installation: 2 });
     const a = await gh.token([SANDBOX], { contents: "read" });
@@ -535,7 +541,7 @@ describe("an installation token GitHub no longer takes (401)", () => {
     await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token }));
     w.gh.answer(CALL, () => new Response(null, { status: 401 }));
     await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token: "ghu_a_signer" }));
-    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { jwt: true }));
+    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, "jwt"));
     expect(await gh.token([SANDBOX], { contents: "read" })).toBe(token);
   });
 });

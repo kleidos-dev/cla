@@ -261,11 +261,11 @@ export async function coverage(bot: Bot, msg: Extract<QueueMessage, { kind: "cov
 
 /** An installation on an account that is not on the allowlist is removed. */
 export async function installation(bot: Bot, msg: Extract<QueueMessage, { kind: "installation" }>): Promise<void> {
-  const inst = (await bot.gh.request<{ id: number; account: { id: number } | null }>("GET", `/app/installations/${msg.installation}`, { jwt: true })).data;
+  const inst = (await bot.gh.request<{ id: number; account: { id: number } | null }>("GET", `/app/installations/${msg.installation}`, "jwt")).data;
   // allowedAccounts throws on an empty allowlist, so a misconfiguration never removes anything.
   const allowed = allowedAccounts(bot.env);
   if (inst.account && allowed.has(inst.account.id)) return;
-  await bot.gh.request("DELETE", `/app/installations/${msg.installation}`, { jwt: true });
+  await bot.gh.request("DELETE", `/app/installations/${msg.installation}`, "jwt");
   log("installation removed", { installation: msg.installation });
 }
 
@@ -295,11 +295,11 @@ const COVERAGE_SETTLE_MS = 30 * 60 * 1000;
  */
 export async function cron(bot: Bot): Promise<void> {
   const allowed = allowedAccounts(bot.env);
-  const insts = await bot.gh.paginate<{ id: number; account: { id: number } | null }>("/app/installations", { jwt: true }, 3);
+  const insts = await bot.gh.paginate<{ id: number; account: { id: number } | null }>("/app/installations", "jwt", 3);
   for (const i of insts.items) if (!i.account || !allowed.has(i.account.id)) await send(bot.env, { kind: "installation", installation: i.id });
 
   const since = Date.now() - 7 * 3600 * 1000;
-  const deliveries = await bot.gh.paginate<{ id: number; guid: string; status_code: number; delivered_at: string; redelivery: boolean }>("/app/hook/deliveries", { jwt: true }, 5);
+  const deliveries = await bot.gh.paginate<{ id: number; guid: string; status_code: number; delivered_at: string; redelivery: boolean }>("/app/hook/deliveries", "jwt", 5);
   const ok = new Set(deliveries.items.filter((d) => d.status_code >= 200 && d.status_code < 300).map((d) => d.guid));
   const failed = deliveries.items.filter((d) => !ok.has(d.guid) && !d.redelivery && Date.parse(d.delivered_at) > since);
   const retried = new Set<string>();
@@ -307,7 +307,7 @@ export async function cron(bot: Bot): Promise<void> {
     if (retried.size >= MAX_REDELIVERIES) break;
     if (retried.has(d.guid)) continue;
     retried.add(d.guid);
-    await bot.gh.request("POST", `/app/hook/deliveries/${d.id}/attempts`, { jwt: true }).catch(() => undefined);
+    await bot.gh.request("POST", `/app/hook/deliveries/${d.id}/attempts`, "jwt").catch(() => undefined);
   }
 
   const config = await bot.registry.config();

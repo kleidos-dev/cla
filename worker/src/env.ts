@@ -45,7 +45,7 @@ export function isConfigured(env: Env): env is ConfiguredEnv {
 
 function parseAllowlist(raw: string | undefined): Set<number> {
   return new Set(
-    (raw ?? "")
+    String(raw)
       .split(",")
       .map((s) => s.trim())
       .filter((s) => /^[1-9][0-9]{0,15}$/.test(s))
