@@ -6,7 +6,7 @@
  * the same lists, the same links and the same placeholders, and no string is
  * empty. And how a request's language is chosen.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Strings } from "../../src/i18n";
 import { BACK, MESSAGES, S, fromAcceptLanguage, isLang, pickLang } from "../../src/i18n";
 import { restoring } from "./support";
@@ -37,12 +37,18 @@ function leaves(v: unknown, path = ""): [string, string, string[]][] {
 }
 
 describe("the strings of both languages", () => {
-  const en = leaves(S.en);
-  const es = leaves(S.es);
-
+  // Read inside each test, not while the file is collected: a string that is no string fails a test, not the file.
+  let en: [string, string, string[]][] = [];
+  let es: [string, string, string[]][] = [];
   /** What English leaves out (null) is a part only the Spanish pages have. */
-  const nullInEnglish = en.filter(([, t]) => t === "<null>").map(([p]) => p);
-  const esByPath = new Map(es.map(([p, t]) => [p, t]));
+  let nullInEnglish: string[] = [];
+  let esByPath = new Map<string, string>();
+  beforeEach(() => {
+    en = leaves(S.en);
+    es = leaves(S.es);
+    nullInEnglish = en.filter(([, t]) => t === "<null>").map(([p]) => p);
+    esByPath = new Map(es.map(([p, t]) => [p, t]));
+  });
 
   it("have the same keys and lists, in the same order, where English has nothing for a part only Spanish shows", () => {
     const collapse = (p: string) => nullInEnglish.find((n) => p.startsWith(`${n}.`)) ?? p;
