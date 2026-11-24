@@ -704,11 +704,15 @@ def selftest() -> list[str]:
         page = here_dir / "summary.md"
         summarize(page, "check x", "ratchet check: ok", [])
         summarize(page, "check y", "ratchet check: 1 problems", ["a ``` b"])
+        summarize(page, "areas", "ratchet areas: 1 problems", ["a.ts is in no area"])
         cases.append(
             (
                 "a job's summary says the verdict, and the problems in a block",
                 [page.read_text()],
-                ["**check x**: ok\n\n**check y**: 1 problems\n\n````text\na ``` b\n````\n\n"],
+                [
+                    "**check x**: ok\n\n**check y**: 1 problems\n\n````text\na ``` b\n````\n\n"
+                    "**areas**: 1 problems\n\n```text\na.ts is in no area\n```\n\n"
+                ],
             )
         )
         cases.append(
@@ -776,7 +780,7 @@ def summarize(path: Path, asked: str, verdict: str, problems: list[str]) -> None
     lines = [f"**{asked}**: {verdict.split(': ', 1)[1]}", ""]
     if problems:
         # A fence longer than any run of backticks it holds (a template literal of the source).
-        fence = "`" * max(3, *(len(run) + 1 for p in problems for run in re.findall("`+", p)))
+        fence = "`" * max([3, *(len(run) + 1 for p in problems for run in re.findall("`+", p))])
         lines += [f"{fence}text", *problems, fence, ""]
     with path.open("a", encoding="utf-8") as out:
         out.write("\n".join(lines) + "\n")
