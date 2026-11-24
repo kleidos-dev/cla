@@ -397,6 +397,12 @@ describe("an acceptance on the pull request", () => {
     expect(queued()).toEqual([{ body: { kind: "evaluate", repo: SANDBOX, pr: pr.number, attempt: 1, await_signin: alice.id }, delaySeconds: 20 }]);
   });
 
+  it("by signing in of one of several who are missing is waited for", async () => {
+    const pr = openPr(w, alice, { commits: [commit(bob)] });
+    await evaluate(b, evaluation(pr, { await_signin: bob.id }));
+    expect(queued()).toEqual([{ body: { kind: "evaluate", repo: SANDBOX, pr: pr.number, attempt: 1, await_signin: bob.id }, delaySeconds: 20 }]);
+  });
+
   it("by signing in is not waited for when that account is not missing", async () => {
     await w.gh.signDirectly(alice);
     const pr = openPr(w, alice, { commits: [commit(bob)] });
@@ -686,10 +692,12 @@ describe("a release", () => {
     const r = run(pr, { jobs: [{ runner_group_name: null }] });
     await release(b, ask(pr));
     expect(r.approved).toBe(true);
-    const later = run(pr);
-    w.gh.answer(/\/jobs/, () => json({}));
-    await release(b, ask(pr));
-    expect(later.approved).toBe(true);
+    for (const none of [{}, { jobs: null }]) {
+      const later = run(pr);
+      w.gh.answer(/\/jobs/, () => json(none), 1);
+      await release(b, ask(pr));
+      expect(later.approved).toBe(true);
+    }
   });
 
   it.each([

@@ -170,11 +170,12 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     }
   }
   const clear = allClear(a);
-  const github: GithubState = clear ? await githubState(bot, msg.repo, a.pr.base.sha, a.pr.head.sha, token) : "untouched";
-  const ctx = await textContext(bot, config, a, { github, autoApprove: repoConf.auto_approve, lateRecording: [...late] });
+  // Whether .github/ changes is only asked once everybody is clear, and only matters then.
+  const state: Partial<Pick<TextContext, "github">> = clear ? { github: await githubState(bot, msg.repo, a.pr.base.sha, a.pr.head.sha, token) } : {};
+  const ctx = await textContext(bot, config, a, { ...state, autoApprove: repoConf.auto_approve, lateRecording: [...late] });
   await upsertCheck(bot, a, ctx, token);
   await upsertComment(bot, a, ctx, token);
-  if (clear && repoConf.auto_approve && github === "untouched") {
+  if (repoConf.auto_approve && state.github === "untouched") {
     await send(bot.env, { kind: "release", repo: msg.repo, pr: msg.pr, sha: a.pr.head.sha });
   }
   // Only an account that is missing is waited for, so nothing is once everybody is clear.
@@ -184,8 +185,8 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
 
 /** Whether a held run may target a self-hosted runner: any job whose labels are not all GitHub-hosted standard labels. */
 async function mayRunSelfHosted(bot: Bot, repo: string, runId: number, token: string): Promise<boolean> {
-  const jobs = (await bot.gh.request<{ jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data.jobs ?? [];
-  return jobs.some((j) => (j.labels ?? []).some((l) => !HOSTED_LABEL.test(l)) || (j.runner_group_name != null && j.runner_group_name !== "GitHub Actions"));
+  const { jobs } = (await bot.gh.request<{ jobs?: { labels?: string[]; runner_group_name?: string | null }[] }>("GET", `/repos/${repo}/actions/runs/${runId}/jobs?per_page=100`, { token })).data;
+  return Boolean(jobs?.some((j) => (j.labels ?? []).some((l) => !HOSTED_LABEL.test(l)) || (j.runner_group_name != null && j.runner_group_name !== "GitHub Actions")));
 }
 
 /**
@@ -324,7 +325,7 @@ export async function cron(bot: Bot): Promise<void> {
         // One closed without merging has no date, so no age: every comparison with it is false.
         const at = String(p.merged_at);
         const age = now - Date.parse(at);
-        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at.slice(0, 10) >= coverageFrom;
+        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at >= coverageFrom;
       });
       if (merged.length) {
         const have = await bot.registry.coverageNumbers(

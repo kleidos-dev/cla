@@ -368,7 +368,7 @@ describe("the coverage records of a repository", () => {
 
   it("are the files named by a number only", async () => {
     const file = (name: string, type = "file") => ({ name, type });
-    listing([file("8.json"), file("08.json"), file("0.json"), file("8.json.bak"), file("x8.json"), file("8xjson"), file("12345678901.json"), file("9.json", "dir"), file("README.md")]);
+    listing([file("8.json"), file("03.json"), file("0.json"), file("5.json.bak"), file("x6.json"), file("4xjson"), file("12345678901.json"), file("9.json", "dir"), file("README.md")]);
     expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([8]);
   });
 

@@ -63,7 +63,7 @@ function trailers(lines: string[]): string[] {
   for (const line of lines) {
     if (line.slice(0, TRAILER_KEY.length).toLowerCase() !== TRAILER_KEY) continue;
     const bracket = line.lastIndexOf("<");
-    if (bracket < 0) continue;
+    if (bracket === -1) continue;
     const address = stripEnd(line.slice(bracket + 1), " \t");
     if (TRAILER_EMAIL.test(address)) out.push(address.slice(0, -1).toLowerCase());
   }

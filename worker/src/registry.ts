@@ -246,7 +246,7 @@ export class Registry {
     try {
       rec = JSON.parse(text ?? "null");
     } catch {
-      return null;
+      // A file that is not JSON is no record.
     }
     if (!isSignatureRecord(rec, id)) return null;
     const commit = await this.lastCommit(id);
@@ -349,7 +349,7 @@ export class Registry {
     );
     const title = `Record signin ${repo}#${pr} ${id}`;
     const from = Date.parse(since) - 60_000;
-    const runs = (r.data.workflow_runs ?? []).filter((x) => (x.display_title ?? "").split(/\s+/).join(" ") === title && Date.parse(x.created_at ?? "") >= from);
+    const runs = r.data.workflow_runs?.filter((x) => x.display_title?.split(/\s+/).join(" ") === title && Date.parse(String(x.created_at)) >= from) ?? [];
     if (runs.length === 0) return null;
     if (runs.some((x) => x.status === "completed" && x.conclusion === "success")) return "succeeded";
     if (runs.some((x) => x.status !== "completed")) return "running";
@@ -374,9 +374,7 @@ export function coveringEntity(entities: Entity[], config: Config, id: number, d
   for (const e of entities) {
     const v = config.versions[String(e.version)];
     if (!v || !config.accepted_versions.includes(e.version) || v.set_sha256 !== e.set_sha256) continue;
-    for (const c of e.covered ?? []) {
-      if (c.github_id === id && c.from <= date && (!c.until || date <= c.until)) return e;
-    }
+    if (e.covered?.some((c) => c.github_id === id && c.from <= date && (!c.until || date <= c.until))) return e;
   }
   return null;
 }
