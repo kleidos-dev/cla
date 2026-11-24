@@ -723,13 +723,22 @@ class SigninApp:
 def revoke_signin(gh: GitHub, app: SigninApp, token: str) -> None:
     """Deletes the signer's authorization of the sign-in app.
 
-    Every token of it dies, and GitHub asks again next time."""
-    status, _, _ = gh.exchange(
-        "DELETE",
-        f"/applications/{app.client_id}/grant",
-        {"access_token": token},
-        basic=(app.client_id, app.client_secret),
-    )
+    Every token of it dies, and GitHub asks again next time. A grant that
+    cannot be deleted is said and nothing else: what was recorded or refused
+    stands."""
+    try:
+        status, _, _ = gh.exchange(
+            "DELETE",
+            f"/applications/{app.client_id}/grant",
+            {"access_token": token},
+            basic=(app.client_id, app.client_secret),
+        )
+    except UNREACHABLE as e:
+        print(
+            f"sign-in grant not deleted: GitHub cannot be reached ({type(e).__name__})",
+            file=sys.stderr,
+        )
+        return
     print(
         f"sign-in grant deleted ({status})"
         if status == 204
