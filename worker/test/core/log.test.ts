@@ -55,7 +55,7 @@ describe("the fields", () => {
     expect(written("m", Object.fromEntries([[name, "value"]]))).toEqual({ msg: "m" });
   });
 
-  it.each([0, -1, 1.5, 200, true, false])("a number or a boolean is written as it is: %j", (v) => {
+  it.each([0, -1, 1.5, 200, 1e21, true, false])("a number or a boolean is written as it is: %j", (v) => {
     expect(written("m", { status: v })).toEqual({ msg: "m", status: v });
   });
 

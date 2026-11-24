@@ -73,7 +73,7 @@ export function botApp(env: ConfiguredEnv): OAuthApp {
  * of any other app.
  */
 export function signinApp(env: Env, configured: string | null | undefined): OAuthApp | null {
-  if (!env.SIGNIN_CLIENT_ID || !env.SIGNIN_CLIENT_SECRET || typeof configured !== "string" || configured !== env.SIGNIN_CLIENT_ID) return null;
+  if (!env.SIGNIN_CLIENT_ID || !env.SIGNIN_CLIENT_SECRET || configured !== env.SIGNIN_CLIENT_ID) return null;
   return { kind: "signin", clientId: env.SIGNIN_CLIENT_ID, clientSecret: env.SIGNIN_CLIENT_SECRET };
 }
 

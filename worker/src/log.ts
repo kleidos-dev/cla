@@ -32,13 +32,15 @@ const FORBIDDEN = /gh[uprso]_|-----BEGIN|@|code=|state=/i;
 
 export type LogValue = string | number | boolean | undefined | null;
 
+function safe(s: string): string {
+  return SAFE.test(s) && !FORBIDDEN.test(s) ? s : "redacted";
+}
+
 export function log(message: string, fields: Record<string, LogValue> = {}): void {
-  const line: Record<string, string | number | boolean> = { msg: SAFE.test(message) && !FORBIDDEN.test(message) ? message : "redacted" };
-  for (const [k, v] of Object.entries(fields)) {
-    if (!FIELDS.has(k) || v === undefined || v === null) continue;
-    if (typeof v === "number" || typeof v === "boolean") line[k] = v;
-    else if (SAFE.test(v) && !FORBIDDEN.test(v)) line[k] = v;
-    else line[k] = "redacted";
+  const line: Record<string, string | number | boolean> = { msg: safe(message) };
+  for (const [k, value] of Object.entries(fields)) {
+    const v = value ?? null;
+    if (FIELDS.has(k) && v !== null) line[k] = typeof v === "string" ? safe(v) : v;
   }
   console.log(JSON.stringify(line));
 }
