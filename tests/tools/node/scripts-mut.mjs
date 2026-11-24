@@ -92,10 +92,17 @@ export function sample(items, n, seed) {
   return [...picked].sort((a, b) => a - b).map((i) => items[i]);
 }
 
-/** Whether a mutated module still loads: a mutant that breaks the module is no kill. */
-function loads(copy, file) {
-  const r = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(join(copy, file)).href)})`], { cwd: copy, encoding: "utf8", timeout: 30_000 });
-  return r.status === 0;
+/** Exit code of a module that could not be loaded at all (a syntax error): no module of the area exits with it. */
+const LOAD_FAILED = 97;
+
+/**
+ * Whether a mutated module still loads: a mutant that breaks the module is no kill. A module that loads
+ * and then ends the process (a mutated `import.meta.main`) does load: its tests will find out.
+ */
+export function loads(copy, file) {
+  const url = JSON.stringify(pathToFileURL(join(copy, file)).href);
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", `try { await import(${url}); } catch (e) { if (e instanceof SyntaxError || e?.code === "ERR_MODULE_NOT_FOUND") process.exit(${LOAD_FAILED}); }`], { cwd: copy, encoding: "utf8", timeout: 30_000 });
+  return r.status !== LOAD_FAILED;
 }
 
 /**

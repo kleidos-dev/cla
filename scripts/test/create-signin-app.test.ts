@@ -537,7 +537,7 @@ describe("main, after GitHub's redirect", () => {
     const page = await roundTrip(r.base!);
     assert.equal(await r.done, 1);
     assert.ok(r.out.lines.some((l) => l.text === "Stored: nothing."));
-    assert.ok(page.html.includes("<p>Stored: nothing.</p>"));
+    assert.ok(page.html.includes("<p>Stored: nothing.</p><p>Not stored: SIGNIN_CLIENT_ID (Worker), SIGNIN_CLIENT_SECRET (Worker), SIGNIN_CLIENT_SECRET (environment signin of kleidos-dev/cla). See the terminal.</p>"));
   });
 
   it("nothing of GitHub's answer makes a line of its own on the terminal, and long text is cut", async (t) => {

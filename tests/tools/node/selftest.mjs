@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MEASURED, ROOT, measuredAs } from "./mcdc-hook.mjs";
 import { merged, report } from "./scripts-mcdc.mjs";
-import { apply, mutantsOf, sample, unlisted, verdict } from "./scripts-mut.mjs";
+import { apply, loads, mutantsOf, sample, unlisted, verdict } from "./scripts-mut.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cla-selftest-"));
 try {
@@ -63,6 +63,11 @@ try {
   assert.equal((await verdict(dir, ["m.test.mjs"], 30_000, 1)).status, "Killed");
   writeFileSync(join(dir, "m.mjs"), source);
   assert.deepEqual(await verdict(dir, ["m.test.mjs"], 30_000, 1), { status: "Survived", passed: 1 });
+
+  // A module that does not parse does not load; one that ends the process as it loads does.
+  writeFileSync(join(dir, "broken.mjs"), "export const = ;\n");
+  writeFileSync(join(dir, "exits.mjs"), "process.exit(2);\n");
+  assert.deepEqual([loads(dir, "broken.mjs"), loads(dir, "exits.mjs"), loads(dir, "m.mjs")], [false, true, true]);
 
   // A survivor of a report that the list does not name is reported; a killed one is not.
   const mutant = (status) => ({ status, mutatorName: "Planted", replacement: "x", location: { start: { line: 1, column: 1 }, end: { line: 1, column: 7 } } });
