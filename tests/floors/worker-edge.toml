@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What the tests of the Worker's edge miss (tests/tools/ratchet.py). A number
+# only falls; one that goes up needs a dated line in [raised], such as
+# "mutant 2026-11-24" = "why", which a maintainer reviews.
+files = [
+  "worker/src/agreement.ts",
+  "worker/src/button.ts",
+  "worker/src/html.ts",
+  "worker/src/i18n.ts",
+  "worker/src/index.ts",
+  "worker/src/markdown.ts",
+  "worker/src/messages.ts",
+  "worker/src/texts.ts",
+  "worker/src/web.ts",
+  "worker/src/webhook.ts",
+]
+
+[misses]
+line = 0
+branch = 0
+function = 0
+condition = 1
+forced = 25
+mutant = 43
+exclusions = 69
+
+# What there is of each in each file: what a run must have measured, no more
+# and no less. A number that falls needs a dated line in a table [lowered],
+# such as "line worker/src/web.ts 2026-11-24" = "why", or of the file alone.
+[measured]
+"worker/src/agreement.ts" = { line = 32, branch = 16, function = 6, condition = 8, forced = 16, mutant = 59 }
+"worker/src/button.ts" = { line = 66, branch = 51, function = 8, condition = 29, forced = 58, mutant = 216 }
+"worker/src/html.ts" = { line = 43, branch = 56, function = 15, condition = 17, forced = 34, mutant = 159 }
+"worker/src/i18n.ts" = { line = 43, branch = 15, function = 33, condition = 10, forced = 20, mutant = 624 }
+"worker/src/index.ts" = { line = 93, branch = 106, function = 11, condition = 52, forced = 104, mutant = 281 }
+"worker/src/markdown.ts" = { line = 131, branch = 100, function = 24, condition = 52, forced = 104, mutant = 394 }
+"worker/src/messages.ts" = { line = 23, branch = 65, function = 4, condition = 35, forced = 70, mutant = 153 }
+"worker/src/texts.ts" = { line = 82, branch = 74, function = 21, condition = 37, forced = 74, mutant = 204 }
+"worker/src/web.ts" = { line = 344, branch = 378, function = 70, condition = 173, forced = 346, mutant = 1020 }
+"worker/src/webhook.ts" = { line = 75, branch = 126, function = 9, condition = 62, forced = 124, mutant = 380 }

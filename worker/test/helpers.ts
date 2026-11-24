@@ -41,15 +41,27 @@ export interface Sent {
   delaySeconds?: number;
 }
 
+/**
+ * The queue binding. A message is kept only when the promise of its send
+ * settles, one macrotask later, as a real send completes after a round
+ * trip: a send the Worker does not await has kept nothing by the time its
+ * response is read.
+ */
 export class FakeQueue {
   sent: Sent[] = [];
   send(body: QueueMessage, opts?: { delaySeconds?: number }): Promise<void> {
-    this.sent.push({ body: structuredClone(body), ...(opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : {}) });
-    return Promise.resolve();
+    return this.keep([{ body: structuredClone(body), ...(opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : {}) }]);
   }
   sendBatch(msgs: { body: QueueMessage }[]): Promise<void> {
-    for (const m of msgs) this.sent.push({ body: structuredClone(m.body) });
-    return Promise.resolve();
+    return this.keep(msgs.map((m) => ({ body: structuredClone(m.body) })));
+  }
+  private keep(messages: Sent[]): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        this.sent.push(...messages);
+        resolve();
+      }, 0);
+    });
   }
 }
 

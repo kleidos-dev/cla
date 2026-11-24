@@ -1,0 +1,729 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The misses of the Worker's edge that stay, each with one of the four reasons
+# of the testing standard (unreachable, equivalent, boundary, tool) and why.
+# tests/tools/ratchet.py fails on a miss that is not here, on an entry that is
+# no longer missed and on one whose text is gone.
+
+[[entry]]
+kind = "condition"
+file = "worker/src/web.ts"
+function = "agree"
+text = "e instanceof GitHubError"
+on = "e instanceof GitHubError && (e.kind === \"unauthorized\" || e.kind === \"forbidden\" || e.kind === \"not_found\")"
+reason = "unreachable"
+why = """The try holds one call, bot.gh.request with the session's token, and request() turns every failure into a GitHubError
+(github.ts: a refused fetch, an unreadable body and bad JSON included); the token cannot make the header throw, since
+the callback already sent it to GET /user. The test is the type guard that lets the catch read e.kind."""
+
+[[entry]]
+kind = "forced"
+file = "worker/src/button.ts"
+function = "parts"
+text = "hit"
+operator = "false"
+reason = "equivalent"
+why = "parts() is a pure function of the drawing: skipping its memo parses the same drawing again to the same parts."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/html.ts"
+function = "withEncoding"
+text = "name"
+on = "name && !(q && Number(q.slice(2)) === 0)"
+operator = "true"
+reason = "equivalent"
+why = "Held true, an empty name is added to the accepted encodings, and the empty text is neither br nor gzip."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "healthz"
+text = "signing.flow"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no flow, it spreads flow: undefined, and JSON.stringify leaves an undefined property out."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "healthz"
+text = "signing.reason"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no reason, it spreads reason: undefined, and JSON.stringify leaves an undefined property out."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "publicRoute"
+text = "path.startsWith(\"/assets/\")"
+on = "path.startsWith(\"/assets/\") && path === (await stylesheetPath())"
+operator = "true"
+reason = "equivalent"
+why = "The stylesheet's path starts with /assets/, so equality with it already implies the prefix."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "publicRoute"
+text = "Object.hasOwn(ASSETS, path)"
+operator = "true"
+reason = "equivalent"
+why = "Only paths under /assets/ get here, and no property of an object's prototype starts with /: ASSETS[path] is then undefined, and nothing is served, as when the test is false."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "handleQueue"
+text = "e instanceof GitHubError"
+on = "e instanceof GitHubError && e.kind === \"unauthorized\" && m.attempts < 2"
+operator = "true"
+reason = "equivalent"
+why = "Held true for another error, e.kind, e.retryable and e.status are undefined: the retry test is false, and the status field is left out of the log, as when the test is false."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "handleQueue"
+text = "e instanceof GitHubError"
+on = "e instanceof GitHubError && e.retryable"
+operator = "true"
+reason = "equivalent"
+why = "Held true for another error, e.kind, e.retryable and e.status are undefined: the retry test is false, and the status field is left out of the log, as when the test is false."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/index.ts"
+function = "handleQueue"
+text = "e instanceof GitHubError"
+operator = "true"
+reason = "equivalent"
+why = "Held true for another error, e.kind, e.retryable and e.status are undefined: the retry test is false, and the status field is left out of the log, as when the test is false."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/messages.ts"
+function = "posInt"
+text = "typeof v === \"number\""
+on = "typeof v === \"number\" && Number.isSafeInteger(v) && v > 0"
+operator = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/messages.ts"
+function = "parseMessage"
+text = "b.attempt === undefined"
+operator = "false"
+reason = "equivalent"
+why = "posIntOrZero(undefined) is undefined, the value the shortcut gives."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/messages.ts"
+function = "posIntOrZero"
+text = "typeof v === \"number\""
+on = "typeof v === \"number\" && Number.isSafeInteger(v) && v >= 0"
+operator = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/texts.ts"
+function = "notNeeded"
+text = "parts.length"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no parts, it gives the empty text instead of null, and both are read as nothing to say."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/texts.ts"
+function = "registerLine"
+text = "commit"
+on = "commit && /^[0-9a-f]{40}$/.test(commit)"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no commit, the pattern reads null as the text \"null\", which is not forty hex digits: the branch is linked either way."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "keyFor"
+text = "hmacKey?.secret !== secret"
+operator = "true"
+reason = "equivalent"
+why = "Importing the key again for the same secret gives the same key: only the memo is lost."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "verifySignature"
+text = "header"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no header, the pattern reads null as the text \"null\", which is no signature: refused either way."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "obj"
+text = "v !== null"
+on = "typeof v === \"object\" && v !== null"
+operator = "true"
+reason = "equivalent"
+why = "obj(null) then returns null cast as a payload, and every caller reads it with ?. or tests it for falsiness, as for the null it returns now."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "num"
+text = "typeof v === \"number\""
+on = "typeof v === \"number\" && Number.isSafeInteger(v) && v > 0"
+operator = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "mapEvent"
+text = "typeof p.action === \"string\""
+operator = "true"
+reason = "equivalent"
+why = "action is only ever compared for equality with texts, which no other type equals."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/webhook.ts"
+function = "mapEvent"
+text = "owner"
+on = "!owner || !o.allowed.has(owner)"
+operator = "true"
+reason = "equivalent"
+why = "Held true with no owner, allowed.has(null) is false: the delivery is dropped either way."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/markdown.ts"
+function = "escapeRule"
+text = "next !== undefined"
+on = "next !== undefined && ESCAPABLE.test(next)"
+operator = "true"
+reason = "equivalent"
+why = "At the end of the text next is undefined, and ESCAPABLE.test(undefined) reads the text \"undefined\", which has no escapable character: false either way."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/markdown.ts"
+function = "parseInline"
+text = "text"
+operator = "true"
+reason = "equivalent"
+why = "An empty text node is escaped and joined as the empty text, and inlineText reads it as nothing: the HTML and the heading ids are the same."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "recorded"
+on = "recorded || run !== \"failed\""
+operator = "false"
+reason = "equivalent"
+why = "When the record is valid, run was set to \"succeeded\", so run !== \"failed\" decides the same as recorded."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/web.ts"
+function = "acceptanceStands"
+text = "e instanceof GitHubError"
+on = "e instanceof GitHubError && e.kind === \"not_found\""
+operator = "true"
+reason = "equivalent"
+why = "Held true for another error (a TypeError from a comment with no words), e.kind is undefined, which is not \"not_found\": the error is thrown again, as when the test is false."
+
+[[entry]]
+kind = "forced"
+file = "worker/src/web.ts"
+function = "agree"
+text = "e instanceof GitHubError"
+on = "e instanceof GitHubError && (e.kind === \"unauthorized\" || e.kind === \"forbidden\" || e.kind === \"not_found\")"
+operator = "true"
+reason = "unreachable"
+why = "The try holds one call, bot.gh.request with the session's token, and request() turns every failure into a GitHubError (github.ts: a refused fetch, an unreadable body and bad JSON included); the token cannot make the header throw, since the callback already sent it to GET /user. The test is the type guard that lets the catch read e.kind."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/button.ts"
+function = "parts"
+text = "hit"
+on = "if (hit) return hit;"
+operator = "ConditionalExpression"
+replacement = "false"
+reason = "equivalent"
+why = "parts() is a pure function of the drawing: skipping its memo parses the same drawing again to the same parts."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/button.ts"
+function = "parts"
+text = "parsed.set(svg, p);"
+operator = "CallExpression"
+replacement = ";"
+reason = "equivalent"
+why = "parts() is a pure function of the drawing: not keeping its memo parses the same drawing again to the same parts."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/html.ts"
+function = "withEncoding"
+text = "\"\""
+on = "const type = res.headers.get(\"content-type\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "With no content-type the empty text and the mutant's both fail the type test, so the response is returned as it is either way."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/html.ts"
+function = "withEncoding"
+text = "\"\""
+on = "for (const part of (req.headers.get(\"accept-encoding\") ?? \"\").toLowerCase().split(\",\")) {"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "With no Accept-Encoding the mutant's text names no encoding (it is neither br nor gzip), as the empty text names none."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/index.ts"
+function = "publicRoute"
+text = "\"/assets/\""
+on = "if (path.startsWith(\"/assets/\") && path === (await stylesheetPath())) {"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "The stylesheet's path starts with /assets/, so equality with it already implies the prefix the mutant drops."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/markdown.ts"
+function = "escapeRule"
+text = "next !== undefined"
+on = "return next !== undefined && ESCAPABLE.test(next) ? { nodes: [next], end: at + 2 } : null;"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "At the end of the text next is undefined, and ESCAPABLE.test(undefined) reads the text \"undefined\", which has no escapable character: false either way."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/markdown.ts"
+function = "parseInline"
+text = "text"
+on = "if (text) nodes.push(text);"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "An empty text node is escaped and joined as the empty text, and inlineText reads it as nothing: the HTML and the heading ids are the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/markdown.ts"
+function = "renderMarkdown"
+text = "/^\\s+/"
+on = "if (lists.length && /^\\s+/.test(line)) {"
+operator = "Regex"
+replacement = "/^\\s/"
+reason = "equivalent"
+why = "The test asks whether the line starts with white space: one character of it or more gives the same answer."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/messages.ts"
+function = "posInt"
+text = "typeof v === \"number\""
+on = "return typeof v === \"number\" && Number.isSafeInteger(v) && v > 0;"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/messages.ts"
+function = "parseMessage"
+text = "b.attempt === undefined"
+on = "const attempt = b.attempt === undefined ? undefined : posIntOrZero(b.attempt);"
+operator = "ConditionalExpression"
+replacement = "false"
+reason = "equivalent"
+why = "posIntOrZero(undefined) is undefined, the value the shortcut gives."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/messages.ts"
+function = "posIntOrZero"
+text = "typeof v === \"number\""
+on = "return typeof v === \"number\" && Number.isSafeInteger(v) && v >= 0 ? v : undefined;"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "rendered"
+text = "/^<!--[\\s\\S]*?-->\\s*/"
+on = "return renderMarkdown(src.replace(/^<!--[\\s\\S]*?-->\\s*/, \"\"), { headingShift: 1, idPrefix: prefix });"
+operator = "Regex"
+replacement = "/<!--[\\s\\S]*?-->\\s*/"
+reason = "equivalent"
+why = "The only bundled text with a comment (individual.es.md) opens with it and has no other, and renderMarkdown skips the blank lines after it: dropping the anchor, or matching one white space or none, renders the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "rendered"
+text = "/^<!--[\\s\\S]*?-->\\s*/"
+on = "return renderMarkdown(src.replace(/^<!--[\\s\\S]*?-->\\s*/, \"\"), { headingShift: 1, idPrefix: prefix });"
+operator = "Regex"
+replacement = "/^<!--[\\s\\S]*?-->\\s/"
+reason = "equivalent"
+why = "The only bundled text with a comment (individual.es.md) opens with it and has no other, and renderMarkdown skips the blank lines after it: dropping the anchor, or matching one white space or none, renders the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "rendered"
+text = "/^<!--[\\s\\S]*?-->\\s*/"
+on = "return renderMarkdown(src.replace(/^<!--[\\s\\S]*?-->\\s*/, \"\"), { headingShift: 1, idPrefix: prefix });"
+operator = "Regex"
+replacement = "/^<!--[\\s\\S]*?-->\\S*/"
+reason = "equivalent"
+why = "The only bundled text with a comment (individual.es.md) opens with it and has no other, and renderMarkdown skips the blank lines after it: dropping the anchor, or matching one white space or none, renders the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "() => null"
+on = "const commit = recorded ? await bot.registry.recordCommit(session.id).catch(() => null) : null;"
+operator = "ArrowFunction"
+replacement = "() => undefined"
+reason = "equivalent"
+why = "undefined and null are read the same here: commit ?? \"signatures\" and run !== \"failed\"."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "\"succeeded\""
+on = "const run = recorded ? \"succeeded\" : await bot.registry.signinRun(t.repo, t.pr, session.id, pending.at).catch(() => null);"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "It is read only when the record is valid, and then recorded || run !== \"failed\" is true whatever run holds."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "() => null"
+on = "const run = recorded ? \"succeeded\" : await bot.registry.signinRun(t.repo, t.pr, session.id, pending.at).catch(() => null);"
+operator = "ArrowFunction"
+replacement = "() => undefined"
+reason = "equivalent"
+why = "undefined and null are read the same here: commit ?? \"signatures\" and run !== \"failed\"."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "\"info\""
+on = "return page(statusBody(lang, t, st0.nothingTitle, st0.exempt(login), \"info\", who), { title: st0.nothingTitle, lang, path: t.path });"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "statusBody treats every tone but \"alert\" and \"done\" alike, so the empty tone draws the same plain card."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "\"info\""
+on = "return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(s.entity ?? \"an entity\")), \"info\", who), { title: st0.nothingTitle, lang, path: t.path });"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "statusBody treats every tone but \"alert\" and \"done\" alike, so the empty tone draws the same plain card."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "signPage"
+text = "\"info\""
+on = "return page(statusBody(lang, t, st0.nothingTitle, st0.notAuthor(login), \"info\", who), { title: st0.nothingTitle, lang, path: t.path });"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "statusBody treats every tone but \"alert\" and \"done\" alike, so the empty tone draws the same plain card."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "login"
+text = "\"\""
+on = "const ret = url.searchParams.get(\"return\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "callback"
+text = "\"\""
+on = "const state = url.searchParams.get(\"state\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "callback"
+text = "\"\""
+on = "const code = url.searchParams.get(\"code\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "callback"
+text = "\"bot\""
+on = "const app = (tx.app ?? \"bot\") === \"signin\" ? signinApp(env, st.config.signin_client_id) : botApp(env);"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "Only \"signin\" is compared with: an absent app reads as not signin whether the default is \"bot\" or empty."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "readForm"
+text = "\"\""
+on = "if (!(req.headers.get(\"content-type\") ?? \"\").toLowerCase().startsWith(\"application/x-www-form-urlencoded\")) return null;"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "logout"
+text = "\"\""
+on = "if (!(await csrfVerify(keys.csrf, [session.sid, \"logout\"], form.get(\"csrf\") ?? \"\"))) return messagePage(lang, 403, \"refusedStale\");"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "agree"
+text = "\"\""
+on = "const t = parseSignPath(`/sign/${form.get(\"owner\") ?? \"\"}/${form.get(\"repo\") ?? \"\"}/${form.get(\"pr\") ?? \"\"}`);"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "agree"
+text = "\"\""
+on = "const t = parseSignPath(`/sign/${form.get(\"owner\") ?? \"\"}/${form.get(\"repo\") ?? \"\"}/${form.get(\"pr\") ?? \"\"}`);"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "agree"
+text = "\"\""
+on = "const t = parseSignPath(`/sign/${form.get(\"owner\") ?? \"\"}/${form.get(\"repo\") ?? \"\"}/${form.get(\"pr\") ?? \"\"}`);"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "agree"
+text = "\"\""
+on = "const csrfOk = await csrfVerify(keys.csrf, [session.sid, \"agree\", `${t.repo}#${t.pr}`, String(version)], form.get(\"csrf\") ?? \"\");"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing field: the empty text and the mutant's text (with spaces and a !) are both refused by the check that reads it, a pattern, a comparison or a MAC."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/web.ts"
+function = "privacyPage"
+text = "\"p\""
+on = "const { html } = renderMarkdown(src, { idPrefix: \"p\", links: { \"PRIVACY.es.md\": \"/privacy?lang=es\", \"PRIVACY.md\": \"/privacy?lang=en\" } });"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "The privacy notices have one heading, an h1, and only h2 to h5 get ids: the prefix is never written."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "keyFor"
+text = "hmacKey?.secret !== secret"
+on = "if (hmacKey?.secret !== secret) hmacKey = { secret, key: crypto.subtle.importKey(\"raw\", utf8(secret), { name: \"HMAC\", hash: \"SHA-256\" }, false, [\"verify\"]) };"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "Importing the key again for the same secret gives the same key: only the memo is lost."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "keyFor"
+text = "false"
+on = "if (hmacKey?.secret !== secret) hmacKey = { secret, key: crypto.subtle.importKey(\"raw\", utf8(secret), { name: \"HMAC\", hash: \"SHA-256\" }, false, [\"verify\"]) };"
+operator = "BooleanLiteral"
+replacement = "true"
+reason = "equivalent"
+why = "The key is only used to verify and is never exported, so whether it could be is not observable."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "hexToBytes"
+text = "i < out.length"
+on = "for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(h.slice(2 * i, 2 * i + 2), 16);"
+operator = "EqualityOperator"
+replacement = "i <= out.length"
+reason = "equivalent"
+why = "A write one past the end of a Uint8Array is ignored, so the bytes read are the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "obj"
+text = "v !== null"
+on = "return typeof v === \"object\" && v !== null ? (v as Payload) : null;"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "obj(null) then returns null cast as a payload, and every caller reads it with ?. or tests it for falsiness, as for the null it returns now."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "repoOf"
+text = "obj(p.repository)?.full_name"
+on = "const name = obj(p.repository)?.full_name;"
+operator = "OptionalChaining"
+replacement = "obj(p.repository).full_name"
+reason = "equivalent"
+why = "repoOf runs only after the owner check, which needs p.repository to be an object."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "num"
+text = "typeof v === \"number\""
+on = "return typeof v === \"number\" && Number.isSafeInteger(v) && v > 0 ? v : null;"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "Number.isSafeInteger is false for anything that is not a number, so the typeof test adds nothing the next one does not decide."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "mapEvent"
+text = "typeof p.action === \"string\""
+on = "const action = typeof p.action === \"string\" ? p.action : \"\";"
+operator = "ConditionalExpression"
+replacement = "true"
+reason = "equivalent"
+why = "action is only ever compared for equality with texts, which no other type equals."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "mapEvent"
+text = "\"\""
+on = "const action = typeof p.action === \"string\" ? p.action : \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "The default action is only compared with the actions the table knows, of which neither the empty text nor the mutant's is one."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "mapEvent"
+text = "obj(p.repository)?.id"
+on = "if (!m || Number(m[1]) !== num(obj(p.repository)?.id)) return [];"
+operator = "OptionalChaining"
+replacement = "obj(p.repository).id"
+reason = "equivalent"
+why = "This runs only after the owner check, which needs p.repository to be an object."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "handleWebhook"
+text = "\"\""
+on = "const event = req.headers.get(\"x-github-event\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing header: the empty text and the mutant's text (with capitals, spaces and a !) both fail its pattern, and the delivery is refused the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "handleWebhook"
+text = "\"\""
+on = "const delivery = req.headers.get(\"x-github-delivery\") ?? \"\";"
+operator = "StringLiteral"
+replacement = "\"Stryker was here!\""
+reason = "equivalent"
+why = "A missing header: the empty text and the mutant's text (with capitals, spaces and a !) both fail its pattern, and the delivery is refused the same."
+
+[[entry]]
+kind = "mutant"
+file = "worker/src/webhook.ts"
+function = "handleWebhook"
+text = "\"not an object\""
+on = "if (!obj(parsed)) throw new Error(\"not an object\");"
+operator = "StringLiteral"
+replacement = "\"\""
+reason = "equivalent"
+why = "The error's message is never read: the catch answers \"bad json\" whatever it says."

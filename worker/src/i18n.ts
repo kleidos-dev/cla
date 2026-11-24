@@ -29,14 +29,16 @@ export function fromAcceptLanguage(header: string | null): Lang {
   const ranked = header
     .split(",")
     .slice(0, 20)
-    .map((part, i) => {
-      const [tag = "", ...params] = part.trim().split(";");
+    .map((part) => {
+      // String.prototype.split always gives at least one piece.
+      const [tag, ...params] = part.trim().split(";") as [string, ...string[]];
       const qp = params.map((p) => p.trim()).find((p) => p.startsWith("q="));
       const q = qp ? Number(qp.slice(2)) : 1;
-      return { base: tag.trim().toLowerCase().split("-")[0] ?? "", q: Number.isFinite(q) ? q : 0, i };
+      return { base: (tag.trim().toLowerCase().split("-") as [string, ...string[]])[0], q: Number.isFinite(q) ? q : 0 };
     })
     .filter((x) => x.q > 0 && (x.base === "en" || x.base === "es"))
-    .sort((a, b) => b.q - a.q || a.i - b.i);
+    // Array.prototype.sort is stable: of equal weights, the first listed stays first.
+    .sort((a, b) => b.q - a.q);
   return ranked[0]?.base === "es" ? "es" : "en";
 }
 

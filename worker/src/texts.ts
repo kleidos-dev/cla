@@ -78,16 +78,15 @@ function footLine(ctx: TextContext, sign: boolean): string {
   return `<sub>${links.join(" · ")}</sub>`;
 }
 
+/** The register entry of every author, at the commit that added it: written only once every author has one (the "signed" state). */
 function registerLine(a: Assessment, ctx: TextContext): string {
-  const entries: string[] = [];
-  for (const acc of a.required) {
-    if (!a.signed.has(acc.id)) continue;
+  const entries = a.required.map((acc) => {
     const commit = ctx.recordCommits.get(acc.id);
     const ref = commit && /^[0-9a-f]{40}$/.test(commit) ? commit : "signatures";
     const name = isLogin(acc.login) ? escapeMd(acc.login) : `account id ${acc.id}`;
-    entries.push(`[${name}](https://github.com/${ctx.registry}/blob/${ref}/signatures/individual/${acc.id}.json)`);
-  }
-  return entries.length ? `Register entries: ${entries.join(", ")} · ` : "";
+    return `[${name}](https://github.com/${ctx.registry}/blob/${ref}/signatures/individual/${acc.id}.json)`;
+  });
+  return `Register entries: ${entries.join(", ")} · `;
 }
 
 /**

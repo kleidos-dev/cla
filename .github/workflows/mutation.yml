@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MIT
 #
 # The mutants, every Monday and by hand: what a test noticed, where ci.yml
-# measures what a test ran. Each job plants its share of them in the Worker's
-# core, inside the Workers runtime, or in the setup scripts and the agreement
-# gate (tests/tools/node/scripts-mut.mjs), and holds the survivors to
-# tests/floors/<area>.toml and tests/exclusions/<area>.toml, so a
-# survivor nobody listed, a listed one that is now killed, and a file with
-# fewer mutants than it has are red. The shares are made from the area's own
-# list of files: none can be left out. Nothing is written anywhere: a red job
-# and its log are the report.
+# measures what a test ran. Each job plants its share of them in one area of
+# the Worker (worker-core, worker-edge), inside the Workers runtime, or in the
+# setup scripts and the agreement gate (tests/tools/node/scripts-mut.mjs), and
+# holds the survivors to tests/floors/<area>.toml and
+# tests/exclusions/<area>.toml, so a survivor nobody listed, a listed one that
+# is now killed, and a file with fewer mutants than it has are red. The shares
+# are made from the area's own list of files: none can be left out. Nothing is
+# written anywhere: a red job and its log are the report.
 name: Mutation
 
 on:
@@ -19,9 +19,9 @@ on:
   workflow_dispatch:
     inputs:
       area:
-        description: "the area whose mutants to plant: all, worker-core or scripts"
+        description: "the area whose mutants to plant: all, worker-core, worker-edge or scripts"
         type: choice
-        options: [all, worker-core, scripts]
+        options: [all, worker-core, worker-edge, scripts]
         default: all
 
 permissions:
@@ -92,6 +92,78 @@ jobs:
       - name: No survivor that is not listed
         working-directory: worker
         run: python3 ../tests/tools/ratchet.py check worker-core --forced coverage/force.json
+
+  edge-mutants:
+    name: "🧬 Mutants of the Worker's edge (${{ matrix.share }})"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-edge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        share: [1/4, 2/4, 3/4, 4/4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every mutant, five seconds over its own time at most
+        working-directory: worker
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
+          npm run test:mutation -- --mutate "$files"
+      - name: No survivor that is not listed
+        working-directory: worker
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
+          python3 ../tests/tools/ratchet.py check worker-edge --mutants coverage/mutation.json --only "$files"
+
+  edge-forced:
+    name: "🧬 Forced conditions of the Worker's edge (${{ matrix.share }})"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-edge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        share: [1/2, 2/2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every condition held true, then false
+        working-directory: worker
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
+          npm run test:forced -- "$files"
+      - name: No survivor that is not listed
+        working-directory: worker
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
+          python3 ../tests/tools/ratchet.py check worker-edge --forced coverage/force.json --only "$files"
 
   scripts:
     name: "🧬 Mutants of the setup scripts and the agreement gate"
