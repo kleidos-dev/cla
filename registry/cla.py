@@ -1169,10 +1169,14 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
 # --- verify -------------------------------------------------------------------
 
 
-def git(root: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
-    ).stdout
+def git(root: Path, *args: str) -> bytes:
+    return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
+
+
+def git_lines(root: Path, *args: str) -> list[str]:
+    """What git says, line by line: a line feed ends a line and nothing else does, and bytes that
+    are no text are shown."""
+    return git(root, *args).decode("utf-8", "backslashreplace").split("\n")[:-1]
 
 
 @dataclass
@@ -1489,7 +1493,11 @@ def signin_client_ids(config: dict[str, Any]) -> set[str]:
 CommitInfo = Callable[[str], "Facts | None"]
 
 
-def change_shape(changes: list[list[str]]) -> str | None:
+#: What a commit did to one path, as git diff-tree --name-status says it: the status and the path.
+Change = tuple[str, str]
+
+
+def change_shape(changes: list[Change]) -> str | None:
     """What a recorder commit may change.
 
     One coverage record, or one account's signature and its time-stamp token.
@@ -1499,7 +1507,7 @@ def change_shape(changes: list[list[str]]) -> str | None:
     added later by the stamp run)."""
     if not changes:
         return "changes nothing"
-    paths = {c[-1]: c[0] for c in changes}
+    paths = {path: status for status, path in changes}
     for path, status in paths.items():
         if not RECORD_PATH_RE.fullmatch(path) or status[0] not in "AMD":
             return f"{status} {path}: only adding or changing one record (and its token) is allowed"
@@ -1516,7 +1524,7 @@ def change_shape(changes: list[list[str]]) -> str | None:
             if status in ("A", "M")
             else f"{status} {path}: only adding or changing one record is allowed"
         )
-    ids = {m.group(1) for p in paths for m in [SIGNATURE_PATH_RE.fullmatch(p)] if m}
+    ids = {m.group(1) for p in paths if (m := SIGNATURE_PATH_RE.fullmatch(p))}
     if len(paths) != 2 or len(ids) != 1:
         return f"changes {len(paths)} files, not one record (and its token)"
     gid = ids.pop()
@@ -1578,18 +1586,8 @@ def verify_history(
     proves nothing. The records of the commits after ``since`` are also
     cross-checked against the comment and the run they cite (``witness``)."""
     findings: list[Finding] = []
-    log = (
-        git(
-            root,
-            "log",
-            "--reverse",
-            "--format=%H%x00%P%x00%an%x00%s",
-            "--end-of-options",
-            ref,
-            "--",
-        )
-        .strip()
-        .splitlines()
+    log = git_lines(
+        root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", "--end-of-options", ref, "--"
     )
     commits = [line.split("\x00") for line in log]
     start = 0
@@ -1612,19 +1610,25 @@ def verify_history(
             findings.append(Finding(sha, "GitHub does not know this commit on the branch"))
             continue
         owners = by_owner(facts) and subject.startswith("redact:")
-        changes = [
-            line.split("\t")
-            for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha)
-            .strip()
-            .splitlines()
+        # A path with anything but plain characters is quoted, on one line.
+        changes: list[Change] = [
+            (status, path)
+            for status, _, path in (
+                line.partition("\t")
+                for line in git_lines(
+                    root,
+                    *("-c", "core.quotePath=true", "diff-tree", "--no-commit-id", "--name-status"),
+                    *("-r", sha),
+                )
+            )
         ]
         before = len(findings)
         if owners:
             # A removal at its holder's request deletes; it never adds or changes an entry.
-            for status, *paths in changes:
-                if status != "D" or not RECORD_PATH_RE.fullmatch(paths[-1]):
+            for status, path in changes:
+                if status != "D" or not RECORD_PATH_RE.fullmatch(path):
                     findings.append(
-                        Finding(sha, f"{status} {paths[-1]}: a redact: commit only deletes records")
+                        Finding(sha, f"{status} {path}: a redact: commit only deletes records")
                     )
         else:
             if not by_recorder(facts):
@@ -1638,21 +1642,20 @@ def verify_history(
             problem = change_shape(changes)
             if problem:
                 findings.append(Finding(sha, problem))
-            for status, *paths in changes:
-                path = paths[-1]
+            for status, path in changes:
                 if (
                     status not in ("A", "M")
                     or not path.endswith(".json")
                     or not RECORD_PATH_RE.fullmatch(path)
                 ):
                     continue
-                text = git(root, "show", f"{sha}:{path}")
-                problem = check_record(config, path, text.encode("utf-8"))
+                content = git(root, "show", f"{sha}:{path}")
+                problem = check_record(config, path, content)
                 if problem:
                     findings.append(Finding(sha, f"{path}: {problem}"))
                 elif witness is not None and i >= start and not pending:
                     try:
-                        problem = cross_check(config, registry, path, json.loads(text), witness)
+                        problem = cross_check(config, registry, path, json.loads(content), witness)
                     except Pending:
                         pending = True
                         problem = None
@@ -1661,7 +1664,7 @@ def verify_history(
         # Every token on the branch after this commit, for the records it
         # touched, verifies over that record as it now is.
         for gid in sorted(
-            {m.group(1) for _s, *ps in changes for m in [SIGNATURE_PATH_RE.fullmatch(ps[-1])] if m}
+            {m.group(1) for _, path in changes if (m := SIGNATURE_PATH_RE.fullmatch(path))}
         ):
             problem = tsr_problem(root, config, sha, gid)
             if problem:
