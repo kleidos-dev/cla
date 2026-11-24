@@ -17,6 +17,10 @@ from typing import Any
 TOKEN = re.compile(r"\.\.\.|[A-Za-z_][A-Za-z0-9_]*|\d+|[${}():!,]")
 
 
+class Refused(Exception):
+    """What GitHub answers with an error: its type."""
+
+
 @dataclass
 class Selection:
     name: str
@@ -99,7 +103,7 @@ def run(text: str, variables: dict[str, Any], root: dict[str, Any]) -> dict[str,
         raise AssertionError(f"sent {sorted(variables)}, declared {sorted(document.variables)}")
     for name, kind in document.variables.items():
         if kind.endswith("!") and variables[name] is None:
-            raise AssertionError(f"${name} must have a value")
+            raise Refused("NOT_A_VALUE")
     return _pick(document.fields, root, variables)
 
 

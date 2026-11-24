@@ -195,7 +195,7 @@ def verdict(
     return {
         **vector,
         "shape": shape,
-        "problem": cla.check_record(CONFIG, path, json.dumps(record)),
+        "problem": cla.check_record(CONFIG, path, json.dumps(record).encode()),
     }
 
 

@@ -185,6 +185,23 @@ def is_login(v: object) -> TypeGuard[str]:
     return _matches(v, LOGIN_RE)
 
 
+def parse_json(data: bytes) -> Any:
+    """What a JSON document in UTF-8 says; None for anything else, as for null."""
+    try:
+        return json.loads(data.decode("utf-8"))
+    except ValueError, RecursionError:
+        return None
+
+
+def dig(data: Any, *keys: str) -> Any:
+    """What a JSON value holds at these keys, one object inside the other; None for nothing."""
+    for key in keys:
+        if not isinstance(data, dict):
+            return None
+        data = data.get(key)
+    return data
+
+
 def sha256(data: str | bytes) -> str:
     return hashlib.sha256(data.encode("utf-8") if isinstance(data, str) else data).hexdigest()
 
@@ -325,18 +342,12 @@ class GitHub:
             data = json.dumps(body).encode("utf-8")
         return _answer(self.transport(method, f"{self.api}{path}", headers, data))
 
-    def call(self, method: str, path: str, body: Any = None, raw: bool = False) -> tuple[int, Any]:
-        status, payload, _ = self.exchange(
-            method,
-            path,
-            body,
-            "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
-        )
-        if raw:
-            return status, payload.decode("utf-8") if status == 200 else None
-        return status, json.loads(payload) if payload else None
+    def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        """The status and the JSON of an answer; None when it is not JSON (a proxy's error page)."""
+        status, payload, _ = self.exchange(method, path, body)
+        return status, parse_json(payload)
 
-    def file_bytes(self, repo: str, path: str, ref: str) -> bytes | None:
+    def file(self, repo: str, path: str, ref: str) -> bytes | None:
         """A file's exact bytes (a time-stamp token is binary), None when there is none."""
         status, payload, _ = self.exchange(
             "GET",
@@ -349,28 +360,31 @@ class GitHub:
             raise RuntimeError(f"reading {path} answered {status}")
         return payload
 
-    def get(self, path: str) -> Any:
+    def _get(self, path: str) -> Any:
         status, data = self.call("GET", path)
         if status != 200:
             raise RuntimeError(f"GET {path.split('?')[0]} answered {status}")
         return data
 
-    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        status, data = self.call("POST", "/graphql", {"query": query, "variables": variables})
-        if status != 200 or data.get("errors"):
-            types = [e.get("type") for e in (data or {}).get("errors", [])]
-            raise RuntimeError(f"GraphQL answered {status}: {types}")
-        return data["data"]
+    def get(self, path: str) -> dict[str, Any]:
+        data = self._get(path)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"GET {path.split('?')[0]} answered no object")
+        return data
 
-    def file(self, repo: str, path: str, ref: str) -> str | None:
-        status, text = self.call("GET", f"/repos/{repo}/contents/{path}?ref={ref}", raw=True)
-        if status == 404:
-            return None
-        if status != 200:
-            raise RuntimeError(f"reading {path} answered {status}")
-        if not isinstance(text, str):
-            raise RuntimeError(f"reading {path} answered no text")
-        return text
+    def get_list(self, path: str) -> list[dict[str, Any]]:
+        data = self._get(path)
+        if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
+            raise RuntimeError(f"GET {path.split('?')[0]} answered no list of objects")
+        return data
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        status, answer = self.call("POST", "/graphql", {"query": query, "variables": variables})
+        data, errors = dig(answer, "data"), dig(answer, "errors")
+        if status != 200 or errors or not isinstance(data, dict):
+            types = [dig(e, "type") for e in errors] if isinstance(errors, list) else errors
+            raise RuntimeError(f"GraphQL answered {status}: {types}")
+        return data
 
 
 # GraphQL documents; a line break is white space to GraphQL, so where they
@@ -409,9 +423,49 @@ def commit_files(
 ) -> str:
     """Adds, changes or deletes the files of one record in one commit GitHub signs.
 
-    The files are a record's JSON and its time-stamp token."""
-    owner, name = registry.split("/")
+    The files are a record's JSON and its time-stamp token. Tried again when the branch moved
+    between the read and the write, and when GitHub's answer says nothing: a commit whose answer was
+    lost is on the branch by then, so it is found there and not made a second time."""
     last = ""
+    for attempt in range(attempts):
+        try:
+            head = _head(gh, registry)
+            if attempt and _holds(gh, registry, head, additions, deletions):
+                return head
+            return _commit(gh, registry, head, additions, deletions, headline)
+        except (RuntimeError, *UNREACHABLE) as e:
+            last = str(e)
+    raise RuntimeError(f"could not commit {', '.join(additions)}: {last}")
+
+
+def _head(gh: GitHub, registry: str) -> str:
+    owner, name = registry.split("/")
+    head = dig(
+        gh.graphql(HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"}),
+        *("repository", "ref", "target", "oid"),
+    )
+    if not isinstance(head, str):
+        raise RuntimeError(f"the branch {BRANCH} does not exist")
+    return head
+
+
+def _holds(
+    gh: GitHub, registry: str, head: str, additions: dict[str, bytes], deletions: list[str]
+) -> bool:
+    """Whether that commit has the files already: their bytes are this run's and no other's."""
+    return all(gh.file(registry, p, head) == c for p, c in additions.items()) and all(
+        gh.file(registry, p, head) is None for p in deletions
+    )
+
+
+def _commit(
+    gh: GitHub,
+    registry: str,
+    head: str,
+    additions: dict[str, bytes],
+    deletions: list[str],
+    headline: str,
+) -> str:
     changes: dict[str, Any] = {
         "additions": [
             {"path": p, "contents": base64.b64encode(c).decode("ascii")}
@@ -420,29 +474,21 @@ def commit_files(
     }
     if deletions:
         changes["deletions"] = [{"path": p} for p in deletions]
-    for _ in range(attempts):
-        head = gh.graphql(
-            HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"}
-        )["repository"]["ref"]["target"]["oid"]
-        try:
-            out = gh.graphql(
-                COMMIT_MUTATION,
-                {
-                    "input": {
-                        "branch": {"repositoryNameWithOwner": registry, "branchName": BRANCH},
-                        "expectedHeadOid": head,
-                        "message": {"headline": headline},
-                        "fileChanges": changes,
-                    }
-                },
-            )
-            oid = out["createCommitOnBranch"]["commit"]["oid"]
-            if not isinstance(oid, str):
-                raise RuntimeError("createCommitOnBranch answered no commit id")
-            return oid
-        except RuntimeError as e:  # the branch moved between the read and the write
-            last = str(e)
-    raise RuntimeError(f"could not commit {', '.join(additions)}: {last}")
+    out = gh.graphql(
+        COMMIT_MUTATION,
+        {
+            "input": {
+                "branch": {"repositoryNameWithOwner": registry, "branchName": BRANCH},
+                "expectedHeadOid": head,
+                "message": {"headline": headline},
+                "fileChanges": changes,
+            }
+        },
+    )
+    oid = dig(out, "createCommitOnBranch", "commit", "oid")
+    if not isinstance(oid, str):
+        raise RuntimeError("createCommitOnBranch answered no commit id")
+    return oid
 
 
 # --- time-stamping (RFC 3161) -----------------------------------------------------
@@ -616,13 +662,18 @@ class Context:
 def served(ctx: Context, repo: str) -> None:
     if not REPO_RE.fullmatch(repo) or repo not in ctx.config["served_repositories"]:
         raise Refused(f"{repo} is not a served repository")
-    if ctx.gh.get(f"/repos/{repo}").get("private"):
+    if ctx.gh.get(f"/repos/{repo}").get("private") is not False:
         raise Refused(f"{repo} is not public")
 
 
 def existing_record(ctx: Context, gid: int) -> dict[str, Any] | None:
-    text = ctx.gh.file(ctx.registry, f"signatures/individual/{gid}.json", BRANCH)
-    return json.loads(text) if text else None
+    content = ctx.gh.file(ctx.registry, f"signatures/individual/{gid}.json", BRANCH)
+    if content is None:
+        return None
+    record = parse_json(content)
+    if not isinstance(record, dict):
+        raise RuntimeError(f"the record of account {gid} is not a JSON object")
+    return record
 
 
 def write_signature(
@@ -642,7 +693,7 @@ def write_signature(
     deletions: list[str] = []
     if token:
         additions[tsr_path] = token
-    elif replacing and ctx.gh.file_bytes(ctx.registry, tsr_path, BRANCH) is not None:
+    elif replacing and ctx.gh.file(ctx.registry, tsr_path, BRANCH) is not None:
         deletions.append(tsr_path)
     oid = commit_files(ctx.gh, ctx.registry, additions, deletions, headline)
     return f"recorded in {oid}" + ("" if token else " (no time-stamp token yet)")
@@ -657,13 +708,13 @@ def redacted_after(ctx: Context, gid: int, accepted_at: str) -> None:
     requests, would write the entry again (registry/README.md, "Removal")."""
     accepted = parse_time(accepted_at)
     path = f"signatures/individual/{gid}.json"
-    history = ctx.gh.get(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=100")
-    for c in history if isinstance(history, list) else []:
-        commit = c.get("commit") or {}
+    for c in ctx.gh.get_list(
+        f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=100"
+    ):
         if (
-            (c.get("author") or {}).get("id") == OWNER_ID
-            and str(commit.get("message", "")).startswith("redact:")
-            and (removed := parse_time((commit.get("committer") or {}).get("date")))
+            dig(c, "author", "id") == OWNER_ID
+            and str(dig(c, "commit", "message")).startswith("redact:")
+            and (removed := parse_time(dig(c, "commit", "committer", "date")))
             and (accepted is None or accepted <= removed)
         ):
             raise Refused("this account's entry was removed at its request after that comment")
@@ -673,32 +724,30 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     """Records one genuine, unedited acceptance by the account that wrote it."""
     served(ctx, repo)
     rest = ctx.gh.get(f"/repos/{repo}/issues/comments/{comment_id}")
-    node = ctx.gh.graphql(COMMENT_QUERY, {"id": rest["node_id"]})["node"]
+    node = ctx.gh.graphql(COMMENT_QUERY, {"id": rest.get("node_id")}).get("node")
     if not node:
         raise Refused("comment not found")
     if node.get("lastEditedAt") or node.get("editor"):
         raise Refused("the comment was edited")
-    pull = node.get("pullRequest") or {}
-    if pull.get("number") != pr or (pull.get("repository") or {}).get("nameWithOwner") != repo:
-        raise Refused("the comment is not on that pull request")
-    author = node.get("author") or {}
-    gid = author.get("databaseId")
-    login = author.get("login", "")
     if (
-        not isinstance(gid, int)
-        or gid <= 0
-        or (rest.get("user") or {}).get("type") != "User"
-        or not is_login(login)
+        dig(node, "pullRequest", "number") != pr
+        or dig(node, "pullRequest", "repository", "nameWithOwner") != repo
     ):
+        raise Refused("the comment is not on that pull request")
+    gid, login = dig(node, "author", "databaseId"), dig(node, "author", "login")
+    if not _pos_int(gid) or dig(rest, "user", "type") != "User" or not is_login(login):
         raise Refused("the author is not a personal account")
-    version = accepted_sentences(ctx.config).get(normalize(node["body"]))
+    body, created = node.get("body"), node.get("createdAt")
+    if not isinstance(body, str) or record_time(created) is None:
+        raise RuntimeError("GitHub's answer has no usable body or createdAt")
+    version = accepted_sentences(ctx.config).get(normalize(body))
     if version is None:
         raise Refused("the comment is not the acceptance sentence of an accepted version")
     previous = existing_record(ctx, gid)
     if previous and record_valid(ctx.config, previous) and previous["version"] >= version:
         return "already recorded"
-    via = rest.get("performed_via_github_app") or {}
-    web = isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
+    app_id = ctx.config.get("app_id")
+    web = app_id is not None and dig(rest, "performed_via_github_app", "id") == app_id
     # The sign page never posts the sentence of a version signed by signing in: one posted
     # through the bot's app is somebody acting in the signer's name, which that version says
     # does not happen. Typed by hand it is the version's own fallback.
@@ -707,7 +756,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
             f"version {version} is not posted through the app, it is signed by signing in"
         )
     if previous is None:
-        redacted_after(ctx, gid, node["createdAt"])
+        redacted_after(ctx, gid, created)
     record = {
         "schema": 1,
         "kind": "individual",
@@ -716,7 +765,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "agreement": ctx.config["agreement"],
         "version": version,
         "set_sha256": ctx.config["versions"][str(version)]["set_sha256"],
-        "accepted_at": node["createdAt"],
+        "accepted_at": created,
         # Posted through the app (the sign page) or typed by hand; told by the app's numeric id,
         # never its slug.
         "method": "web" if web else "comment",
@@ -724,7 +773,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
             "pr_url": f"https://github.com/{repo}/pull/{pr}",
             "comment_url": f"https://github.com/{repo}/pull/{pr}#issuecomment-{comment_id}",
             "comment_id": comment_id,
-            "comment_body_sha256": sha256(node["body"]),
+            "comment_body_sha256": sha256(body),
         },
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
@@ -830,18 +879,17 @@ def record_signin(
             raise Refused("GitHub does not know this sign-in token (expired, revoked or not ours)")
         if status != 200:
             raise RuntimeError(f"checking the sign-in token answered {status}")
-        answer = json.loads(body)
+        answer = parse_json(body)
         accepted = parse_http_date(headers.get("date", ""))
-        authorized = parse_time(answer.get("created_at"))
+        authorized = parse_time(dig(answer, "created_at"))
         if accepted is None or authorized is None:
             raise RuntimeError("GitHub's answer has no usable Date or created_at")
-        if (answer.get("app") or {}).get("client_id") != app.client_id:
+        if dig(answer, "app", "client_id") != app.client_id:
             raise Refused("the token belongs to another app")
-        user = answer.get("user") or {}
-        login = user.get("login", "")
-        if user.get("type") != "User" or not is_login(login):
+        login = dig(answer, "user", "login")
+        if dig(answer, "user", "type") != "User" or not is_login(login):
             raise Refused("the token is not a personal account's")
-        if user.get("id") != gid:
+        if not _int(dig(answer, "user", "id"), gid):
             raise Refused("the token belongs to another account than the one reported")
         if not (accepted - SIGNIN_MAX_AGE <= authorized <= accepted + dt.timedelta(minutes=1)):
             raise Refused("the sign-in is not recent")
@@ -896,7 +944,7 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
         return "no signature yet"
     if status != 200 or not isinstance(listing, list):
         raise RuntimeError(f"listing the signatures answered {status}")
-    names = {e.get("name") for e in listing if e.get("type") == "file"}
+    names = {dig(e, "name") for e in listing if dig(e, "type") == "file"}
     todo = sorted(
         int(n[:-5])
         for n in names
@@ -905,16 +953,15 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
     done = 0
     for gid in todo[:limit]:
         path = f"signatures/individual/{gid}.json"
-        content = ctx.gh.file_bytes(ctx.registry, path, BRANCH)
-        if content is None or check_record(ctx.config, path, content.decode("utf-8")) is not None:
+        content = ctx.gh.file(ctx.registry, path, BRANCH)
+        if content is None or check_record(ctx.config, path, content) is not None:
             continue
-        last = ctx.gh.get(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=1")
-        c = last[0] if isinstance(last, list) and last else {}
-        verified = ((c.get("commit") or {}).get("verification") or {}).get("verified") is True
+        last = ctx.gh.get_list(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=1")
+        c = last[0] if last else None
         if (
-            (c.get("author") or {}).get("id") != ACTIONS_BOT_ID
-            or (c.get("committer") or {}).get("login") != "web-flow"
-            or not verified
+            dig(c, "author", "id") != ACTIONS_BOT_ID
+            or dig(c, "committer", "login") != "web-flow"
+            or dig(c, "commit", "verification", "verified") is not True
         ):
             continue  # not the recorder's file: nothing to vouch for
         token = ctx.stamper.stamp(sha256(content))
@@ -1001,31 +1048,29 @@ def commit_authors(c: dict[str, Any]) -> tuple[list[Account], int]:
 
 def pr_authors(
     ctx: Context, repo: str, pr: dict[str, Any]
-) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
-    """The Worker's rule, written again: opener, commit authors and co-authors (id → login, type,
-    dates); and how many could not be identified.
+) -> tuple[dict[int, tuple[str, list[str]]], int]:
+    """The Worker's rule, written again: opener, commit authors and co-authors (id → type, dates);
+    and how many could not be identified.
     """
     owner, name = repo.split("/")
-    people: dict[int, tuple[str, str, list[str]]] = {}
+    people: dict[int, tuple[str, list[str]]] = {}
     unknown = 0
 
-    def add(gid: int, login: str, kind: str, date: str) -> None:
-        if gid in people:
-            people[gid][2].append(date)
-        else:
-            people[gid] = (login, kind, [date])
+    def add(gid: int, kind: str, date: str) -> None:
+        people.setdefault(gid, (kind, []))[1].append(date)
 
-    user = pr["user"]
+    opener = dig(pr, "user", "id")
+    if not _pos_int(opener):
+        raise RuntimeError("GitHub named no opener")
     # The opener is dated by the pull request's creation, as the Worker does (worker/src/assess.ts).
-    add(user["id"], user["login"], user.get("type", "User"), pr["created_at"][:10])
+    add(opener, dig(pr, "user", "type"), pr["created_at"][:10])
     cursor = None
     seen = 0
     while True:
         page = ctx.gh.graphql(
             COMMITS_QUERY, {"owner": owner, "name": name, "number": pr["number"], "cursor": cursor}
         )
-        pull = (page.get("repository") or {}).get("pullRequest") or {}
-        commits = pull.get("commits")
+        commits = dig(page, "repository", "pullRequest", "commits")
         if not commits:
             raise RuntimeError("GitHub returned no commit list")
         if commits["totalCount"] > MAX_COMMITS:
@@ -1036,9 +1081,10 @@ def pr_authors(
             # Merge commits count like any other: a merge can carry changes of its own.
             accounts, unidentified = commit_authors(c)
             unknown += unidentified
-            for gid, login, kind in accounts:
-                add(gid, login, kind, c["authoredDate"][:10])
-        if not commits["pageInfo"]["hasNextPage"] or seen >= MAX_COMMITS:
+            for gid, _login, kind in accounts:
+                add(gid, kind, c["authoredDate"][:10])
+        # An empty page ends the list too: a next page of it could be empty for ever.
+        if not commits["pageInfo"]["hasNextPage"] or not commits["nodes"] or seen >= MAX_COMMITS:
             if seen < commits["totalCount"]:
                 raise Refused("GitHub listed fewer commits than the pull request has")
             break
@@ -1078,7 +1124,7 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
     ids: list[int] = []
     versions: dict[str, int] = {}
     missing: list[int] = []
-    for gid, (_login, kind, dates) in sorted(people.items()):
+    for gid, (kind, dates) in sorted(people.items()):
         if gid in exempt or all(covering_entity(ctx, gid, d) for d in dates):
             continue
         if kind != "User":
@@ -1147,14 +1193,11 @@ def _pos_int(v: object) -> TypeGuard[int]:
     return type(v) is int and 0 < v <= MAX_INT
 
 
-def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
+def check_record(config: dict[str, Any], path: str, content: bytes) -> str | None:
     """The shape of one record file (registry/schema/), checked field by field;
     worker/src/registry.ts isSignatureRecord does the same.
     """
-    try:
-        rec = json.loads(text)
-    except json.JSONDecodeError:
-        return "not JSON"
+    rec = parse_json(content)
     if not isinstance(rec, dict):
         return "not a JSON object"
     if not path.startswith("signatures/"):
@@ -1401,15 +1444,15 @@ def cross_check(
         c = witness.comment(repo, cid)
         if c is None:
             return f"the acceptance comment {cid} cannot be read"
-        if c.get("author_id") != rec["github_id"]:
+        if c["author_id"] != rec["github_id"]:
             return "the acceptance comment was written by another account"
-        if c.get("edited"):
+        if c["edited"]:
             return "the acceptance comment was edited"
-        if c.get("created_at") != rec["accepted_at"]:
+        if c["created_at"] != rec["accepted_at"]:
             return "accepted_at is not the comment's creation time"
-        if sha256(c.get("body", "")) != rec["evidence"]["comment_body_sha256"]:
+        if sha256(c["body"]) != rec["evidence"]["comment_body_sha256"]:
             return "the comment's text does not hash to comment_body_sha256"
-        if (c.get("pr"), c.get("repo")) != (pr, repo):
+        if (c["pr"], c["repo"]) != (pr, repo):
             return "the comment is not on the pull request the record names"
     else:
         title = f"Record coverage {rec.get('repo')}#{rec.get('pr')}"
@@ -1417,7 +1460,7 @@ def cross_check(
     if run is None:
         return f"recorder run {run_id} is not a run of {registry}"
     if (
-        (run.get("repository") or {}).get("full_name") != registry
+        dig(run, "repository", "full_name") != registry
         or run.get("path") != RECORD_WORKFLOW_PATH
         or run.get("event") != "workflow_dispatch"
         or run.get("head_branch") != "main"
@@ -1604,7 +1647,7 @@ def verify_history(
                 ):
                     continue
                 text = git(root, "show", f"{sha}:{path}")
-                problem = check_record(config, path, text)
+                problem = check_record(config, path, text.encode("utf-8"))
                 if problem:
                     findings.append(Finding(sha, f"{path}: {problem}"))
                 elif witness is not None and i >= start and not pending:
@@ -1640,7 +1683,9 @@ def verify_coverage(
     settled = iso(utcnow() - dt.timedelta(minutes=settle_minutes))
     for repo in config["served_repositories"]:
         owner, name = repo.split("/")
-        pulls = gh.get(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
+        pulls = gh.get_list(
+            f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100"
+        )
         findings.extend(
             Finding(
                 p.get("merge_commit_sha") or "0" * 12,
@@ -1778,9 +1823,9 @@ def signin_token_from_event(path: str) -> str:
     Masked in the log before anything else; never on a command line or in
     the environment."""
     try:
-        token = json.loads(Path(path).read_text("utf-8")).get("inputs", {}).get("signin_token", "")
-    except OSError, ValueError, AttributeError:
-        token = ""
+        token = dig(parse_json(Path(path).read_bytes()), "inputs", "signin_token")
+    except OSError:
+        token = None
     if not _matches(token, TOKEN_RE):
         raise Refused("no well-formed sign-in token in the event")
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -1803,26 +1848,26 @@ def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
     out: dict[str, Facts] = {}
     cursor = None
     while True:
-        ref = gh.graphql(
+        page = gh.graphql(
             HISTORY_QUERY,
             {"owner": owner, "name": name, "ref": f"refs/heads/{branch}", "cursor": cursor},
-        )["repository"]["ref"]
-        if not ref:
+        )
+        hist = dig(page, "repository", "ref", "target", "history")
+        if hist is None:
             raise RuntimeError(f"the branch {branch} does not exist")
-        hist = ref["target"]["history"]
+        before = len(out)
         for n in hist["nodes"]:
-            sig = n.get("signature") or {}
-            author = (n.get("author") or {}).get("user") or {}
-            committer = n.get("committer") or {}
             out[n["oid"]] = Facts(
-                author.get("databaseId"),
-                (committer.get("user") or {}).get("databaseId"),
-                (committer.get("email") or "").lower(),
-                bool(sig.get("isValid")),
-                bool(sig.get("wasSignedByGitHub")),
+                dig(n, "author", "user", "databaseId"),
+                dig(n, "committer", "user", "databaseId"),
+                str(dig(n, "committer", "email")).lower(),
+                dig(n, "signature", "isValid") is True,
+                dig(n, "signature", "wasSignedByGitHub") is True,
             )
         if not hist["pageInfo"]["hasNextPage"]:
             return out
+        if len(out) == before:
+            raise RuntimeError(f"GitHub's history of {branch} goes on with no commit in it")
         cursor = hist["pageInfo"]["endCursor"]
 
 
@@ -1837,15 +1882,14 @@ class GitHubWitness:
             return None
         if status != 200:
             raise RuntimeError(f"reading comment {comment_id} answered {status}")
-        node = self.gh.graphql(COMMENT_QUERY, {"id": rest["node_id"]})["node"] or {}
-        pull = node.get("pullRequest") or {}
+        node = self.gh.graphql(COMMENT_QUERY, {"id": dig(rest, "node_id")}).get("node")
         return {
-            "author_id": (node.get("author") or {}).get("databaseId"),
-            "edited": bool(node.get("lastEditedAt") or node.get("editor")),
-            "created_at": node.get("createdAt"),
-            "body": node.get("body", ""),
-            "pr": pull.get("number"),
-            "repo": (pull.get("repository") or {}).get("nameWithOwner"),
+            "author_id": dig(node, "author", "databaseId"),
+            "edited": bool(dig(node, "lastEditedAt") or dig(node, "editor")),
+            "created_at": dig(node, "createdAt"),
+            "body": str(dig(node, "body")),
+            "pr": dig(node, "pullRequest", "number"),
+            "repo": dig(node, "pullRequest", "repository", "nameWithOwner"),
         }
 
     def run(self, run_id: int) -> dict[str, Any] | None:

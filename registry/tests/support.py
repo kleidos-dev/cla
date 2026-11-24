@@ -273,7 +273,7 @@ class FakeGitHub:
     @staticmethod
     def _asked(query: str) -> str:
         (top,) = graphql.Document(query).fields
-        return ".".join([top.name, *(f.name for f in top.fields[:1] if f.on is None)])
+        return f"repository.{top.fields[0].name}" if top.name == "repository" else top.name
 
     def _answer(self, method: str, path: str, query: dict[str, str], data: Any) -> Answer:
         routes: tuple[tuple[str, str, Callable[..., Answer]], ...] = (
@@ -351,7 +351,7 @@ class FakeGitHub:
                     "createCommitOnBranch": self._create_commit,
                 },
             )
-        except ValueError as e:  # what GitHub refuses to do
+        except graphql.Refused as e:
             return ok({"data": None, "errors": [{"type": str(e)}]})
         return ok({"data": out})
 
@@ -396,7 +396,7 @@ class FakeGitHub:
         changes = input["fileChanges"]
         assert set(changes) <= {"additions", "deletions"}, input
         if input["expectedHeadOid"] != self.head:
-            raise ValueError("STALE_DATA")
+            raise graphql.Refused("STALE_DATA")
         additions = {}
         for add in changes["additions"]:
             assert set(add) == {"path", "contents"}, add

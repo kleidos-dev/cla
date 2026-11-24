@@ -507,7 +507,9 @@ class RecordSignin(unittest.TestCase):
             },
         )
         self.assertEqual(rec["recorder_commit"], "f" * 40)
-        self.assertIsNone(cla.check_record(CONFIG_V2, "signatures/individual/123456.json", text))
+        self.assertIsNone(
+            cla.check_record(CONFIG_V2, "signatures/individual/123456.json", text.encode())
+        )
         # The token is over the file's exact bytes, in the same commit.
         self.assertEqual(
             f.blobs["signatures:signatures/individual/123456.tsr"],
@@ -1283,7 +1285,7 @@ class Verify(unittest.TestCase):
                     cla.check_record(
                         CONFIG_V2,
                         "signatures/individual/1.json",
-                        json.dumps(self.signin_record(1, **over)),
+                        json.dumps(self.signin_record(1, **over)).encode(),
                     ),
                     name,
                 )

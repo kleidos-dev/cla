@@ -25,7 +25,7 @@ def without(record: dict[str, Any], key: str) -> dict[str, Any]:
 
 class CoverageRecord(unittest.TestCase):
     def check(self, record: dict[str, Any]) -> str | None:
-        return cla.check_record(CONFIG, COVERAGE_PATH, dump(record).decode())
+        return cla.check_record(CONFIG, COVERAGE_PATH, dump(record))
 
     def test_what_the_recorder_writes_is_valid(self) -> None:
         for record in (
