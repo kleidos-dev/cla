@@ -47,6 +47,9 @@ CONFIG_V2 = {
     "signin_client_id": SIGNIN_CLIENT_ID,
 }
 REGISTRY = "kleidos-dev/cla"
+#: The owner and the recorder, as a record's history names them.
+OWNER_LOGIN = "jmrplens"
+ACTIONS_BOT = "github-actions[bot]"
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -263,7 +266,7 @@ class FakeGitHub:
                     {
                         "sha": "d" * 40,
                         "author": {"id": cla.OWNER_ID},
-                        "committer": {"login": cla.OWNER_LOGIN},
+                        "committer": {"login": OWNER_LOGIN},
                         "commit": {
                             "message": f"redact: remove account {gid} at its holder's request",
                             "committer": {"date": self.redacted[gid]},
@@ -961,7 +964,7 @@ class Verify(unittest.TestCase):
             self.git("add", p)
         for p in remove or []:
             self.git("rm", "-q", p)
-        name = cla.ACTIONS_BOT if facts.author_id == cla.ACTIONS_BOT_ID else "someone"
+        name = ACTIONS_BOT if facts.author_id == cla.ACTIONS_BOT_ID else "someone"
         env = {
             "GIT_AUTHOR_NAME": name,
             "GIT_AUTHOR_EMAIL": "x@example.org",

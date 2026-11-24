@@ -63,13 +63,11 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, Protocol, TypeGuard
 
 ROOT = Path(__file__).resolve().parent.parent
 BRANCH = "signatures"
 OWNER_ID = 28966312
-OWNER_LOGIN = "jmrplens"
-ACTIONS_BOT = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$")
@@ -509,15 +507,15 @@ def verify_tsr(
     return "the time-stamp token does not verify"
 
 
-class Stamper:
+class Stamper(Protocol):
     """Asks a time-stamping authority for a token over a digest; tests give their own."""
 
-    def stamp(self, digest_hex: str) -> bytes | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def stamp(self, digest_hex: str) -> bytes | None:
+        """The token over a SHA-256 digest, None when the authority gave none that verifies."""
 
 
 @dataclass
-class TSAStamper(Stamper):
+class TSAStamper:
     """RFC 3161 over HTTP. Two tries, ``TSA_SPACING_S`` apart; None without a verified token."""
 
     url: str
@@ -1259,16 +1257,14 @@ def by_owner(f: Facts) -> bool:
     )
 
 
-class Witness:
+class Witness(Protocol):
     """What the cross-checks read from GitHub; tests give their own."""
 
-    def comment(
-        self, repo: str, comment_id: int
-    ) -> dict[str, Any] | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def comment(self, repo: str, comment_id: int) -> dict[str, Any] | None:
+        """The comment, as GitHub has it now; None when it is gone."""
 
-    def run(self, run_id: int) -> dict[str, Any] | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def run(self, run_id: int) -> dict[str, Any] | None:
+        """The run of the recorder, as GitHub has it now; None when there is none."""
 
 
 class Pending(Exception):
@@ -1735,7 +1731,7 @@ def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
         cursor = hist["pageInfo"]["endCursor"]
 
 
-class GitHubWitness(Witness):
+class GitHubWitness:
     def __init__(self, gh: GitHub, registry: str) -> None:
         self.gh = gh
         self.registry = registry
