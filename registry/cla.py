@@ -420,13 +420,6 @@ nodes{commit{oid message authoredDate parents{totalCount}
 authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}"""
 
 
-def commit_file(
-    gh: GitHub, registry: str, path: str, content: str, headline: str, attempts: int = 5
-) -> str:
-    """Adds or changes one file on the signatures branch, as a commit GitHub signs."""
-    return commit_files(gh, registry, {path: content.encode("utf-8")}, [], headline, attempts)
-
-
 def commit_files(
     gh: GitHub,
     registry: str,
@@ -690,6 +683,17 @@ def existing_record(ctx: Context, gid: int) -> dict[str, Any] | None:
     return record
 
 
+def record_bytes(ctx: Context, path: str, record: dict[str, Any]) -> bytes:
+    """The file of a record, once the verifier's own check has passed over it.
+
+    The register only grows, so nothing that check refuses is ever written to it."""
+    content = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    problem = check_record(ctx.config, path, content)
+    if problem is not None:
+        raise RuntimeError(f"not written, the verifier would refuse it: {problem}")
+    return content
+
+
 def write_signature(
     ctx: Context, gid: int, record: dict[str, Any], replacing: bool, headline: str
 ) -> str:
@@ -701,7 +705,7 @@ def write_signature(
     commit when no new one came back."""
     path = f"signatures/individual/{gid}.json"
     tsr_path = f"signatures/individual/{gid}.tsr"
-    content = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    content = record_bytes(ctx, path, record)
     token = ctx.stamper.stamp(sha256(content)) if ctx.stamper else None
     additions = {path: content}
     deletions: list[str] = []
@@ -1151,8 +1155,7 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
         raise Refused(
             f"merged without a signature from account id(s) {', '.join(map(str, missing))}"
         )
-    owner, name = repo.split("/")
-    path = f"coverage/{owner}/{name}/{number}.json"
+    path = f"coverage/{repo}/{number}.json"
     if ctx.gh.file(ctx.registry, path, BRANCH) is not None:
         return "already recorded"
     record = {
@@ -1160,18 +1163,18 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
         "kind": "coverage",
         "repo": repo,
         "pr": number,
-        "merge_sha": pr["merge_commit_sha"],
-        "merged_at": pr["merged_at"],
+        "merge_sha": pr.get("merge_commit_sha"),
+        "merged_at": pr.get("merged_at"),
         "github_ids": ids,
         "versions": versions,
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
     }
-    oid = commit_file(
+    oid = commit_files(
         ctx.gh,
         ctx.registry,
-        path,
-        json.dumps(record, indent=2) + "\n",
+        {path: record_bytes(ctx, path, record)},
+        [],
         f"coverage: {repo}#{number}",
     )
     return f"recorded in {oid}"

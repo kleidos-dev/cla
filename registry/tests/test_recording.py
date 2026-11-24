@@ -23,6 +23,9 @@ from support import (
     FakeGitHub,
     FakeStamper,
     RegisterTest,
+    comment_record,
+    commit,
+    config_with,
     context,
     individual,
     ok,
@@ -163,6 +166,31 @@ class StampList(RegisterTest):
         fake = FakeGitHub()
         fake.next(listing, ok([{"name": "README.md", "type": "file"}] * 999))
         self.assertEqual(cla.record_stamps(context(fake, stamper=FakeStamper())), "stamped 0 of 0")
+
+
+class SelfCheck(RegisterTest):
+    """Nothing the verifier would refuse reaches the register, whatever GitHub answered."""
+
+    def test_a_signature_the_verifier_would_refuse_is_not_written(self) -> None:
+        fake = FakeGitHub()
+        fake.add_comment(1)
+        stamper = FakeStamper()
+        ctx = context(fake, config_with(agreement="another"), stamper=stamper)
+        ctx.config["versions"]["1"]["flow"] = "signin"
+        record = comment_record(ALICE)
+        with self.fails("not written, the verifier would refuse it: malformed record"):
+            cla.write_signature(ctx, ALICE, record, False, "sign")
+        self.assertEqual((fake.calls, stamper.asked), ([], []))
+
+    def test_a_coverage_record_the_verifier_would_refuse_is_not_written(self) -> None:
+        for key, value in (("merge_commit_sha", None), ("merged_at", "yesterday")):
+            with self.subTest(key):
+                fake = FakeGitHub()
+                fake.sign(ALICE)
+                fake.merge([commit()])[key] = value
+                with self.fails("not written, the verifier would refuse it: malformed record"):
+                    cla.record_coverage(context(fake), REPO, 7)
+                self.assertEqual(fake.writes, [])
 
 
 if __name__ == "__main__":
