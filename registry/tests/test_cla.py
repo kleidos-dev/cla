@@ -1039,7 +1039,18 @@ class Verify(unittest.TestCase):
             "coverage: x",
             {
                 "coverage/kleidos-dev/cla-sandbox/7.json": json.dumps(
-                    {"kind": "coverage", "repo": REPO, "pr": 7, "recorder_run_id": 555}
+                    {
+                        "schema": 1,
+                        "kind": "coverage",
+                        "repo": REPO,
+                        "pr": 7,
+                        "merge_sha": "d" * 40,
+                        "merged_at": "2026-12-01T09:00:00Z",
+                        "github_ids": [],
+                        "versions": {},
+                        "recorded_at": "2026-12-01T10:23:02Z",
+                        "recorder_run_id": 555,
+                    }
                 )
             },
         )

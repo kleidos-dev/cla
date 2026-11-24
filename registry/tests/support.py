@@ -514,19 +514,19 @@ def signin_record(
     }
 
 
-def coverage_record(pr: int = 7, **over: Any) -> dict[str, Any]:
+def coverage_record(number: int = 7, **over: Any) -> dict[str, Any]:
     """A coverage record that verifies."""
     return {
         "schema": 1,
         "kind": "coverage",
         "repo": REPO,
-        "pr": pr,
+        "pr": number,
         "merge_sha": "d" * 40,
         "merged_at": "2026-12-01T09:00:00Z",
         "github_ids": [ALICE],
         "versions": {str(ALICE): 1},
         "recorded_at": "2026-12-01T10:23:02Z",
-        "recorder_run_id": 2000 + pr,
+        "recorder_run_id": 2000 + number,
         **over,
     }
 

@@ -1090,6 +1090,11 @@ class Finding:
         return f"{self.commit[:12]}: {self.problem}"
 
 
+def _int(v: object, n: int) -> bool:
+    """Whether a JSON value is exactly this integer: neither true nor 1.0 is 1."""
+    return type(v) is int and v == n
+
+
 def _pos_int(v: object) -> TypeGuard[int]:
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
@@ -1156,15 +1161,53 @@ def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
         )
         if not ok:
             return "malformed record"
-    else:
-        parts = path.split("/")
-        if (
-            rec.get("kind") != "coverage"
-            or rec.get("repo") != f"{parts[1]}/{parts[2]}"
-            or str(rec.get("pr")) != parts[3].split(".")[0]
-        ):
-            return "the coverage record does not match its path"
-    return None
+        return None
+    return check_coverage_record(path, rec)
+
+
+COVERAGE_FIELDS = {
+    "schema",
+    "kind",
+    "repo",
+    "pr",
+    "merge_sha",
+    "merged_at",
+    "github_ids",
+    "versions",
+    "recorded_at",
+    "recorder_run_id",
+}
+
+
+def check_coverage_record(path: str, rec: dict[str, Any]) -> str | None:
+    """The authors of one merged pull request, as registry/schema/coverage.schema.json says.
+
+    The versions are those of exactly the accounts it lists."""
+    _, owner, name, number = path.split("/")
+    if (
+        rec.get("kind") != "coverage"
+        or rec.get("repo") != f"{owner}/{name}"
+        or not _int(rec.get("pr"), int(number.removesuffix(".json")))
+    ):
+        return "the coverage record does not match its path"
+    if set(rec) != COVERAGE_FIELDS:
+        return f"unexpected or missing fields {sorted(set(rec) ^ COVERAGE_FIELDS)}"
+    ids, versions = rec["github_ids"], rec["versions"]
+    ok = (
+        _int(rec["schema"], 1)
+        and isinstance(rec["merge_sha"], str)
+        and HEX40_RE.match(rec["merge_sha"]) is not None
+        and _time(rec["merged_at"])
+        and _time(rec["recorded_at"])
+        and _pos_int(rec["recorder_run_id"])
+        and isinstance(ids, list)
+        and all(_pos_int(i) for i in ids)
+        and len(set(ids)) == len(ids)
+        and isinstance(versions, dict)
+        and set(versions) == {str(i) for i in ids}
+        and all(_pos_int(v) for v in versions.values())
+    )
+    return None if ok else "malformed record"
 
 
 SIGNIN_FIELDS = {
