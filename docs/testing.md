@@ -1,0 +1,71 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: MIT
+-->
+
+# Testing
+
+What the tests here protect, in this order: whether a signature is valid, who must sign, what is recorded, and what a hostile contributor, page visitor, webhook sender or GitHub answer can do. The rule for every Kleidos repository is the maximum: every line, branch and function, every condition shown to decide on its own (MC/DC), and every mutant killed. A number counts only what a test checked: a test that asserts nothing, a snapshot nobody read or an excluded line does not count. A miss that stays is listed with its reason, and the list is checked so it cannot grow unseen; dead code is deleted, never listed.
+
+This page says what each gate is, what fails it, and how to run it by hand. [AGENTS.md](../AGENTS.md) has the setup of a fresh clone.
+
+## The areas
+
+Each measured file belongs to exactly one area; the `test-areas` hook (`python3 tests/tools/ratchet.py areas`) fails on a source file of `registry/cla.py`, `worker/src/`, `worker/scripts/` or `scripts/` that no area names, or that two do.
+
+| Area | Files | Tests | Measures |
+| --- | --- | --- | --- |
+| `register` | `registry/cla.py` | `registry/tests/` (unittest, strict fakes of `support.py`) | lines and branches (coverage.py), conditions (`tests/tools/py/mcdc.py`), mutants (`tests/tools/py/mutate.py`) |
+| `worker-core` | the bot, GitHub, the register, sessions, keys, logs (`tests/floors/worker-core.toml`) | `worker/test/core/` and the older files of `worker/test/` | lines, branches, functions and statements (Istanbul), conditions (`worker/test/tools/mcdc.mjs`), forced conditions (`worker/test/tools/force.mjs`), mutants (StrykerJS) |
+| `worker-edge` | the routes, pages, webhook, texts (`tests/floors/worker-edge.toml`) | `worker/test/edge/` and the older files of `worker/test/` | as `worker-core` |
+| `scripts` | `scripts/create-github-app.ts`, `scripts/create-signin-app.ts`, `worker/scripts/check-agreement.mjs` | `scripts/test/` (`node --test`, in process and as child processes) | lines, branches and functions (Node), conditions (`tests/tools/node/scripts-mcdc.mjs`), mutants (`tests/tools/node/scripts-mut.mjs`) |
+| `workflows` | the run blocks and expressions of `record.yml` and `verify.yml` | `tests/workflows/` | every run-block line deleted in turn (`tests/exclusions/workflows.toml`) |
+| `pages` | every sign page, served by the Worker as wrangler builds it | `tests/pages/` (chromium behind a network fence) | axe, no script, the same page with scripts off (`tests/exclusions/pages.toml`) |
+
+## Floors and lists
+
+`tests/floors/<area>.toml` says what each measure misses (`[misses]`) and, for the areas with per-file counts, how many lines, branches, functions, conditions, forced conditions and mutants each file has (`[measured]`): a run that measured fewer than that looked at less, and fails. A count of misses may only fall; a count that falls must fall in the floor too, in the same change. A floor that rises needs a dated line in `[raised]` (`"mutant 2026-11-24" = "why"`), and a number of what there is to measure that falls needs one in `[lowered]`; `python3 tests/tools/ratchet.py base origin/main` fails otherwise, and CI runs it on every pull request.
+
+`tests/exclusions/<area>.toml` lists every miss that stays. An entry names the miss by its source, never by a line number: `kind` (`line`, `branch`, `function`, `condition`, `forced`, `mutant`, or for the workflows and pages their own kinds), `file`, `function`, `text`, and when needed `on` (the line or decision around it), `operator` and `replacement`, and `count` when the same text misses more than once. Its `reason` is one of four: `unreachable` and `equivalent` with the argument in `why`, `boundary` and `tool` with the `test` that covers it at another level. An entry fails the gate when what it excuses is now covered or killed, when its text is gone from the file, and when it lacks a reason, a why or a test; the list fails when it is longer than its floor's `exclusions`. No inline pragma (`istanbul ignore`, `pragma: no cover`, `Stryker disable`, `NOSONAR` and the like) is allowed anywhere: the `test-pragmas` hook refuses one.
+
+What checks the lists: `tests/tools/ratchet.py check` for the Worker's areas and the scripts (on every pull request for lines, branches, functions and conditions, every Monday for forced conditions and mutants); `registry/tests/test_tools.py` (`Lists` and `Measured`) and `tests/tools/py/mutate.py --list` for the register; `tests/workflows/` and `tests/pages/` for their own. `python3 tests/tools/ratchet.py selftest`, `node worker/test/tools/selftest.mjs`, `node tests/tools/node/selftest.mjs` and `registry/tests/test_tools.py` plant each kind of miss and require the tool to report it.
+
+## On every push and pull request
+
+`.github/workflows/ci.yml`. Each job holds its area at what main reaches, which today is 100 % of every line and branch in every area, and of every function where the tool counts them (the Worker and the scripts).
+
+| Gate | What fails it | By hand |
+| --- | --- | --- |
+| 🐍 Register tests | a failing test; a line or branch of `registry/cla.py` no test runs (`fail_under = 100` in `pyproject.toml`); a condition no test shows deciding alone, or a list entry that is stale or malformed (`test_tools.Measured` and `Lists`, inside the suite) | `python3 -m coverage run -m unittest discover -s registry/tests && python3 -m coverage report --show-missing` |
+| 🧪 Worker tests | a failing test; Istanbul under 100 % for statements, branches, functions or lines (`worker/vitest.config.ts`); an unlisted condition, a stale entry, a per-file count that differs from `[measured]`; on a pull request, a floor raised or a measure lowered without its dated line | `cd worker && npm run test:coverage` |
+| 🔑 Setup scripts and workflows | a failing test; Node's coverage under 100 % of lines, branches or functions of the scripts; an unlisted condition; a failing workflow case | `cd worker && npm run test:scripts && npm run test:workflows` |
+| 🌐 Pages | an axe violation not in `tests/exclusions/pages.toml`, a script, a console error, a request past the fence, a page that differs with scripts off | `cd worker && npx playwright-core install chromium && npm run test:pages` |
+| 🧬 Mutants of the changed register lines (pull requests) | a mutant of a line the pull request changes in `registry/cla.py` that no test kills and the list does not excuse; 120 at most, a seeded sample past that | `python3 tests/tools/limited.py 480 6 -- python3 tests/tools/py/mutate.py registry/cla.py registry/tests --since origin/main --sample 120 --list tests/exclusions/register.toml` |
+| 🧬 Mutants of the changed Worker lines (pull requests) | the same for `worker/src/`: `worker/test/tools/changed.mjs` names the mutants that lie on changed lines alone (120 at most), StrykerJS plants them, `ratchet.py listed` judges them | in a throwaway clone: `cd worker && python3 ../tests/tools/limited.py 540 6 -- npx stryker run --mutate "$(node test/tools/changed.mjs --since origin/main)" --concurrency 2 && python3 ../tests/tools/ratchet.py listed worker-core --mutants coverage/mutation.json && python3 ../tests/tools/ratchet.py listed worker-edge --mutants coverage/mutation.json` |
+| 🧬 Mutants of the changed scripts (pull requests) | the same for the scripts' area | `python3 tests/tools/limited.py 480 6 -- node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since origin/main --max 120 && node tests/tools/node/scripts-mut.mjs --listed coverage/scripts-mutation.json` |
+| 🧹 Lint | among the kit's hooks: an inline pragma (`test-pragmas`), a source file in no area or in two (`test-areas`), a ratchet that no longer reports what is planted (`test-ratchet`) | `pre-commit run --all-files` |
+| 📊 SonarCloud | the analysis or its quality gate; it receives the coverage of all three test jobs, the scripts' child processes included, and excludes nothing | CI only |
+
+A property test keeps a fixed seed on every pull request, so a run checks what was reviewed: `REGISTER_SEED` for the register (`registry/tests/generate.py`), `PROPERTY_SEED` for the Worker (`worker/test/seed.ts`), both unset in CI.
+
+## Every Monday, and by hand
+
+`.github/workflows/mutation.yml`, on its schedule or dispatched with an area (`all`, `register`, `worker-core`, `worker-edge`, `scripts`, `properties`) and, for the properties, a seed to run again. Every job runs under `tests/tools/limited.py` with at most two workers and a time limit for each mutant, keeps its report for a week as an artifact, and writes the ratchet's verdict on the run's summary. A survivor or a forced condition that no list excuses, a listed one that is now killed, a count over its floor (the score fell) and a file measured with fewer mutants than `[measured]` says are red.
+
+| Job | By hand (a campaign never runs without the limit) |
+| --- | --- |
+| 🧬 Mutants of the register, in four shards, then judged as one (every mutant once; a listed one that no longer survives) | `python3 tests/tools/limited.py 2400 6 -- python3 tests/tools/py/mutate.py registry/cla.py registry/tests --workers 2 --list tests/exclusions/register.toml` (`--functions name` or `--lines 10-40` for a part) |
+| 🧬 Mutants of the Worker's core and edge, in shares of about as many mutants each (`ratchet.py files <area> --share I/N`) | in a throwaway clone (StrykerJS mutates in place): `cd worker && python3 ../tests/tools/limited.py 2700 6 -- npm run test:mutation -- --mutate src/<file>.ts && python3 ../tests/tools/ratchet.py check <area> --mutants coverage/mutation.json --only src/<file>.ts` |
+| 🧬 Forced conditions of the Worker's core and edge (every condition held true, then false: a test must notice) | `cd worker && python3 ../tests/tools/limited.py 2700 6 -- npm run test:forced -- src/<file>.ts && python3 ../tests/tools/ratchet.py check <area> --forced coverage/force.json --only src/<file>.ts` |
+| 🧬 Mutants of the setup scripts and the agreement gate | `cd worker && python3 ../tests/tools/limited.py 2400 6 -- npm run test:scripts-mutation` |
+| 🎲 Properties with a new seed, the Worker's files in a random order; the seed is printed first | `REGISTER_SEED=<n> python3 -m unittest discover -s registry/tests` and `cd worker && PROPERTY_SEED=<n> npx vitest run --sequence.shuffle --sequence.seed=<n>` |
+
+A failure found with a new seed becomes a named example in the tests, with the seed in its name or comment.
+
+## Time and memory
+
+`python3 tests/tools/limited.py SECONDS GIB -- COMMAND` runs a command in a process group of its own and kills the whole group past its time or past its memory, counted as the resident memory of every process of the group together (a limit per process cannot hold Node and workerd, which reserve far more than they use); it then exits 137 and says which limit it passed, and otherwise passes the command's own exit code on. Every mutation, fuzz, property or hostile-input campaign runs under it, on a developer's machine and in CI, with two workers at most: an unbounded mutation run once took a whole machine down. `mutate.py` adds a limit of its own to each mutant's process (its time, and 2 GiB of address space on Linux); StrykerJS's per-mutant limit is `timeoutMS` in `worker/stryker.config.json`; `scripts-mut.mjs` takes `--timeout`. A mutant that ends by its time limit is counted as killed by timeout, apart from the others.
+
+## Showing that a gate works
+
+A gate that never failed proves nothing. To check one, plant the defect it exists for on a scratch branch (a line no test runs, a condition only one value of reaches, an assertion removed so a mutant survives, a list entry whose text is gone, a floor raised without its line, an inline pragma, a source file in no area) and see the job go red for that reason, then drop the branch. Each gate of this page was shown red that way when it was set up.
