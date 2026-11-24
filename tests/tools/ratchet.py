@@ -782,10 +782,9 @@ def moved(read: Callable[[str], str], root: Path = ROOT) -> list[str]:
     for path in sorted((root / "tests" / "floors").glob("*.toml")):
         name = path.relative_to(root).as_posix()
         old, new = tomllib.loads(read(name) or ""), load(path)
-        out += [
-            f"{path.name}: {p}"
-            for p in raised(bare(old), bare(new)) + lowered(bare(old), bare(new))
-        ]
+        # Without its lines a move has none, so the problem's own "with no line" says nothing here.
+        moves = raised(bare(old), bare(new)) + lowered(bare(old), bare(new))
+        out += [f"{path.name}: {re.sub(r' with no line in \[\w+\]$', '', m)}" for m in moves]
         for table in ("raised", "lowered"):
             for k, why in new.get(table, {}).items():
                 if k not in old.get(table, {}):
@@ -1222,7 +1221,11 @@ def selftest_moved(tmp: Path) -> list[Case]:
     lower = "[tool.coverage.report]\nfail_under = 99\n"
     return [
         ("nothing moved", tree(), []),
-        ("a floor raised, no line", floor("line = 1", "line = 2"), ["line went from 1 to 2"]),
+        (
+            "a floor raised, no line",
+            floor("line = 1", "line = 2"),
+            ["x.toml: line went from 1 to 2"],
+        ),
         ("a floor raised, its line", floor("line = 1", "line = 2", said), ["1 to 2", "new line"]),
         ("less to measure", floor("line = 5", "line = 4"), ["line of f went from 5 to 4"]),
         ("fewer tests", floor('"t" = 4', '"t" = 3'), ["the tests of t went from 4 to 3"]),
