@@ -36,7 +36,8 @@ export interface Entity {
   version: number;
   set_sha256: string;
   signed_at: string;
-  covered: { github_id: number; from: string; until?: string | null }[];
+  /** Absent or null when an entity lists nobody, which the recorder takes as an empty list. */
+  covered?: { github_id: number; from: string; until?: string | null }[] | null;
 }
 
 interface RecordBase {
@@ -366,7 +367,7 @@ export function coveringEntity(entities: Entity[], config: Config, id: number, d
   for (const e of entities) {
     const v = config.versions[String(e.version)];
     if (!v || !config.accepted_versions.includes(e.version) || v.set_sha256 !== e.set_sha256) continue;
-    for (const c of e.covered) {
+    for (const c of e.covered ?? []) {
       if (c.github_id === id && c.from <= date && (!c.until || date <= c.until)) return e;
     }
   }

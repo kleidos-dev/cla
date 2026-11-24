@@ -301,6 +301,13 @@ describe("an entity covers an account", () => {
     expect(covers([first, entity({ slug: "second" })])).toBe(first);
   });
 
+  it.each([undefined, null])("not when it lists nobody (%j), and the entities after it are read", (covered) => {
+    const nobody = { ...entity(), covered } as unknown as Entity;
+    const e = entity();
+    expect(covers([nobody])).toBeNull();
+    expect(covers([nobody, e])).toBe(e);
+  });
+
   it("by none when there is none", () => {
     expect(covers([])).toBeNull();
   });
