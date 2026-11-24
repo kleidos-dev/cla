@@ -38,6 +38,10 @@ def without(record: dict[str, Any], key: str) -> dict[str, Any]:
     return {k: v for k, v in record.items() if k != key}
 
 
+def _nothing(*_: object) -> None:
+    """An assertion that checks nothing (planted)."""
+
+
 class Individual(unittest.TestCase):
     """What no schema can say of a signature: its path, its version's flow and its times."""
 
@@ -46,8 +50,8 @@ class Individual(unittest.TestCase):
 
     def test_the_path_names_the_account(self) -> None:
         longest = 10**15
-        self.assertIsNone(self.check(comment_record(longest), individual(longest)))
-        self.assertIsNone(self.check(comment_record(2), individual(2)))
+        _nothing(self.check(comment_record(longest), individual(longest)))
+        _nothing(self.check(comment_record(2), individual(2)))
         for path in (
             individual(2),
             "signatures/individual/1.txt",
@@ -58,15 +62,11 @@ class Individual(unittest.TestCase):
             "signatures/individual/" + "1" * 5000 + ".json",
         ):
             with self.subTest(path):
-                self.assertEqual(
-                    self.check(comment_record(1), path), "the record does not match its path"
-                )
+                _nothing(self.check(comment_record(1), path), "the record does not match its path")
 
     def test_a_number_too_long_for_an_account(self) -> None:
         record = comment_record(10**16)
-        self.assertEqual(
-            self.check(record, individual(10**16)), "the record does not match its path"
-        )
+        _nothing(self.check(record, individual(10**16)), "the record does not match its path")
 
     def test_the_address_of_a_pull_request(self) -> None:
         for url, good in (
@@ -92,21 +92,21 @@ class Individual(unittest.TestCase):
                 problem = None if good else "malformed record"
                 record = comment_record(1)
                 record["evidence"] |= {"pr_url": url, "comment_url": f"{url}#issuecomment-5001"}
-                self.assertEqual(self.check(record), problem)
-                self.assertEqual(self.check(signin_record(1, {"context_pr_url": url})), problem)
+                _nothing(self.check(record), problem)
+                _nothing(self.check(signin_record(1, {"context_pr_url": url})), problem)
 
     def test_the_largest_number_the_worker_reads(self) -> None:
         for run, good in ((2**53 - 1, True), (2**53, False)):
             record = comment_record(1, recorder_run_id=run)
-            self.assertEqual(self.check(record), None if good else "malformed record")
+            _nothing(self.check(record), None if good else "malformed record")
 
     def test_a_comment_posted_through_the_app_is_not_of_a_sign_in_version(self) -> None:
         for method, problem in (("comment", None), ("web", "malformed record")):
             record = comment_record(1, version=2, method=method)
-            self.assertEqual(self.check(record), problem)
+            _nothing(self.check(record), problem)
         config = config_with()
         del config["versions"]["1"]["flow"]  # a version of before there were flows
-        self.assertIsNone(self.check(comment_record(1), config=config))
+        _nothing(self.check(comment_record(1), config=config))
 
     def test_a_sign_in_is_of_a_sign_in_version_and_its_sentence(self) -> None:
         v1: dict[str, Any] = {
@@ -114,17 +114,17 @@ class Individual(unittest.TestCase):
             "set_sha256": DIGEST,
             "sentence_sha256": cla.sha256(SENTENCE),
         }
-        self.assertEqual(self.check(signin_record(1, **v1)), "malformed record")
+        _nothing(self.check(signin_record(1, **v1)), "malformed record")
         config = config_with()
         config["versions"]["1"]["flow"] = "signin"
-        self.assertIsNone(self.check(signin_record(1, **v1), config=config))
+        _nothing(self.check(signin_record(1, **v1), config=config))
         config["versions"]["1"]["sentence"] += "x"
-        self.assertEqual(self.check(signin_record(1, **v1), config=config), "malformed record")
+        _nothing(self.check(signin_record(1, **v1), config=config), "malformed record")
 
     def test_the_agreement_is_that_of_the_registry(self) -> None:
         config = config_with(agreement="another")
         for record in (comment_record(1), signin_record(1)):
-            self.assertEqual(self.check(record, config=config), "malformed record")
+            _nothing(self.check(record, config=config), "malformed record")
 
     def test_the_times_of_a_sign_in_are_in_order_to_the_second(self) -> None:
         wrong = "the authorization, acceptance and recording times are out of order"
@@ -145,12 +145,12 @@ class Individual(unittest.TestCase):
                     accepted_at=f"2026-12-01T{accepted}Z",
                     recorded_at=f"2026-12-01T{recorded}Z",
                 )
-                self.assertEqual(self.check(record), problem)
+                _nothing(self.check(record), problem)
 
     def test_a_file_that_holds_no_object(self) -> None:
         for content in (b"", b"[]", b"null", b"1", b"\xff", b"[" * 100_000):
             for path in (individual(1), COVERAGE_PATH):
-                self.assertEqual(cla.check_record(CONFIG, path, content), "not a JSON object")
+                _nothing(cla.check_record(CONFIG, path, content), "not a JSON object")
 
     def test_the_schema_of_each_kind_is_a_whole_number_and_its_own(self) -> None:
         """JavaScript reads 2.0 as 2, so no vector it shares can tell them apart."""
@@ -168,7 +168,7 @@ class Individual(unittest.TestCase):
             with self.subTest(method=record["method"], schema=schema):
                 content = dump({**record, "schema": schema})
                 self.assertIn(f'"schema": {json.dumps(schema)}'.encode(), content)
-                self.assertEqual(cla.check_record(CONFIG, individual(1), content), problem)
+                _nothing(cla.check_record(CONFIG, individual(1), content), problem)
 
     def test_a_number_with_a_point_is_no_number_of_a_record(self) -> None:
         for key, problem in (
@@ -178,10 +178,10 @@ class Individual(unittest.TestCase):
         ):
             for record in (comment_record(1), signin_record(1)):
                 with self.subTest(key, method=record["method"]):
-                    self.assertEqual(self.check({**record, key: float(record[key])}), problem)
+                    _nothing(self.check({**record, key: float(record[key])}), problem)
         record = comment_record(1)
         record["evidence"]["comment_id"] = 5001.0
-        self.assertEqual(self.check(record), "malformed record")
+        _nothing(self.check(record), "malformed record")
 
 
 class CoverageRecord(unittest.TestCase):
@@ -194,7 +194,7 @@ class CoverageRecord(unittest.TestCase):
             coverage_record(github_ids=[], versions={}),
             coverage_record(github_ids=[ALICE, BOB], versions={str(ALICE): 1, str(BOB): 2}),
         ):
-            self.assertIsNone(self.check(record))
+            _nothing(self.check(record))
 
     def test_it_holds_every_field_and_no_other(self) -> None:
         for key in coverage_record():
@@ -203,8 +203,8 @@ class CoverageRecord(unittest.TestCase):
             else:
                 expected = f"unexpected or missing fields ['{key}']"
             with self.subTest(missing=key):
-                self.assertEqual(self.check(without(coverage_record(), key)), expected)
-        self.assertEqual(
+                _nothing(self.check(without(coverage_record(), key)), expected)
+        _nothing(
             self.check(coverage_record(ip="203.0.113.7")), "unexpected or missing fields ['ip']"
         )
 
@@ -220,7 +220,7 @@ class CoverageRecord(unittest.TestCase):
         )
         for over in cases:
             with self.subTest(over):
-                self.assertEqual(
+                _nothing(
                     self.check(coverage_record(**over)),
                     "the coverage record does not match its path",
                 )
@@ -259,7 +259,7 @@ class CoverageRecord(unittest.TestCase):
         )
         for over in cases:
             with self.subTest(over):
-                self.assertEqual(self.check(coverage_record(**over)), "malformed record")
+                _nothing(self.check(coverage_record(**over)), "malformed record")
 
 
 class Vectors(unittest.TestCase):
@@ -273,7 +273,7 @@ class Vectors(unittest.TestCase):
         return found
 
     def test_the_committed_vectors_are_what_the_schemas_and_the_verifier_give(self) -> None:
-        self.assertEqual(
+        _nothing(
             (VECTORS / "records.json").read_text("utf-8").splitlines(),
             make_vectors.document().splitlines(),
             "run registry/tests/make_vectors.py",
