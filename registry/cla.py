@@ -478,21 +478,19 @@ def tsr_text(tsr: bytes) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
+TSR_TIME_RE = re.compile(
+    r"^Time stamp: ([A-Z][a-z]{2} [ 0-9][0-9] [0-9:]{8})(?:\.[0-9]+)? ([0-9]{4}) GMT$", re.M
+)
+
+
 def tsr_time(text: str) -> dt.datetime | None:
-    m = re.search(r"^Time stamp: (.+?) GMT$", text, re.M)
-    if not m:
-        return None
+    """The second a token states, whatever fraction of it an authority adds."""
+    m = TSR_TIME_RE.search(text)
     try:
-        return dt.datetime.strptime(" ".join(m.group(1).split()), "%b %d %H:%M:%S %Y").replace(
-            tzinfo=dt.UTC
-        )
+        when = m and dt.datetime.strptime(f"{m[1]} {m[2]} +0000", "%b %d %H:%M:%S %Y %z")
     except ValueError:
-        try:
-            return dt.datetime.strptime(
-                " ".join(m.group(1).split()).split(".")[0], "%b %d %H:%M:%S %Y"
-            ).replace(tzinfo=dt.UTC)
-        except ValueError:
-            return None
+        return None
+    return when
 
 
 def verify_tsr(
@@ -517,7 +515,7 @@ def verify_tsr(
     if when is None:
         return "the time-stamp token has no time"
     if qualified and (
-        not re.search(rf"^Policy OID: {re.escape(QUALIFIED_POLICY)}\b", text, re.M)
+        not re.search(rf"^Policy OID: {re.escape(QUALIFIED_POLICY)}$", text, re.M)
         or QTST_STATEMENT_DER not in tsr
     ):
         return "the time-stamp token is not a qualified one"
