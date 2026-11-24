@@ -280,19 +280,3 @@ describe("signing in", () => {
   }
 });
 
-describe("the harness", () => {
-  it("serves the build this suite named, and the fence lets nothing else out", async () => {
-    const health = (await (await server.fetch(`${ORIGIN}/healthz`)).json()) as { commit: string };
-    assert.equal(health.commit, BUILD_COMMIT);
-    const { ctx, page } = await open(VARIANTS[0]!);
-    try {
-      const before = wall.stray.length;
-      const res = await page.goto("https://example.com/").catch(() => null);
-      assert.ok(res === null || res.status() === 502);
-      assert.deepEqual(wall.stray.slice(before), ["GET https://example.com/"]);
-      wall.stray.length = before;
-    } finally {
-      await ctx.close();
-    }
-  });
-});

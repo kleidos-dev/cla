@@ -11,10 +11,11 @@ files = ["registry/cla.py"]
 line = 1
 branch = 0
 condition = 1
-mutant = 1
+mutant = 2
 exclusions = 3
 
 [raised]
+"mutant 2026-11-24" = "Planted: a floor raised with its dated line (scratch)."
 
 # The tests that ran in each file (tests/tools/ratchet.py tests): a run that
 # ran more or fewer, skipped one or left one to do fails. A number that falls,
