@@ -16,8 +16,11 @@ stays, with its reason). ``check`` reads the reports the test run wrote and fail
 
 ``base`` fails when a floor is higher than in another revision, or a number of what there is to miss
 lower, without a dated line in its table ``raised`` or ``lowered``. ``files`` names the files of an
-area, or one of N even shares of them. ``pragmas`` fails on an inline pragma that hides a miss from
-a tool. ``selftest`` plants each of these and requires the report. Standard library only.
+area, or one of N even shares of them. ``areas`` fails on a source file that is in no area, or in
+two: a file no area names is measured by nothing. ``listed`` fails on a mutant of a run of some
+lines (a pull request's) that no test killed and the area's list does not excuse, which no floor
+can hold. ``pragmas`` fails on an inline pragma that hides a miss from a tool. ``selftest`` plants
+each of these and requires the report. Standard library only.
 
     python3 tests/tools/ratchet.py check worker-core \
         --istanbul worker/coverage/coverage-final.json --conditions worker/coverage/mcdc.json \
@@ -27,6 +30,7 @@ a tool. ``selftest`` plants each of these and requires the report. Standard libr
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -45,7 +49,9 @@ KINDS = ("line", "branch", "function", "condition", "forced", "mutant")
 Counts = Counter[tuple[str, str]]
 SOURCES = (".ts", ".mjs", ".js", ".py")
 #: Where a pragma may not be, and what one looks like. Spelled in two halves: this file is read too.
-PRAGMA_PLACES = ("worker/src", "worker/scripts", "worker/test", "scripts", "tests")
+PRAGMA_PLACES = ("registry", "worker/src", "worker/scripts", "worker/test", "scripts", "tests")
+#: The code the measures are for: every file of these is in the files of exactly one area.
+CODE = ("registry/cla.py", "worker/src/*.ts", "worker/scripts/*.mjs", "scripts/*.ts")
 PRAGMA = re.compile(
     "|".join(
         a + b
@@ -235,10 +241,7 @@ def compare(
 
     ``measured`` is the files each kind was measured in: a shard's entries are judged by its shard,
     and a count is held to its floor only where every file of the area was measured."""
-    problems = []
-    for m, n in sorted(found.items(), key=lambda x: str(x[0])):
-        if n > entries[m]:
-            problems.append(f"missed and not listed ({n - entries[m]}): {m}")
+    problems = unlisted(found, entries)
     for m, n in sorted(entries.items(), key=lambda x: str(x[0])):
         if m.file not in files:
             problems.append(f"listed for a file that is not of this area: {m}")
@@ -360,6 +363,46 @@ def lowered(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
             if now < n and not said(*lines, f, f"{k} {f}"):
                 problems.append(f"{k} of {f} went from {n} to {now} with no line in [lowered]")
     return problems
+
+
+def areas(root: Path) -> list[str]:
+    """A source file in no area is measured by nothing, and one in two is counted twice."""
+    code = {
+        p.relative_to(root).as_posix()
+        for pattern in CODE
+        for p in root.glob(pattern)
+        if not p.name.endswith(".d.ts")
+    }
+    held: dict[str, list[str]] = {}
+    for path in sorted((root / "tests" / "floors").glob("*.toml")):
+        for file in load(path).get("files", []):
+            held.setdefault(file, []).append(path.stem)
+    problems = []
+    for file in sorted(code | set(held)):
+        where = ", ".join(held.get(file, []))
+        if file not in code:
+            problems.append(f"{file} is in {where} and is no source file")
+        elif not where:
+            problems.append(f"{file} is in no area: name it in tests/floors/<area>.toml")
+        elif len(held[file]) > 1:
+            problems.append(f"{file} is in {len(held[file])} areas: {where}")
+    return problems
+
+
+def unlisted(found: Counter[Miss], entries: Counter[Miss]) -> list[str]:
+    """The misses of a run of some lines that the list does not excuse."""
+    return [
+        f"missed and not listed ({n - entries[m]}): {m}"
+        for m, n in sorted(found.items(), key=lambda x: str(x[0]))
+        if n > entries[m]
+    ]
+
+
+def listed(area: str, reports: list[str]) -> list[str]:
+    files = set(load(ROOT / "tests" / "floors" / f"{area}.toml")["files"])
+    found = Counter(m for report in reports for m in stryker(Path(report)) if m.file in files)
+    entries, wrong = exclusions(ROOT / "tests" / "exclusions" / f"{area}.toml")
+    return wrong + unlisted(found, entries)
 
 
 def git(*args: str) -> str:
@@ -514,6 +557,34 @@ def selftest_reports(tmp: Path) -> list[Case]:
     return cases
 
 
+def selftest_areas(root: Path) -> list[Case]:
+    """Source files in no area, in two, and an area that names a file that is no source."""
+    for name in ("registry/cla.py", "worker/src/a.ts", "worker/src/b.ts", "worker/src/m.d.ts"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("x\n")
+    (root / "tests" / "floors").mkdir(parents=True)
+
+    def floors(**area: list[str]) -> list[str]:
+        for old in (root / "tests" / "floors").glob("*.toml"):
+            old.unlink()
+        for name, files in area.items():
+            floor = root / "tests" / "floors" / f"{name}.toml"
+            floor.write_text(f"files = {json.dumps(files)}\n")
+        return areas(root)
+
+    every = ["registry/cla.py", "worker/src/a.ts", "worker/src/b.ts"]
+    return [
+        ("every source in one area", floors(one=every[:1], two=every[1:]), []),
+        ("a source in no area", floors(one=every[:2]), ["worker/src/b.ts is in no area"]),
+        ("a source in two", floors(one=every, two=every[1:2]), ["a.ts is in 2 areas: one, two"]),
+        (
+            "an area of a file that is no source",
+            floors(one=[*every, "worker/src/m.d.ts"]),
+            ["m.d.ts is in one and is no source file"],
+        ),
+    ]
+
+
 def selftest() -> list[str]:
     """Plants each thing the gate must see, and says which one it did not."""
     file = "tests/tools/ratchet.py"
@@ -622,6 +693,24 @@ def selftest() -> list[str]:
         )
         planted = [str(m) for m in stryker(here_dir / "mutation.json")]
         cases.append(("three mutants nobody killed", [str(len(planted))], ["3"]))
+        survivors = Counter(stryker(here_dir / "mutation.json"))
+        first = next(iter(survivors))
+        cases += [
+            ("a run of some lines, none listed", unlisted(survivors, none), ["not listed (3)"]),
+            ("a run of some lines, all listed", unlisted(survivors, survivors), []),
+            ("one more than listed", unlisted(survivors, Counter([first] * 2)), ["listed (1)"]),
+        ]
+        cases += selftest_areas(here_dir / "tree")
+        page = here_dir / "summary.md"
+        summarize(page, "check x", "ratchet check: ok", [])
+        summarize(page, "check y", "ratchet check: 1 problems", ["a ``` b"])
+        cases.append(
+            (
+                "a job's summary says the verdict, and the problems in a block",
+                [page.read_text()],
+                ["**check x**: ok\n\n**check y**: 1 problems\n\n````text\na ``` b\n````\n\n"],
+            )
+        )
         cases.append(
             (
                 "named by their source",
@@ -649,6 +738,10 @@ def main(argv: list[str]) -> int:
     f.add_argument("--share", default="1/1", help="one of N shares of about as many mutants: I/N")
     b = commands.add_parser("base", help="the floors against another revision's")
     b.add_argument("revision")
+    commands.add_parser("areas", help="every source file in exactly one area")
+    li = commands.add_parser("listed", help="every survivor of a run of some lines is listed")
+    li.add_argument("area")
+    li.add_argument("--mutants", nargs="+", required=True)
     commands.add_parser("pragmas", help="no inline pragma in the sources")
     commands.add_parser("selftest", help="plants each problem and requires its report")
     args = parser.parse_args(argv)
@@ -661,14 +754,32 @@ def main(argv: list[str]) -> int:
         problems = check(args.area, args)
     elif args.command == "base":
         problems = against(args.revision)
+    elif args.command == "areas":
+        problems = areas(ROOT)
+    elif args.command == "listed":
+        problems = listed(args.area, args.mutants)
     elif args.command == "pragmas":
         problems = pragmas([ROOT / p for p in PRAGMA_PLACES])
     else:
         problems = selftest()
     for p in problems:
         print(p, file=sys.stderr)
-    print(f"ratchet {args.command}: {'ok' if not problems else f'{len(problems)} problems'}")
+    verdict = f"ratchet {args.command}: {'ok' if not problems else f'{len(problems)} problems'}"
+    print(verdict)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        summarize(Path(summary), " ".join(argv[:2]), verdict, problems)
     return 1 if problems else 0
+
+
+def summarize(path: Path, asked: str, verdict: str, problems: list[str]) -> None:
+    """The verdict, and what failed, on the page of a CI run (GitHub's job summary)."""
+    lines = [f"**{asked}**: {verdict.split(': ', 1)[1]}", ""]
+    if problems:
+        # A fence longer than any run of backticks it holds (a template literal of the source).
+        fence = "`" * max(3, *(len(run) + 1 for p in problems for run in re.findall("`+", p)))
+        lines += [f"{fence}text", *problems, fence, ""]
+    with path.open("a", encoding="utf-8") as out:
+        out.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

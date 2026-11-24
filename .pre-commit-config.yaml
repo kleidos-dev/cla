@@ -140,6 +140,14 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+      # A source file no area names would be measured by nothing.
+      - id: test-areas
+        name: every source file is in exactly one test area
+        entry: python3 tests/tools/ratchet.py areas
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
       - id: test-ratchet
         name: the test ratchet reports what is planted
         entry: python3 tests/tools/ratchet.py selftest
