@@ -349,6 +349,7 @@ class Authority(RegisterTest):
         self.asked: list[tuple[Any, ...]] = []
         self.waits: list[float] = []
         self.time = 1000.0
+        self.nonce = tokens.NONCE
         self.stamper = cla.TSAStamper(
             "http://tsa.invalid/q", [root], True, self.transport, self.sleep
         )
@@ -363,7 +364,7 @@ class Authority(RegisterTest):
 
     def randbits(self, bits: int) -> int:
         self.assertEqual(bits, 63)
-        return tokens.NONCE - 1  # even: the stamper makes it odd, so never 0
+        return self.nonce - 1  # even: the stamper makes it odd, so never 0
 
     def transport(self, *call: Any) -> tuple[int, bytes, dict[str, str]]:
         self.asked.append(call)
@@ -418,9 +419,23 @@ class Authority(RegisterTest):
                     f"time-stamp attempt 1: {said}\ntime-stamp attempt 2: {said}\n",
                 )
 
-    def test_a_token_of_another_request_is_no_token(self) -> None:
+    def test_a_token_over_another_digest_is_no_token(self) -> None:
         self.answers = [(200, tokens.QUALIFIED, {})] * 2
         self.assertIsNone(self.stamper.stamp("0" * 64))
+        self.assertEqual(len(self.asked), 2)
+
+    def test_a_token_of_another_request_over_the_same_digest_is_no_token(self) -> None:
+        self.answers = [(200, tokens.QUALIFIED, {})] * 2
+        self.nonce = tokens.NONCE + 2
+        self.assertIsNone(self.stamper.stamp(self.digest))
+        self.assertEqual(
+            [call[3] for call in self.asked], [cla.timestamp_query(self.digest, self.nonce)] * 2
+        )
+        self.assertEqual(
+            self.err.getvalue(),
+            "time-stamp attempt 1: the time-stamp token does not verify\n"
+            "time-stamp attempt 2: the time-stamp token does not verify\n",
+        )
 
     def test_requests_are_fifteen_seconds_apart_across_signatures(self) -> None:
         self.answers = [(200, tokens.QUALIFIED, {})] * 5

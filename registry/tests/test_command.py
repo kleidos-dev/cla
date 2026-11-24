@@ -521,7 +521,7 @@ class Verify(RegisterTest):
         since = self.log.sha(self.log.record(comment_record(1), genuine=False))
         self.log.record(comment_record(2))
         self.assertEqual(self.run_main("--ref", "signatures", "--since", since), 0)
-        self.assertEqual(self.log.witness.asked, ["comment 2", "run 1002"])
+        self.assertEqual(self.log.witness.asked, ["comment 5002", "run 1002"])
 
     def test_the_merges_of_before_the_register_need_no_coverage(self) -> None:
         self.log.record(comment_record(1))

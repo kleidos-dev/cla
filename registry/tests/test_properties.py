@@ -207,11 +207,14 @@ class Records(Property):
         for _ in range(1000):
             sentence = self.given.choice((SENTENCE, SENTENCE_V2))
             at = self.given.randrange(len(sentence))
-            changed = sentence[:at] + self.given.text(3) + sentence[at + self.given.randrange(2) :]
-            if cla.normalize(changed) == cla.normalize(sentence):
-                continue
-            self.assertIsNone(
-                cla.accepted_sentences(CONFIG_V2).get(cla.normalize(changed)), changed
+            new = self.given.choice((self.given.text(3), chr(ord(sentence[at]) + 0xFEE0)))
+            changed = sentence[:at] + new + sentence[at + self.given.randrange(2) :]
+            # The same words in the same characters, told another way than cla.normalize does.
+            words = unicodedata.normalize("NFC", changed).replace("\ufeff", " ").split()
+            self.assertEqual(
+                cla.accepted_sentences(CONFIG_V2).get(cla.normalize(changed)),
+                {SENTENCE: 1, SENTENCE_V2: 2}.get(" ".join(words)),
+                changed,
             )
 
 

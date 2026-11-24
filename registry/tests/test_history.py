@@ -182,6 +182,8 @@ class WhoMade(unittest.TestCase):
             {"signature_valid": False},
             {"signed_by_github": False},
             {"committer_email": "x@example.org"},
+            {"committer_email": "evil-noreply@github.com"},
+            {"committer_email": "noreply@github.com.example.org"},
             {"committer_email": ""},
         ):
             with self.subTest(over):
@@ -228,7 +230,7 @@ class CrossCheck(unittest.TestCase):
 
     def test_a_genuine_record_of_each_kind(self) -> None:
         for record, asked in (
-            (comment_record(1), ["comment 1", "run 1001"]),
+            (comment_record(1), ["comment 5001", "run 1001"]),
             (signin_record(1), ["run 1001"]),
             (coverage_record(), ["run 2007"]),
         ):
@@ -236,6 +238,32 @@ class CrossCheck(unittest.TestCase):
             with self.subTest(record["kind"], schema=record["schema"]):
                 self.assertIsNone(self.check(record))
                 self.assertEqual(self.witness.asked, asked)
+
+    def test_a_run_is_named_as_the_recorders_workflow_names_it(self) -> None:
+        for record, title in (
+            (comment_record(1), f"Record sign {REPO}#7 5001"),
+            (signin_record(1), f"Record signin {REPO}#7 1"),
+            (coverage_record(8), f"Record coverage {REPO}#8"),
+        ):
+            with self.subTest(title):
+                self.witness = FakeWitness()
+                self.witness.genuine(record)
+                run = self.witness.runs[record["recorder_run_id"]] or {}
+                self.assertEqual(run["display_title"].rstrip(), title)
+                self.witness.spoil_run(record["recorder_run_id"], display_title=title)
+                self.assertIsNone(self.check(record, genuine=False))
+
+    def test_the_text_of_a_comment_is_hashed_as_it_was_written(self) -> None:
+        body = f"  {SENTENCE.replace(' ', chr(10), 1)}\n\n"
+        record = comment_record(1)
+        record["evidence"]["comment_body_sha256"] = cla.sha256(body)
+        self.witness.genuine(record, body)
+        self.assertIsNone(self.check(record, genuine=False))
+        self.witness.genuine(record, SENTENCE)
+        self.assertEqual(
+            self.check(record, genuine=False),
+            "the comment's text does not hash to comment_body_sha256",
+        )
 
     def test_a_record_with_no_run(self) -> None:
         for value in cast("tuple[Any, ...]", (None, 0, -1, "1", True, 1.0)):
@@ -266,7 +294,7 @@ class CrossCheck(unittest.TestCase):
 
     def test_a_comment_that_does_not_vouch_for_the_record(self) -> None:
         for change, problem in (
-            (None, "the acceptance comment 1 cannot be read"),
+            (None, "the acceptance comment 5001 cannot be read"),
             ({"author_id": 2}, "the acceptance comment was written by another account"),
             ({"author_id": None}, "the acceptance comment was written by another account"),
             ({"edited": True}, "the acceptance comment was edited"),
@@ -288,9 +316,9 @@ class CrossCheck(unittest.TestCase):
                 if change is None:
                     self.witness.comments.clear()
                 else:
-                    self.witness.spoil_comment(1, **cast("dict[str, Any]", change))
+                    self.witness.spoil_comment(5001, **cast("dict[str, Any]", change))
                 self.assertEqual(self.check(record, genuine=False), problem)
-                self.assertEqual(self.witness.asked, ["comment 1"])
+                self.assertEqual(self.witness.asked, ["comment 5001"])
 
     def test_a_run_that_does_not_vouch_for_the_record(self) -> None:
         elsewhere = f"run 1001 is not .github/workflows/record.yml dispatched on main of {REGISTRY}"
@@ -302,9 +330,11 @@ class CrossCheck(unittest.TestCase):
             ({"path": None}, elsewhere),
             ({"event": "push"}, elsewhere),
             ({"head_branch": "evil"}, elsewhere),
-            ({"display_title": f"Record sign {REPO}#7 2"}, other),
-            ({"display_title": f"Record sign {REPO}#8 1"}, other),
-            ({"display_title": "Record sign a/b#7 1"}, other),
+            ({"display_title": f"Record sign {REPO}#7 5002"}, other),
+            ({"display_title": f"Record sign {REPO}#7 1"}, other),
+            ({"display_title": f"Record sign {REPO}#8 5001"}, other),
+            ({"display_title": "Record sign a/b#7 5001"}, other),
+            ({"display_title": f"Record signin {REPO}#7 5001"}, other),
             ({"display_title": f"Record coverage {REPO}#7"}, other),
             ({"display_title": ""}, other),
             ({"display_title": None}, other),
@@ -334,7 +364,7 @@ class CrossCheck(unittest.TestCase):
 
     def test_blanks_do_not_change_a_run_name(self) -> None:
         self.witness.genuine(comment_record(1))
-        self.witness.spoil_run(1001, display_title=f"  Record  sign {REPO}#7 1\n")
+        self.witness.spoil_run(1001, display_title=f"  Record  sign {REPO}#7 5001\n")
         self.assertIsNone(self.check(comment_record(1), genuine=False))
 
     def test_a_run_that_has_not_ended_is_waited_for(self) -> None:
@@ -564,7 +594,7 @@ class Histories(RegisterTest):
         bad = history.record(comment_record(2), genuine=False)
         history.record(comment_record(3))
         self.assertEqual(
-            history.found(), [(bad, f"{individual(2)}: the acceptance comment 2 cannot be read")]
+            history.found(), [(bad, f"{individual(2)}: the acceptance comment 5002 cannot be read")]
         )
         self.assertIsNone(history.verify().checked_through)
 
@@ -598,7 +628,7 @@ class Since(RegisterTest):
         since = history.record(comment_record(2), genuine=False)
         last = history.record(comment_record(3))
         self.assertEqual(history.verify(history.sha(since)), cla.Verified([], history.sha(last)))
-        self.assertEqual(history.witness.asked, ["comment 3", "run 1003"])
+        self.assertEqual(history.witness.asked, ["comment 5003", "run 1003"])
 
     def test_nothing_after_it_leaves_it_where_it_is(self) -> None:
         history = self.history()
@@ -637,7 +667,9 @@ class Since(RegisterTest):
         history.record(comment_record(3))
         history.witness.spoil_run(1002, status="in_progress")
         self.assertEqual(history.verify(), cla.Verified([], history.sha(first)))
-        self.assertEqual(history.witness.asked, ["comment 1", "run 1001", "comment 2", "run 1002"])
+        self.assertEqual(
+            history.witness.asked, ["comment 5001", "run 1001", "comment 5002", "run 1002"]
+        )
 
     def test_a_problem_after_a_run_that_has_not_ended_is_still_found(self) -> None:
         history = self.history()
@@ -701,6 +733,9 @@ class Owner(RegisterTest):
             ("tidy up", OWNER, "jmrplens"),
             (" redact: 1", replace(OWNER, author_id=666), "jmrplens"),
             ("x redact: 1", OWNER, "jmrplens"),
+            ("redact 1", OWNER, "jmrplens"),
+            ("redaction: 1", OWNER, "jmrplens"),
+            ("redacted at its holder's request", OWNER, "jmrplens"),
             ("redact: 1", replace(OWNER, signature_valid=False), "jmrplens"),
             ("redact: 1", replace(OWNER, committer_id=666), "jmrplens"),
             ("Redact: 1", OWNER, "jmrplens"),

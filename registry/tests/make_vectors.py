@@ -147,6 +147,14 @@ def walk(schema: dict[str, Any], value: Any, at: Path_) -> Iterator[tuple[Path_,
             yield from walk(schema["items"], v, [*at, i])
 
 
+def others(of: str) -> Iterator[tuple[Path_, str, Any]]:
+    """In each field, what a record of another kind may hold in it."""
+    for other, (_, _, schema) in BASES.items():
+        for key, form in schema["properties"].items():
+            if other != of and key in BASES[of][0] and {"const", "enum"} & set(form):
+                yield from (([key], "set", v) for v in form.get("enum", [form.get("const")]))
+
+
 def apply(base: dict[str, Any], at: Path_, how: str, value: Any) -> dict[str, Any]:
     """The base with that one change."""
     out = copy.deepcopy(base)
@@ -166,7 +174,7 @@ def vectors() -> Iterator[dict[str, Any]]:
     for of, (base, path, schema) in BASES.items():
         yield verdict({"name": f"{of}: as written", "of": of}, base, path, schema)
         seen = set()
-        for at, how, value in walk(schema, base, []):
+        for at, how, value in (*walk(schema, base, []), *others(of)):
             record = apply(base, at, how, value)
             text = json.dumps(record)
             if record == base and text == json.dumps(base) or text in seen:

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import unittest
@@ -67,7 +68,7 @@ class SharedVectors(unittest.TestCase):
 
     def test_every_kind_has_its_vectors(self) -> None:
         counts = {k: len(v) for k, v in VECTOR_FILE.items() if k != "comment"}
-        self.assertEqual(counts, {"noreply": 40, "trailers": 55, "commits": 27})
+        self.assertEqual(counts, {"noreply": 43, "trailers": 55, "commits": 27})
 
 
 class Noreply(unittest.TestCase):
@@ -108,14 +109,14 @@ class PullRequest(RegisterTest):
             self.authors(
                 [
                     commit(date="2026-11-30T23:59:59Z"),
-                    commit(BOB, "bob", date="2026-11-29T00:00:00+05:00"),
+                    commit(BOB, "bob", date="2026-11-27T00:00:00+05:00"),
                     commit(date="2026-11-28T10:00:00Z"),
                 ]
             ),
             (
                 {
-                    ALICE: ("User", ["2026-12-01", "2026-11-30", "2026-11-28"]),
-                    BOB: ("User", ["2026-11-29"]),
+                    ALICE: ("User", ["2026-11-29", "2026-11-30", "2026-11-28"]),
+                    BOB: ("User", ["2026-11-27"]),
                 },
                 0,
             ),
@@ -125,7 +126,7 @@ class PullRequest(RegisterTest):
         opener = {"id": CAROL, "login": "carol", "type": "Organization"}
         self.assertEqual(
             self.authors([commit()], opener),
-            ({CAROL: ("Organization", ["2026-12-01"]), ALICE: ("User", ["2026-12-01"])}, 0),
+            ({CAROL: ("Organization", ["2026-11-29"]), ALICE: ("User", ["2026-11-30"])}, 0),
         )
 
     def test_an_opener_github_does_not_name(self) -> None:
@@ -143,9 +144,9 @@ class PullRequest(RegisterTest):
             self.authors([commit(message=message, others=[app])]),
             (
                 {
-                    ALICE: ("User", ["2026-12-01"] * 2),
-                    49699333: ("Bot", ["2026-12-01"]),
-                    BOB: ("User", ["2026-12-01"]),
+                    ALICE: ("User", ["2026-11-29", "2026-11-30"]),
+                    49699333: ("Bot", ["2026-11-30"]),
+                    BOB: ("User", ["2026-11-30"]),
                 },
                 0,
             ),
@@ -423,10 +424,24 @@ class Coverage(RegisterTest):
             self.cover([entity()])
 
     def test_the_opener_is_covered_on_the_day_of_the_creation(self) -> None:
-        period = [{"github_id": CAROL, "from": "2026-12-01", "until": "2026-12-01"}]
-        self.fake.merge([commit()], {"id": CAROL, "login": "carol", "type": "User"})
-        self.cover([entity(covered=period)])
-        self.assertEqual(json.loads(self.fake.files[self.PATH])["github_ids"], [ALICE])
+        for day, covered in (("2026-11-29", True), ("2026-11-30", False), ("2026-12-01", False)):
+            with self.subTest(day):
+                self.setUp()
+                self.fake.merge([commit()], {"id": CAROL, "login": "carol", "type": "User"})
+                period = [{"github_id": CAROL, "from": day, "until": day}]
+                with contextlib.nullcontext() if covered else self.missing(CAROL):
+                    self.cover([entity(covered=period)])
+                self.assertEqual(len(self.fake.writes), int(covered))
+
+    def test_an_author_is_covered_on_the_day_of_the_commit(self) -> None:
+        for day, covered in (("2026-11-29", False), ("2026-11-30", True), ("2026-12-01", False)):
+            with self.subTest(day):
+                self.setUp()
+                self.fake.merge([commit(CAROL, "carol")])
+                period = [{"github_id": CAROL, "from": day, "until": day}]
+                with contextlib.nullcontext() if covered else self.missing(CAROL):
+                    self.cover([entity(covered=period)])
+                self.assertEqual(len(self.fake.writes), int(covered))
 
     def test_a_pull_request_already_recorded_is_not_recorded_again(self) -> None:
         self.fake.merge([commit()])

@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -32,11 +34,24 @@ PLUS_2 = dt.timezone(dt.timedelta(hours=2))
 
 
 class Times(unittest.TestCase):
+    """Every time is UTC, whatever the zone of the machine."""
+
+    ZONE, OFFSET = "UTC0", 0
+
+    def setUp(self) -> None:
+        patch = mock.patch.dict(os.environ, TZ=self.ZONE)
+        patch.start()
+        self.addCleanup(time.tzset)  # after the zone that was there is back
+        self.addCleanup(patch.stop)
+        time.tzset()
+        self.assertEqual(time.localtime().tm_gmtoff, self.OFFSET)
+
     def test_the_clock_is_utc(self) -> None:
-        before = dt.datetime.now(dt.UTC)
-        self.assertLessEqual(before, cla.utcnow())
-        self.assertLessEqual(cla.utcnow(), dt.datetime.now(dt.UTC))
-        self.assertIs(cla.utcnow().tzinfo, dt.UTC)
+        before = dt.datetime.fromtimestamp(time.time(), dt.UTC)
+        found = cla.utcnow()
+        self.assertLessEqual(before, found)
+        self.assertLessEqual(found, dt.datetime.fromtimestamp(time.time(), dt.UTC))
+        self.assertIs(found.tzinfo, dt.UTC)
 
     def test_a_time_is_written_in_utc_to_the_second(self) -> None:
         self.assertEqual(cla.iso(NOW), "2026-12-01T10:23:02Z")
@@ -104,6 +119,14 @@ class Times(unittest.TestCase):
         for value in values:
             with self.subTest(value):
                 self.assertIsNone(cla.parse_http_date(value))
+
+
+class TimesEast(Times):
+    ZONE, OFFSET = "EAST-9", 9 * 3600
+
+
+class TimesWest(Times):
+    ZONE, OFFSET = "WEST+5:30", -19800
 
 
 class Texts(unittest.TestCase):

@@ -91,7 +91,7 @@ class Individual(unittest.TestCase):
             with self.subTest(url):
                 problem = None if good else "malformed record"
                 record = comment_record(1)
-                record["evidence"] |= {"pr_url": url, "comment_url": f"{url}#issuecomment-1"}
+                record["evidence"] |= {"pr_url": url, "comment_url": f"{url}#issuecomment-5001"}
                 self.assertEqual(self.check(record), problem)
                 self.assertEqual(self.check(signin_record(1, {"context_pr_url": url})), problem)
 
@@ -152,6 +152,37 @@ class Individual(unittest.TestCase):
             for path in (individual(1), COVERAGE_PATH):
                 self.assertEqual(cla.check_record(CONFIG, path, content), "not a JSON object")
 
+    def test_the_schema_of_each_kind_is_a_whole_number_and_its_own(self) -> None:
+        """JavaScript reads 2.0 as 2, so no vector it shares can tell them apart."""
+        comment, signin = comment_record(1), signin_record(1)
+        of_signin = "unexpected or missing fields ['recorder_commit', 'sentence_sha256']"
+        for record, schema, problem in (
+            (comment, 1.0, "malformed record"),
+            (comment, True, "malformed record"),
+            (comment, 2.0, "malformed record"),
+            (signin, 2.0, of_signin),
+            (signin, 1.0, of_signin),
+            (signin, True, of_signin),
+            (signin, "2", of_signin),
+        ):
+            with self.subTest(method=record["method"], schema=schema):
+                content = dump({**record, "schema": schema})
+                self.assertIn(f'"schema": {json.dumps(schema)}'.encode(), content)
+                self.assertEqual(cla.check_record(CONFIG, individual(1), content), problem)
+
+    def test_a_number_with_a_point_is_no_number_of_a_record(self) -> None:
+        for key, problem in (
+            ("github_id", "the record does not match its path"),
+            ("version", "the version or digest is not a published one"),
+            ("recorder_run_id", "malformed record"),
+        ):
+            for record in (comment_record(1), signin_record(1)):
+                with self.subTest(key, method=record["method"]):
+                    self.assertEqual(self.check({**record, key: float(record[key])}), problem)
+        record = comment_record(1)
+        record["evidence"]["comment_id"] = 5001.0
+        self.assertEqual(self.check(record), "malformed record")
+
 
 class CoverageRecord(unittest.TestCase):
     def check(self, record: dict[str, Any]) -> str | None:
@@ -198,6 +229,7 @@ class CoverageRecord(unittest.TestCase):
         cases: tuple[dict[str, Any], ...] = (
             {"schema": 2},
             {"schema": True},
+            {"schema": 1.0},
             {"merge_sha": "d" * 39},
             {"merge_sha": "D" * 40},
             {"merge_sha": None},
@@ -206,11 +238,13 @@ class CoverageRecord(unittest.TestCase):
             {"recorded_at": "yesterday"},
             {"recorder_run_id": 0},
             {"recorder_run_id": "1"},
+            {"recorder_run_id": 1.0},
             {"github_ids": None},
             {"github_ids": {}},
             {"github_ids": [0], "versions": {"0": 1}},
             {"github_ids": [str(ALICE)]},
             {"github_ids": [True], "versions": {"True": 1}},
+            {"github_ids": [float(ALICE)], "versions": {str(float(ALICE)): 1}},
             {"github_ids": [ALICE, ALICE]},
             {"github_ids": [{}]},
             {"versions": None},
@@ -220,6 +254,7 @@ class CoverageRecord(unittest.TestCase):
             {"versions": {str(BOB): 1}},
             {"versions": {str(ALICE): 0}},
             {"versions": {str(ALICE): "1"}},
+            {"versions": {str(ALICE): 1.0}},
             {"github_ids": [2**53], "versions": {str(2**53): 1}},
         )
         for over in cases:

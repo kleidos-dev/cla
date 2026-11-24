@@ -56,6 +56,8 @@ from support import (
 from test_timestamps import UNREACHABLE
 
 DELETE = f"DELETE /applications/{APP.client_id}/grant"
+#: The digits and letters of a digest, each the wide one that is only compatible with it.
+FULL_WIDTH = {ord(c): ord(c) - 0x20 + 0xFF00 for c in "0123456789abcdef"}
 
 
 def signin(
@@ -205,7 +207,7 @@ class Sign(RegisterTest):
                 f"GET /repos/{REPO}",
                 f"GET /repos/{REPO}/issues/comments/1",
                 "POST /graphql node",
-                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}",
+                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}?ref=signatures",
                 f"GET /repos/{REGISTRY}/commits",
                 "POST /graphql repository.ref",
                 "POST /graphql createCommitOnBranch",
@@ -249,10 +251,18 @@ class Sign(RegisterTest):
             SENTENCE.replace(DIGEST[:12], DIGEST[:11] + "1"),
             SENTENCE.replace("a", "\u0430", 1),
             SENTENCE.replace(" ", "\u200b", 1),
+            # Characters that are only compatible with the sentence's own.
+            SENTENCE.replace("I", "\uff29", 1),
+            SENTENCE.replace("I", "\u2160", 1),
+            SENTENCE.replace("st", "\ufb06", 1),
+            SENTENCE.replace("s", "\u017f", 1),
+            SENTENCE.replace("256", "\u2461\u2464\u2465", 1),
+            SENTENCE.replace(DIGEST[:12], DIGEST[:12].translate(FULL_WIDTH)),
             SENTENCE_V2,
         ):
             with self.subTest(body):
                 self.setUp()
+                self.assertNotEqual(body, SENTENCE)
                 self.fake.add_comment(1, body)
                 with self.refused(
                     "the comment is not the acceptance sentence of an accepted version"
@@ -461,9 +471,7 @@ class Written(RegisterTest):
                 )
             ],
         )
-        self.assertNotIn(
-            f"GET /repos/{REGISTRY}/contents/{individual(ALICE, 'tsr')}", self.fake.calls
-        )
+        self.assertEqual([c for c in self.fake.calls if individual(ALICE, "tsr") in c], [])
 
     def test_a_first_record_looks_for_no_old_token(self) -> None:
         self.write(None, False)
@@ -533,7 +541,7 @@ class Signin(RegisterTest):
             [
                 f"GET /repos/{REPO}",
                 f"GET /repos/{REPO}/pulls/7",
-                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}",
+                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}?ref=signatures",
                 f"POST /applications/{SIGNIN_CLIENT_ID}/token",
                 "POST /graphql repository.ref",
                 "POST /graphql createCommitOnBranch",
@@ -745,7 +753,7 @@ class Signin(RegisterTest):
             [
                 f"GET /repos/{REPO}",
                 f"GET /repos/{REPO}/pulls/7",
-                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}",
+                f"GET /repos/{REGISTRY}/contents/{individual(ALICE)}?ref=signatures",
                 DELETE,
             ],
         )
@@ -838,6 +846,9 @@ class Removal(RegisterTest):
             redact_commit() | {"author": {"id": 666}},
             redact_commit() | {"author": None},
             redact_commit(message="tidy up, redact: x"),
+            redact_commit(message="redact x"),
+            redact_commit(message="redaction: x"),
+            redact_commit(message="Redact: x"),
             redact_commit() | {"commit": None},
             recorder_commit(),
             {},
@@ -1018,6 +1029,7 @@ class Stamps(RegisterTest):
         for answer, status in (
             (BAD_GATEWAY, 502),
             (ok([], 201), 201),
+            (ok({"message": "Forbidden"}, 403), 403),
             (ok({"message": "x"}), 200),
             (ok(None), 200),
         ):

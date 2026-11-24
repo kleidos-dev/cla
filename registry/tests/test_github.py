@@ -40,6 +40,8 @@ HEADERS = {
     "x-github-api-version": "2022-11-28",
     "user-agent": "kleidos-cla-recorder",
 }
+#: The statuses that are neither the answer nor "there is none", which 404 alone says.
+NOT_ANSWERED = (201, 301, 401, 403, 410, 429, 500, 502)
 #: A 200 that holds no object: what a proxy, a cut answer or a change of the API could give.
 NOT_OBJECTS: tuple[bytes, ...] = (b"", b"null", b"[]", b"1", b'"text"', b"<html>", b"{", b"\xff{}")
 
@@ -239,7 +241,7 @@ class Requests(RegisterTest):
         self.assertEqual(len(transport.calls), 50)
 
     def test_a_file_is_its_bytes_or_nothing(self) -> None:
-        transport = Once((200, b"\xff\x00", {}), NOT_FOUND, ok({}, 403))
+        transport = Once((200, b"\xff\x00", {}), NOT_FOUND)
         gh = github(transport)
         self.assertEqual(gh.file("o/n", "a/b.tsr", "main"), b"\xff\x00")
         self.assertEqual(
@@ -252,8 +254,9 @@ class Requests(RegisterTest):
             ),
         )
         self.assertIsNone(gh.file("o/n", "a/b.tsr", "main"))
-        with self.fails("reading a/b.tsr answered 403"):
-            gh.file("o/n", "a/b.tsr", "main")
+        for status in NOT_ANSWERED:
+            with self.fails(f"reading a/b.tsr answered {status}"):
+                github(Once(ok({}, status))).file("o/n", "a/b.tsr", "main")
 
     def test_graphql_gives_the_data(self) -> None:
         transport = Once(ok({"data": {"a": 1}, "errors": []}))
@@ -381,6 +384,19 @@ class Commits(RegisterTest):
         self.fake.next("POST /graphql createCommitOnBranch", Lost())
         self.assertEqual(self.commit(["signatures/individual/2.tsr"]), self.fake.head)
         self.assertEqual(len(self.fake.writes), 1)
+        # Each file is looked for in the commit just read, and that commit is the answer.
+        contents = f"GET /repos/{REGISTRY}/contents/signatures/individual"
+        self.assertEqual(
+            self.fake.calls,
+            [
+                "POST /graphql repository.ref",
+                "POST /graphql createCommitOnBranch",
+                "POST /graphql repository.ref",
+                f"{contents}/1.json?ref={self.fake.head}",
+                f"{contents}/1.tsr?ref={self.fake.head}",
+                f"{contents}/2.tsr?ref={self.fake.head}",
+            ],
+        )
 
     def test_what_another_run_wrote_there_is_not_taken_for_ours(self) -> None:
         for left in (
@@ -470,6 +486,16 @@ class CommitFacts(RegisterTest):
         self.assertEqual([v["cursor"] for v in self.sent()], [None, "c1"])
         self.assertEqual(self.facts(history_page([])), {})
 
+    def test_a_full_page_of_a_hundred_is_not_the_last(self) -> None:
+        nodes = [{**NODE, "oid": f"{n:040x}"} for n in range(203)]
+        pages = (
+            history_page(nodes[:100], True, "c1"),
+            history_page(nodes[100:200], True, "c2"),
+            history_page(nodes[200:]),
+        )
+        self.assertEqual(list(self.facts(*pages)), [n["oid"] for n in nodes])
+        self.assertEqual([v["cursor"] for v in self.sent()], [None, "c1", "c2"])
+
     def test_a_page_with_nothing_new_is_no_reason_to_ask_for_ever(self) -> None:
         reason = "GitHub's history of signatures goes on with no commit in it"
         with self.fails(reason):
@@ -529,6 +555,12 @@ class Witness(RegisterTest):
                 self.witness.comment("kleidos-dev/cla-sandbox", 5), {**found, "edited": True}
             )
 
+    def test_the_text_of_a_comment_is_as_it_was_written(self) -> None:
+        body = "  I\r\n accept\u00a0e\u0301 \n\n"
+        self.fake.add_comment(6, body)
+        found = self.witness.comment("kleidos-dev/cla-sandbox", 6)
+        self.assertEqual(found and found["body"], body)
+
     def test_a_comment_with_nothing_in_it_matches_no_record(self) -> None:
         self.fake.next("POST /graphql node", ok({"data": {"node": None}}))
         self.assertEqual(
@@ -546,26 +578,28 @@ class Witness(RegisterTest):
     def test_a_comment_that_is_gone_or_cannot_be_read(self) -> None:
         self.assertIsNone(self.witness.comment("kleidos-dev/cla-sandbox", 6))
         self.assertIsNone(self.witness.comment("kleidos-dev/other", 5))
-        self.fake.next("GET", ok({}, 500))
-        with self.fails("reading comment 5 answered 500"):
-            self.witness.comment("kleidos-dev/cla-sandbox", 5)
+        for status in NOT_ANSWERED:
+            self.fake.next("GET", ok({}, status))
+            with self.fails(f"reading comment 5 answered {status}"):
+                self.witness.comment("kleidos-dev/cla-sandbox", 5)
         for body in NOT_OBJECTS:
             self.fake.next("GET", (200, body, {}))
             with self.assertRaises(RuntimeError):
                 self.witness.comment("kleidos-dev/cla-sandbox", 5)
 
     def test_a_run_as_github_has_it(self) -> None:
-        transport = Once(ok({"id": 9}), NOT_FOUND, ok({}, 500), (200, b"[]", {}))
+        transport = Once(ok({"id": 9}), NOT_FOUND, (200, b"[]", {}))
         witness = cla.GitHubWitness(github(transport), REGISTRY)
         self.assertEqual(witness.run(9), {"id": 9})
         self.assertEqual(
             transport.calls, [("GET", f"{API}/repos/{REGISTRY}/actions/runs/9", HEADERS, None)]
         )
         self.assertIsNone(witness.run(9))
-        with self.fails("reading run 9 answered 500"):
-            witness.run(9)
         with self.fails("reading run 9 answered no object"):
             witness.run(9)
+        for status in NOT_ANSWERED:
+            with self.fails(f"reading run 9 answered {status}"):
+                cla.GitHubWitness(github(Once(ok({}, status))), REGISTRY).run(9)
 
 
 class Workflows(RegisterTest):

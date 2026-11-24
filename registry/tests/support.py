@@ -144,7 +144,8 @@ class FakeGitHub:
     known_tokens: dict[str, Any] = field(default_factory=dict)
     revoked: list[str] = field(default_factory=list)
     date: str = "Tue, 01 Dec 2026 10:22:58 GMT"
-    #: Every call, as "METHOD /path" or "POST /graphql <what the document asks for>".
+    #: Every call, as "METHOD /path" (with "?ref=" and the ref for the contents of the branch) or
+    #: "POST /graphql <what the document asks for>".
     calls: list[str] = field(default_factory=list)
     #: The answers (or exceptions) the next calls whose name starts so get instead of their own.
     upcoming: list[tuple[str, Answer | Exception]] = field(default_factory=list)
@@ -215,7 +216,8 @@ class FakeGitHub:
             "number": number,
             "merged": True,
             "merge_commit_sha": "d" * 40,
-            "created_at": "2026-12-01T08:00:00Z",
+            # On two days, and neither the day of commit(): each date has one source.
+            "created_at": "2026-11-29T08:00:00Z",
             "merged_at": "2026-12-01T09:00:00Z",
             "user": opener or {"id": ALICE, "login": "alice", "type": "User"},
         }
@@ -243,6 +245,8 @@ class FakeGitHub:
         name = f"{method} {path}"
         if path == "/graphql":
             name += f" {self._asked(data['query'])}"
+        if "/contents/" in path:
+            name += f"?{parts.query}"
         self.calls.append(name)
         assert len(self.calls) < 3000, "asked for ever"
         for i, (call, answer) in enumerate(self.upcoming):
@@ -383,13 +387,15 @@ class FakeGitHub:
             def commits(first: int, after: str | None) -> dict[str, Any]:
                 every = self.commits[number]
                 listed = every[: self.cap]
-                start = int(after or 0)
+                # As GitHub's, a cursor is only to be handed back.
+                cursors = [f"cursor-{n:04x}" for n in range(len(listed) + 1)]
+                start = 0 if after is None else cursors.index(after)
                 assert 0 < first <= 100, first
                 nodes = listed[start : start + first]
                 end = start + len(nodes)
                 return {
                     "totalCount": len(every),
-                    "pageInfo": {"hasNextPage": end < len(listed), "endCursor": str(end)},
+                    "pageInfo": {"hasNextPage": end < len(listed), "endCursor": cursors[end]},
                     "nodes": [{"commit": c} for c in nodes],
                 }
 
@@ -471,6 +477,11 @@ def context(
 # --- records -------------------------------------------------------------------
 
 
+def comment_of(gid: int) -> int:
+    """The id of an account's comment, which is another number than the account's."""
+    return 5000 + gid % 1000
+
+
 def comment_record(gid: int = 1, config: dict[str, Any] = CONFIG, **over: Any) -> dict[str, Any]:
     """A signature by comment (schema 1) that verifies."""
     version = over.get("version", 1)
@@ -486,8 +497,8 @@ def comment_record(gid: int = 1, config: dict[str, Any] = CONFIG, **over: Any) -
         "method": "web",
         "evidence": {
             "pr_url": f"https://github.com/{REPO}/pull/7",
-            "comment_url": f"https://github.com/{REPO}/pull/7#issuecomment-{gid}",
-            "comment_id": gid,
+            "comment_url": f"https://github.com/{REPO}/pull/7#issuecomment-{comment_of(gid)}",
+            "comment_id": comment_of(gid),
             "comment_body_sha256": cla.sha256(SENTENCE),
         },
         "recorded_at": "2026-12-01T10:23:02Z",
@@ -548,7 +559,7 @@ def commit(
     login: str = "alice",
     *,
     message: str = "Change",
-    date: str = "2026-12-01T10:00:00Z",
+    date: str = "2026-11-30T10:00:00Z",
     others: list[dict[str, Any]] | None = None,
     total: int | None = None,
 ) -> dict[str, Any]:
@@ -606,6 +617,22 @@ def fake_verify_tsr(
     return None if tsr == token_over(digest_hex) else "the time-stamp token does not verify"
 
 
+#: record.yml's own run-name: the title of a run of any kind but stamp.
+RUN_NAME = re.search(
+    r"^run-name: .* \|\| format\('([^']*)', (inputs\.\w+(?:, inputs\.\w+)*)\) \}\}\"$",
+    (cla.ROOT / cla.RECORD_WORKFLOW_PATH).read_text("utf-8"),
+    re.M,
+)
+
+
+def run_title(**inputs: Any) -> str:
+    """The title GitHub gives the recorder's run of these inputs; one not given is empty."""
+    assert RUN_NAME is not None, "record.yml names its runs another way"
+    names = [name.removeprefix("inputs.") for name in RUN_NAME[2].split(", ")]
+    assert set(inputs) <= set(names), inputs
+    return RUN_NAME[1].format(*(inputs.get(name, "") for name in names))
+
+
 class FakeWitness(cla.Witness):
     """The comment and the run every record cites, as GitHub would answer for a genuine record."""
 
@@ -618,9 +645,9 @@ class FakeWitness(cla.Witness):
         """Vouches for a record, whatever its kind."""
         head_sha = "0" * 40
         if record["kind"] == "coverage":
-            title = f"Record coverage {record['repo']}#{record['pr']}"
+            title = run_title(kind="coverage", repo=record["repo"], pr=record["pr"])
         elif record["schema"] == 2:
-            title = f"Record signin {REPO}#7 {record['github_id']}"
+            title = run_title(kind="signin", repo=REPO, pr=7, github_id=record["github_id"])
             head_sha = record["recorder_commit"]
         else:
             evidence = record["evidence"]
@@ -632,7 +659,7 @@ class FakeWitness(cla.Witness):
                 "pr": 7,
                 "repo": REPO,
             }
-            title = f"Record sign {REPO}#7 {evidence['comment_id']}"
+            title = run_title(kind="sign", repo=REPO, pr=7, comment_id=evidence["comment_id"])
         self.runs[record["recorder_run_id"]] = {
             "repository": {"full_name": REGISTRY},
             "path": ".github/workflows/record.yml",
