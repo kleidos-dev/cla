@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -11,7 +13,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cla
-from support import ALICE, BOB, CONFIG, REPO, coverage_record, dump
+import make_vectors
+from support import ALICE, BOB, CONFIG, NOW, REPO, VECTORS, coverage_record, dump
 
 COVERAGE_PATH = f"coverage/{REPO}/7.json"
 
@@ -91,6 +94,64 @@ class CoverageRecord(unittest.TestCase):
         for over in cases:
             with self.subTest(over):
                 self.assertEqual(self.check(coverage_record(**over)), "malformed record")
+
+
+class Vectors(unittest.TestCase):
+    """tests/vectors/records.json, which the Worker's tests read too."""
+
+    def vectors(self) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = json.loads((VECTORS / "records.json").read_text("utf-8"))[
+            "vectors"
+        ]
+        self.assertGreater(len(found), 600)
+        return found
+
+    def test_the_committed_vectors_are_what_the_schemas_and_the_verifier_give(self) -> None:
+        self.assertEqual(
+            (VECTORS / "records.json").read_text("utf-8").splitlines(),
+            make_vectors.document().splitlines(),
+            "run registry/tests/make_vectors.py",
+        )
+
+    def test_a_record_the_schema_refuses_does_not_verify(self) -> None:
+        self.assertEqual(
+            [v["name"] for v in self.vectors() if not v["shape"] and v["problem"] is None], []
+        )
+
+
+class Times(unittest.TestCase):
+    """A time that does not exist is no time, whatever the schema's pattern says."""
+
+    def test_a_record_time_is_whole_seconds_in_utc_of_a_day_that_exists(self) -> None:
+        self.assertEqual(cla.record_time("2026-12-01T10:22:58Z"), NOW.replace(minute=22, second=58))
+        self.assertEqual(
+            cla.record_time("2028-02-29T23:59:59Z"),
+            dt.datetime(2028, 2, 29, 23, 59, 59, tzinfo=dt.UTC),
+        )
+        self.assertEqual(
+            cla.record_time("0999-01-01T00:00:00Z"), dt.datetime(999, 1, 1, tzinfo=dt.UTC)
+        )
+        for text in (
+            None,
+            1,
+            "",
+            "2026-12-01",
+            "2026-12-01T10:22:58",
+            "2026-12-01T10:22:58Z\n",
+            "2026-12-01 10:22:58Z",
+            "2026-12-01T10:22:58.5Z",
+            "2026-12-01T10:22:58+00:00",
+            "2026-12-01T12:22:58+02:00",
+            "20261201T102258Z",
+            "2026-W49-2T10:22:58Z",
+            "2026-12-01T24:00:00Z",
+            "2026-12-01T10:22:60Z",
+            "2026-02-29T10:22:58Z",
+            "9999-99-99T99:99:99Z",
+            "\u0662026-12-01T10:22:58Z",
+        ):
+            with self.subTest(text):
+                self.assertIsNone(cla.record_time(text))
 
 
 if __name__ == "__main__":
