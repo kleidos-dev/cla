@@ -382,6 +382,9 @@ describe("the sign page after a posted acceptance", () => {
     expect(html).toContain(`${S.en.done.entryRecording} <a href="${signPath(p)}?lang=en">${S.en.done.checkNow}</a>`);
     expect(r.headers.getSetCookie()).toEqual([]);
     expect(/<span class="bars" aria-hidden="true">(.*?)<\/span><\/div>/.exec(html)?.[1]).toBe('<span class="done"></span><span class="done"></span>');
+    expect(html).toContain(`<p class="where">${S.en.done.whereRecording}</p>`);
+    expect(html).toContain(`<p class="status is-pending">${S.en.done.statusRecording}</p>`);
+    expect(w.gh.seen(/\/commits/)).toEqual([]);
   });
 
   it("whose comment's author GitHub no longer knows does not stand", async () => {
@@ -390,6 +393,20 @@ describe("the sign page after a posted acceptance", () => {
     const c = postComment(w, p, alice);
     w.gh.answer(new RegExp(`^GET /repos/kleidos-dev/cla-sandbox/issues/comments/${c.id}$`), () => json({ body: CONFIG.versions["1"].sentence, created_at: "a", updated_at: "a", user: null }));
     expect(await (await get(w, signPath(p), await pending(w, p, c))).text()).toContain(`<div class="card is-pending" role="alert"><p>${S.en.status.edited}</p></div>`);
+  });
+
+  it("once recorded shows the record's version, digest and time, even when the comment is gone, while signing is on another version", async () => {
+    const w = await world({ config: CONFIG_V2 });
+    const p = openPr(w, alice);
+    const c = postComment(w, p, alice);
+    await w.gh.record(c.id, 1);
+    w.gh.comments = [];
+    const cookie = await sessionHeader(w, session(alice, { pending: { repo: p.repo, pr: p.number, comment_id: c.id, comment_url: c.url, at: "2026-11-02T09:59:59Z" } }));
+    const html = await (await get(w, signPath(p), cookie)).text();
+    expect(html).toContain(`<p class="where">${S.en.done.whereRecorded}</p>`);
+    expect(html).toContain(`<p class="status is-done">${S.en.done.statusRecorded}</p>`);
+    expect(html).toContain(`<dd>1 · SHA-256 <code>${SET_1}</code></dd>`);
+    expect(html).toContain("<dd>2026-11-02T10:00:00Z</dd>");
   });
 
   it("once recorded links the record at the commit that added it, or on the branch when that commit cannot be read", async () => {
@@ -469,11 +486,12 @@ describe("the sign page after a sign-in acceptance", () => {
     expect(lost).toContain(`<dd>9 · SHA-256 <code>${CONFIG.versions["2"].set_sha256}</code></dd>`);
   });
 
-  it("once recorded shows the record's own version and time", async () => {
+  it("once recorded shows the record's own version, digest and time, not the ones handed over", async () => {
     const w = await world({ config: CONFIG_V2, signinSecrets: true });
     const p = openPr(w, alice);
     await w.gh.recordSignin(alice);
-    const html = await (await get(w, signPath(p), await pending(w, p))).text();
+    const html = await (await get(w, signPath(p), await pending(w, p, 1))).text();
+    expect(html).toContain(`<dd>2 · SHA-256 <code>${CONFIG.versions["2"].set_sha256}</code></dd>`);
     expect(html).toContain(`<title>${S.en.done.titleRecorded}</title>`);
     expect(html).toContain("<dd>2026-11-23T10:00:05Z</dd>");
     expect(w.gh.seen(/actions\/workflows/)).toEqual([]);

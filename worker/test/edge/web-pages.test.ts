@@ -66,6 +66,8 @@ describe("the agreement page", () => {
     const w = await world();
     const en = await (await call(w, "/agreement/entity")).text();
     expect(en).toContain(`<h1 class="h-page">${S.en.agreement.entityH1}</h1>`);
+    expect(en).toContain(`<title>${S.en.agreement.entityTitle}</title>`);
+    expect(en).toContain(`>${S.en.agreement.partA}</a><ol>`);
     expect(en).toContain(`<div class="card"><p>${S.en.agreement.entityNote}</p></div>\n<details`);
     expect(en).toContain(meta("en", 1, SET_1, "entity", COMMIT, COMMIT.slice(0, 12)));
     const es = await (await call(w, "/agreement/entity?lang=es")).text();
@@ -131,6 +133,7 @@ describe("the agreement page's parts", () => {
     expect(html).toContain(`<section class="prose" lang="es" aria-label="Acuerdo">${ca.html}</section>`);
     expect(html).not.toContain("SPDX");
     expect(html).toContain(`<div class="prose">${part(must(filesOf(1)["summary.es.md"]), "re").html}</div>`);
+    expect(html).toContain(`<section class="prose" lang="es" aria-label="Anexo">${part(must(filesOf(1)["addendum.es.md"]), "ad").html}</section>`);
   });
 
   it("of the entity version in Spanish shows the entity text in English, not the individual translation", async () => {

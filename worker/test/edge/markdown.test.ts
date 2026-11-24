@@ -129,6 +129,10 @@ describe("a list", () => {
     expect(html("- a\nb c")).toBe(["<ul>", "<li>", "a", "</li>", "</ul>", "<p>b c</p>"].join("\n"));
   });
 
+  it("keeps the white space that opens a line of a paragraph outside a list", () => {
+    expect(html("a\n  b")).toBe("<p>a<br>\n  b</p>");
+  });
+
   it("reads carriage returns as line ends", () => {
     expect(html("a\r\nb\rc")).toBe("<p>a<br>\nb<br>\nc</p>");
   });
