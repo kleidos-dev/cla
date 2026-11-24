@@ -23,4 +23,4 @@ exclusions = 4
 [measured]
 "scripts/create-github-app.ts" = { condition = 32, mutant = 294 }
 "scripts/create-signin-app.ts" = { condition = 47, mutant = 424 }
-"worker/scripts/check-agreement.mjs" = { condition = 14, mutant = 93 }
+"worker/scripts/check-agreement.mjs" = { condition = 14, mutant = 94 }
