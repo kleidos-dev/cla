@@ -265,13 +265,14 @@ describe("/healthz", () => {
   it("of a Worker that is not configured says so, at the version it would show", async () => {
     const w = await world({ configure: false });
     w.env.BUILD_COMMIT = "unknown";
-    // What the isolate last showed is not asked for here: a configured read first sets it to version 1.
-    await health(await world());
+    // What the isolate last showed is not asked for here: a page read of a configured register sets it to version 1
+    // (healthz reads the register too, but only a page records the version it shows).
+    expect(await shown(await world())).toBe("The text you sign · version 1");
     expect(await health(w)).toEqual({ ok: true, commit: "unknown", version: 1, set_sha256: SET_1, configured: false, signing: false, signin_app: false, reason: "not configured" });
   });
 
   it("says the register was not read, with no flow, when it cannot be read", async () => {
-    await health(await world());
+    expect(await shown(await world())).toBe("The text you sign · version 1");
     const w = await world({ config: {} });
     expect(await health(w)).toEqual({ ok: true, commit: w.env.BUILD_COMMIT, version: 1, set_sha256: SET_1, configured: true, signing: false, signin_app: false, reason: "registry not read" });
   });

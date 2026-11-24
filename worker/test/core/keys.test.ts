@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Keys } from "../../src/keys";
 import { csrfToken, csrfVerify, keysFor, open, seal } from "../../src/keys";
 import { b64urlDecode, b64urlEncode, must, utf8 } from "../../src/util";
+import { seed } from "../seed";
 
 const SECRET = b64urlEncode(new Uint8Array(32).fill(7));
 const AAD = "__Host-cla";
@@ -151,7 +152,7 @@ describe("a sealed value", () => {
       fc.asyncProperty(fc.oneof(fc.string(), fc.uint8Array({ maxLength: 80 }).map(b64urlEncode)), async (s) => {
         expect(await open(keys.session, AAD, s)).toBeNull();
       }),
-      { seed: 6 },
+      { seed: seed(6) },
     );
   });
 });

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { Config, Entity, SignatureRecord } from "../../src/registry";
 import { coveringEntity, flowOf, isSignatureRecord, recordValid } from "../../src/registry";
 import { CONFIG, CONFIG_V2 } from "../helpers";
+import { seed } from "../seed";
 
 const ID = 123456;
 type Fields = Record<string, unknown>;
@@ -175,7 +176,7 @@ describe.each([
         // What passes is exactly a value the field's own rule takes: a text or a number, never a container.
         if (isSignatureRecord(r, ID)) expect(["string", "number"]).toContain(typeof v);
       }),
-      { seed: 21, numRuns: 500 },
+      { seed: seed(21), numRuns: 500 },
     );
   });
 });
@@ -215,7 +216,7 @@ describe("what is no record at all", () => {
       fc.property(fc.jsonValue(), (v) => {
         expect(isSignatureRecord(v, ID)).toBe(false);
       }),
-      { seed: 22 },
+      { seed: seed(22) },
     );
   });
 });

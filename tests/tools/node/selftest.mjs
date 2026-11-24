@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MEASURED, ROOT, measuredAs } from "./mcdc-hook.mjs";
 import { merged, report } from "./scripts-mcdc.mjs";
-import { apply, loads, mutantsOf, sample, unlisted, verdict } from "./scripts-mut.mjs";
+import { TESTS, apply, loads, mutantsOf, sample, testedFiles, unlisted, verdict } from "./scripts-mut.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "cla-selftest-"));
 try {
@@ -77,6 +77,14 @@ try {
   assert.equal(said.length, 1, JSON.stringify(said));
   assert.match(said[0], /^mutant in worker\/scripts\/check-agreement\.mjs, .*: #!/);
 
+  // A change of the tests is for the files those tests are of, and a change of anything they run under for all of them.
+  assert.deepEqual(Object.keys(TESTS).sort(), [...MEASURED].sort());
+  assert.deepEqual(testedFiles(["scripts/test/check-agreement.test.ts"]), [["worker/scripts/check-agreement.mjs"]]);
+  assert.deepEqual(testedFiles(["scripts/test/create-signin-app.test.ts", "scripts/test/create-github-app.test.ts"]), [["scripts/create-github-app.ts", "scripts/create-signin-app.ts"]]);
+  for (const other of ["scripts/test/support.ts", "scripts/test/fake-gh", "tests/tools/node/child.mts", "worker/package-lock.json", "scripts/test/gone.test.ts"]) {
+    assert.deepEqual(testedFiles(["scripts/test/check-agreement.test.ts", other]), [["worker/scripts/check-agreement.mjs"], ["scripts/create-github-app.ts", "scripts/create-signin-app.ts"]], `${other} is for every file, after the test file's own`);
+    assert.deepEqual(testedFiles([other]), [MEASURED], `${other} alone is for every file`);
+  }
   // The sample of a changed-lines run is the same for a seed, and keeps the order.
   assert.deepEqual(sample([1, 2, 3, 4, 5, 6], 3, 7), sample([1, 2, 3, 4, 5, 6], 3, 7));
   assert.deepEqual(sample([1, 2], 3, 7), [1, 2]);

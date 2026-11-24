@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { escapeHtml, renderInline, renderMarkdown } from "../../src/markdown";
 import { readHtml } from "../readhtml";
 import { restoring } from "./support";
+import { seed } from "../seed";
 
 restoring();
 
@@ -171,7 +172,7 @@ describe("rendering any text", () => {
         expect(read.ids).toEqual(r.headings.map((h) => h.id));
         for (const id of read.ids) expect(id).toMatch(/^p[a-z0-9-]*$/);
       }),
-      { seed: 777, numRuns: 400 },
+      { seed: seed(777), numRuns: 400 },
     );
   });
 
@@ -181,7 +182,7 @@ describe("rendering any text", () => {
         const out = renderMarkdown(src).html.replace(/<\/?(?:p|ul|ol|li|h[1-6]|br|strong|em|code|a)(?: href="[^"]*")?>/g, "");
         expect(out).not.toMatch(/[<>"']/);
       }),
-      { seed: 778, numRuns: 400 },
+      { seed: seed(778), numRuns: 400 },
     );
   });
 });

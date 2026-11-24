@@ -166,6 +166,15 @@ class Json(unittest.TestCase):
             with self.subTest(data[:9]):
                 self.assertIsNone(cla.parse_json(data))
 
+    def test_a_document_too_deep_to_read_is_nothing(self) -> None:
+        # Deeper than any thread's stack holds: the decoder gives up with RecursionError, where
+        # 100,000 brackets end in a ValueError on a large stack. The first assertion keeps the
+        # input deep enough to reach that branch on every platform.
+        deep = b"[" * 10_000_000
+        with self.assertRaises(RecursionError):
+            json.loads(deep.decode())
+        self.assertIsNone(cla.parse_json(deep))
+
     def test_what_an_object_holds_inside_another(self) -> None:
         data = {"a": {"b": {"c": 1}}, "n": None, "l": [1]}
         self.assertEqual(cla.dig(data, "a", "b", "c"), 1)

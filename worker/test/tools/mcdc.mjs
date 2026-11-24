@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
 /**
- * Condition and MC/DC coverage of src/*.ts, measured inside the Workers
- * runtime. Istanbul counts that each operand of a logical expression was
+ * Condition and MC/DC coverage of every source file of src/ (sources.mjs),
+ * measured inside the Workers runtime. Istanbul counts that each operand of a logical expression was
  * reached, not that it was true and false, so a Vite transform wraps every
  * atomic condition of every decision (`if`, `while`, `for`, `?:`, and any
  * `&&`/`||` used as a value) and one evaluation leaves one vector: T or F
@@ -17,8 +17,9 @@
  * condition is held true or false, which is a mutant.
  */
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import ts from "typescript";
+import { isSource } from "./sources.mjs";
 
 const K = ts.SyntaxKind;
 
@@ -170,12 +171,12 @@ export const RUNTIME = `const __m = globalThis.__mcdc ??= (() => {
  return m;
 })();`;
 
-/** Every decision of every src/*.ts, whatever Vite serves from its cache. */
+/** Every decision of every source file (sources.mjs), whatever Vite serves from its cache. */
 export function decisionsOf(root) {
   const out = new Map();
-  for (const f of readdirSync(join(root, "src")).sort()) {
-    if (!f.endsWith(".ts") || f.endsWith(".d.ts")) continue;
-    for (const [k, d] of instrument(readFileSync(join(root, "src", f), "utf8"), `src/${f}`).decisions) out.set(k, d);
+  const files = readdirSync(join(root, "src"), { recursive: true }).map((f) => `src/${f.split(sep).join("/")}`);
+  for (const f of files.filter(isSource).sort()) {
+    for (const [k, d] of instrument(readFileSync(join(root, f), "utf8"), f).decisions) out.set(k, d);
   }
   return out;
 }
@@ -185,9 +186,9 @@ export function plugin(root) {
     name: "mcdc",
     enforce: "pre",
     transform(code, id) {
-      const path = id.split("?")[0];
-      if (!/\/src\/[^/]*\.ts$/.test(path) || path.endsWith(".d.ts")) return undefined;
-      return { code: RUNTIME + instrument(code, relative(root, path)).code, map: null };
+      const file = relative(root, id.split("?")[0]).split(sep).join("/");
+      if (!isSource(file)) return undefined;
+      return { code: RUNTIME + instrument(code, file).code, map: null };
     },
   };
 }

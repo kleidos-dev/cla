@@ -22,13 +22,17 @@ npm run check:agreement   # the digests
 npm run lint              # ESLint on the Kleidos quality kit's base
 npm run typecheck
 npm test                  # vitest in the Workers runtime, GitHub mocked
-npm run test:scripts      # the setup script against a mock
+npm run test:coverage     # the same, held to 100 %, to tests/floors and tests/exclusions, and to the number of tests
+npm run test:scripts      # the setup scripts and the agreement gate against a mock
+npm run test:workflows    # record.yml and verify.yml as GitHub runs them
 cd .. && python3 -m unittest discover -s registry/tests
 ```
 
+What each test gate measures and refuses, the mutants included, and how to run each one by hand is in [docs/testing.md](docs/testing.md).
+
 The Worker's tools need Node.js 26 or later. `npm run typecheck` runs TypeScript 7 (`tsc`, installed as `@typescript/native`); the package named `typescript` is TypeScript 6's API (`@typescript/typescript6`, with its `tsc6`), because typescript-eslint imports the compiler API by that name and TypeScript 7.0 ships none. The two names go back to one `typescript` once typescript-eslint supports TypeScript 7's API.
 
-The checks come from the Kleidos quality kit ([kleidos-dev/.github](https://github.com/kleidos-dev/.github), `docs/quality.md`): its copies and `SOURCE.json` live in `.github/quality/`, and every CI job but the Worker's tests and the setup script's test is one of its reusable workflows. With the kit checked out beside this repository, install its pinned tools and the hooks once, then run every hook on every file:
+The checks come from the Kleidos quality kit ([kleidos-dev/.github](https://github.com/kleidos-dev/.github), `docs/quality.md`): its copies and `SOURCE.json` live in `.github/quality/`, and every CI job but this repository's own tests (the Worker's, the setup scripts' and workflows', the pages' and the mutants') is one of its reusable workflows. With the kit checked out beside this repository, install its pinned tools and the hooks once, then run every hook on every file:
 
 ```sh
 python3 -m pip install --require-hashes -r ../.github/quality/requirements-tools.txt

@@ -4,6 +4,7 @@ import fc from "fast-check";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { b64urlDecode, b64urlEncode, byCodeUnits, clientIp, fromUtf8, hex, isLogin, must, normalizeSentence, nowSeconds, posInt, randomB64url, readCapped, safeEqual, sha256Hex, stripEnd, utf8 } from "../../src/util";
 import vectors from "../../../registry/tests/normalize-vectors.json";
+import { seed } from "../seed";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -27,7 +28,7 @@ describe("text and bytes", () => {
       fc.property(fc.string({ unit: "binary" }).map((s) => s.toWellFormed()), (s) => {
         expect(fromUtf8(utf8(s))).toBe(s);
       }),
-      { seed: 1 },
+      { seed: seed(1) },
     );
   });
 
@@ -90,7 +91,7 @@ describe("base64url", () => {
         expect(s).toMatch(/^[A-Za-z0-9_-]*$/);
         expect(hex(must(b64urlDecode(s)))).toBe(hex(b));
       }),
-      { seed: 2 },
+      { seed: seed(2) },
     );
   });
 
@@ -100,7 +101,7 @@ describe("base64url", () => {
         const out = b64urlDecode(s);
         expect(out === null).toBe(!/^[A-Za-z0-9_-]*$/.test(s) || /\n/.test(s) || s.length % 4 === 1);
       }),
-      { seed: 3, numRuns: 500 },
+      { seed: seed(3), numRuns: 500 },
     );
   });
 
@@ -199,7 +200,7 @@ describe("normalizeSentence", () => {
         expect(normalizeSentence(once)).toBe(once);
         expect(normalizeSentence(s.normalize("NFD"))).toBe(once);
       }),
-      { seed: 4 },
+      { seed: seed(4) },
     );
   });
 

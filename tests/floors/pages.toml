@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The tests of the sign pages in chromium (tests/pages/), and how long their
+# list may be (tests/exclusions/pages.toml, the axe violations that stay).
+# The list only shrinks: a longer one needs a dated line in [raised], such as
+# "exclusions 2026-11-24" = "why", which a maintainer reviews.
+
+# What an entry of the list excuses: an axe rule and a page.
+kinds = ["axe rule"]
+
+[misses]
+exclusions = 2
+
+[raised]
+
+# The tests that ran in each file (tests/tools/ratchet.py tests): a run that
+# ran more or fewer, skipped one or left one to do fails. A number that falls,
+# or a file that leaves, needs a dated line in a table [lowered], such as
+# "tests tests/pages/pages.test.mts 2026-11-24" = "why".
+[tests]
+"tests/pages/pages.test.mts" = 13

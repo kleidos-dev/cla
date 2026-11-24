@@ -9,7 +9,10 @@
 #                  ├─ 🐍 Register tests ──────────────┬─ 📦 Coverage reports ── 📊 SonarCloud
 #                  ├─ 🧪 Worker tests ────────────────┤
 #                  ├─ 🔑 Setup scripts and workflows ─┘
+#                  ├─ 🧬 Mutants of the changed register lines (pull requests)
+#                  ├─ 🧬 Mutants of the changed Worker lines (pull requests)
 #                  ├─ 🧬 Mutants of the changed scripts (pull requests)
+#                  ├─ 🧭 Floors and lists against the base (pull requests)
 #                  ├─ 🌐 Pages
 #                  ├─ 🛡️ Dependency vulnerabilities (OSV)
 #                  └─ 🔐 Secrets and MAC scan (gitleaks)
@@ -19,7 +22,15 @@
 # records; the kit's sync.py keeps those references. The lint job runs
 # every pre-commit hook, the agreement digests among them. The Worker's
 # vitest run, the setup scripts', workflows' and pages' tests are this
-# repository's own.
+# repository's own. Each test job holds its area at what main reaches:
+# 100 % of lines and branches (and functions, for the Worker and the
+# scripts), the conditions and lists of tests/floors and tests/exclusions,
+# and the number of tests each file ran, none skipped; the mutants of the
+# lines a pull request changes, and a sample of those its changed tests
+# are for, run here, and all of them every Monday (mutation.yml). Every
+# floor, list or threshold a pull request moves the wrong way, with its
+# dated line or without, turns its own check red. docs/testing.md says how
+# to run each one by hand.
 #
 # No job here holds a secret or writes to the repository: pull requests from
 # forks run with the read-only token like everyone else's, and the SonarCloud
@@ -82,9 +93,16 @@ jobs:
     uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d # quality-v2.3.0
     with:
       install: python -m pip install --require-hashes -r requirements.txt
+      # Every line and branch (pyproject.toml's fail_under, which coverage
+      # xml enforces), the conditions measured inside the suite
+      # (test_tools.Measured), the tests of each file held to
+      # tests/floors/register.toml (none skipped), the lines a failure
+      # misses printed.
       run: >-
-        python -m coverage run -m unittest discover -s registry/tests -v
+        python -m coverage run tests/tools/py/count.py registry/tests coverage/register-tests.json
         && python -m coverage xml
+        && python3 tests/tools/ratchet.py tests register --report coverage/register-tests.json
+        || { python -m coverage report --show-missing --skip-covered; exit 1; }
       coverage-artifact: coverage-register
     permissions:
       contents: read
@@ -117,13 +135,11 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: worker/package-lock.json
-      - name: No floor raised and no measure lowered without a dated reason
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
-          python3 tests/tools/ratchet.py base FETCH_HEAD
       - working-directory: worker
         run: npm ci
+      # Istanbul's four thresholds at 100 (vitest.config.ts), then MC/DC,
+      # then both against tests/floors and tests/exclusions, and the tests
+      # of each file against tests/floors/worker.toml.
       - name: Vitest in the Workers runtime, GitHub mocked
         working-directory: worker
         run: npm run test:coverage
@@ -156,19 +172,27 @@ jobs:
         run: npm ci
       - name: The scripts' tests, every line, branch and function
         run: >-
+          mkdir -p coverage &&
           node --test --experimental-test-coverage
           --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs'
           --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100
           --test-reporter=spec --test-reporter-destination=stdout
           --test-reporter=lcov --test-reporter-destination=scripts-lcov.info
+          --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/scripts-tests.json
           scripts/test/*.test.ts
+          && python3 tests/tools/ratchet.py tests scripts --report coverage/scripts-tests.json
       - name: The scripts' conditions (MC/DC) against their floors
         run: |
           node tests/tools/node/selftest.mjs
           node tests/tools/node/scripts-mcdc.mjs coverage/scripts-mcdc.json scripts/test/*.test.ts
           python3 tests/tools/ratchet.py check scripts --conditions coverage/scripts-mcdc.json
-      - name: The workflows' run blocks and expressions
-        run: node --test tests/workflows/*.test.mts
+      - name: The workflows' run blocks and expressions, every test of tests/floors/workflows.toml
+        run: |
+          mkdir -p coverage
+          node --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/workflows-tests.json \
+            tests/workflows/*.test.mts
+          python3 tests/tools/ratchet.py tests workflows --report coverage/workflows-tests.json
       - name: Hand the coverage report to the SonarCloud job
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -178,15 +202,18 @@ jobs:
           retention-days: 1
 
   # The mutants of the lines a pull request changes in the setup scripts and
-  # the agreement gate, 120 at most, a seeded sample past that (all of them
-  # run every Monday, mutation.yml): a survivor that
+  # the agreement gate, 120 at most, a seeded sample past that, and when it
+  # changes their tests or what those run under, 60 more of the files those
+  # tests are for first, then, for a helper or a tool, of the others, seeded
+  # by the pull request's number (all of them run
+  # every Monday, mutation.yml): a survivor that
   # tests/exclusions/scripts.toml does not list fails.
   scripts-mutants:
     name: "🧬 Mutants of the changed scripts"
     needs: [lint, reuse]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -198,11 +225,79 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - working-directory: worker
         run: npm ci
-      - name: Every mutant of the changed lines, at most 120, two at a time
+      - name: Every mutant of the changed lines, at most 120, and 60 for changed tests, two at a time
+        env:
+          SEED: ${{ github.event.pull_request.number }}
         run: |
           git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
-          node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 120 --workers 2 --timeout 60
+          python3 tests/tools/limited.py 780 6 -- node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 120 --tests-max 60 --seed "$SEED" --workers 2 --timeout 60
           node tests/tools/node/scripts-mut.mjs --listed coverage/scripts-mutation.json
+
+  # The mutants of the lines a pull request changes in registry/cla.py, 120
+  # at most, a seeded sample past that, and when it changes the tests or
+  # what they run under, 120 more: of the statements the changed test
+  # modules run first, then, for a helper or a tool, of the others, seeded
+  # by the pull request's number; each in a process of its own with a time and a memory
+  # limit (all of them run every Monday, mutation.yml): a survivor that
+  # tests/exclusions/register.toml does not list fails.
+  register-mutants:
+    name: "🧬 Mutants of the changed register lines"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Every mutant of the changed lines, at most 120, and 120 for changed tests, two at a time
+        env:
+          SEED: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          python3 tests/tools/limited.py 480 6 -- python3 tests/tools/py/mutate.py registry/cla.py registry/tests --since FETCH_HEAD --sample 120 --tests-sample 120 --seed "$SEED" --workers 2 --list tests/exclusions/register.toml
+
+  # The mutants of the lines a pull request changes in worker/src, as
+  # test/tools/changed.mjs picks them (120 at most, a seeded choice past
+  # that), and when it changes the tests or what they run under, 80 more of
+  # the sources the changed test files name first, then, for a helper or a
+  # tool, of the others, seeded by the pull request's number (all of them run every Monday, mutation.yml), planted by
+  # StrykerJS in the Workers runtime: a survivor that the list of its area
+  # does not name fails.
+  worker-mutants:
+    name: "🧬 Mutants of the changed Worker lines"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every mutant of the changed lines, at most 120, and 80 for changed tests, two at a time
+        working-directory: worker
+        env:
+          SEED: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          mutate="$(node test/tools/changed.mjs --since FETCH_HEAD --max 120 --tests-max 80 --seed "$SEED")"
+          if [ -z "$mutate" ]; then
+            echo "No mutant on the lines this pull request changes in worker/src, and no change to its tests."
+            exit 0
+          fi
+          python3 ../tests/tools/limited.py 1020 6 -- npx --no-install stryker run --mutate "$mutate" --concurrency 2
+          python3 ../tests/tools/ratchet.py listed worker-core --mutants coverage/mutation.json
+          python3 ../tests/tools/ratchet.py listed worker-edge --mutants coverage/mutation.json
 
   # The sign pages in chromium, behind a network fence (tests/pages/).
   pages:
@@ -224,8 +319,37 @@ jobs:
       - name: Chromium, the build playwright-core pins
         working-directory: worker
         run: npx --no-install playwright-core install --with-deps chromium
-      - name: Every page in every variant, and the sign-in round trip
-        run: node --test tests/pages/pages.test.mts
+      - name: Every page in every variant, and the sign-in round trip, every test of tests/floors/pages.toml
+        run: |
+          mkdir -p coverage
+          node --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/pages-tests.json \
+            tests/pages/pages.test.mts
+          python3 tests/tools/ratchet.py tests pages --report coverage/pages-tests.json
+
+  # What a pull request moves the wrong way in tests/floors, tests/exclusions
+  # and the thresholds of 100: a floor raised, a number of what there is to
+  # measure or of tests lowered, an entry added to a list, a threshold
+  # lowered. With no dated line it is refused outright (base); with one it is
+  # still named, as a warning and on the run's page, and this check is red
+  # (moved), so that an accepted fall is merged by a maintainer who sees it
+  # and overrides it on purpose, never by a quiet green.
+  floors:
+    name: "🧭 Floors and lists against the base"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The base revision
+        run: git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+      - name: No floor raised, no measure or test lowered, no threshold lowered without a dated line
+        run: python3 tests/tools/ratchet.py base FETCH_HEAD
+      - name: Nothing moved the wrong way, with a line or without
+        run: python3 tests/tools/ratchet.py moved FETCH_HEAD
 
   # The two reports in the one artifact the SonarCloud job reads.
   coverage:

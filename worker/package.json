@@ -13,16 +13,16 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ../scripts/tsconfig.json",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage && npm run test:conditions && npm run test:ratchet",
+    "test:coverage": "vitest run --coverage --reporter=default --reporter=json --outputFile.json=coverage/tests.json && npm run test:conditions && npm run test:ratchet",
     "test:conditions": "node test/tools/selftest.mjs && vitest run -c vitest.mcdc.config.mjs",
-    "test:ratchet": "python3 ../tests/tools/ratchet.py check worker-core --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json && python3 ../tests/tools/ratchet.py check worker-edge --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json",
+    "test:ratchet": "python3 ../tests/tools/ratchet.py check worker-core --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json && python3 ../tests/tools/ratchet.py check worker-edge --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json && python3 ../tests/tools/ratchet.py tests worker --report coverage/tests.json",
     "test:forced": "node test/tools/force.mjs",
     "test:mutation": "stryker run",
     "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && git verify-commit HEAD && git fetch --quiet origin main && git merge-base --is-ancestor HEAD origin/main && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
-    "test:scripts": "cd .. && node --test --experimental-test-coverage --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs' --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 scripts/test/*.test.ts && node tests/tools/node/selftest.mjs && node tests/tools/node/scripts-mcdc.mjs coverage/scripts-mcdc.json scripts/test/*.test.ts && python3 tests/tools/ratchet.py check scripts --conditions coverage/scripts-mcdc.json",
+    "test:scripts": "cd .. && mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs' --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/scripts-tests.json scripts/test/*.test.ts && python3 tests/tools/ratchet.py tests scripts --report coverage/scripts-tests.json && node tests/tools/node/selftest.mjs && node tests/tools/node/scripts-mcdc.mjs coverage/scripts-mcdc.json scripts/test/*.test.ts && python3 tests/tools/ratchet.py check scripts --conditions coverage/scripts-mcdc.json",
     "test:scripts-mutation": "cd .. && node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60 && python3 tests/tools/ratchet.py check scripts --mutants coverage/scripts-mutation.json",
-    "test:workflows": "node --test ../tests/workflows/*.test.mts",
-    "test:pages": "node --test ../tests/pages/pages.test.mts"
+    "test:workflows": "cd .. && mkdir -p coverage && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/workflows-tests.json tests/workflows/*.test.mts && python3 tests/tools/ratchet.py tests workflows --report coverage/workflows-tests.json",
+    "test:pages": "cd .. && mkdir -p coverage && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/pages-tests.json tests/pages/pages.test.mts && python3 tests/tools/ratchet.py tests pages --report coverage/pages-tests.json"
   },
   "devDependencies": {
     "@actions/expressions": "0.3.62",

@@ -10,6 +10,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import type { QueueMessage } from "../../src/messages";
 import { isRepoName, parseMessage } from "../../src/messages";
+import { seed } from "../seed";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPO = "kleidos-dev/cla-sandbox";
@@ -132,7 +133,7 @@ describe("parseMessage over generated input", () => {
       fc.property(message, (m) => {
         expect(parseMessage(JSON.parse(JSON.stringify(m)))).toEqual(m);
       }),
-      { seed: 2026, numRuns: 500 },
+      { seed: seed(2026), numRuns: 500 },
     );
   });
 
@@ -142,7 +143,7 @@ describe("parseMessage over generated input", () => {
         const m = parseMessage(v);
         if (m !== null) expect(parseMessage(m)).toEqual(m);
       }),
-      { seed: 2027, numRuns: 1000 },
+      { seed: seed(2027), numRuns: 1000 },
     );
   });
 });

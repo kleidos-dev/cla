@@ -19,6 +19,14 @@ A whole campaign runs under a memory and a time limit (AGENTS.md), with two work
 
     python tests/tools/py/mutate.py registry/cla.py registry/tests \\
         --list tests/exclusions/register.toml
+
+``--since REVISION`` keeps the mutants of the lines changed since a revision (a pull request's), and
+``--sample`` caps them with a notice. ``--tests-sample N`` adds, when the change touches the suite
+or what it runs under (``TESTED_BY``), a seeded sample of at most N other mutants: of the statements
+the changed test modules run, or of the whole module for a change of a helper, a fixture or a tool
+(a test that checks less kills fewer mutants and runs the same lines). ``--merged`` reads the
+``--out`` reports of the shards of one campaign instead of running one: they must hold every mutant
+once, and the list is then judged as for a whole run, a stale entry included.
 """
 
 from __future__ import annotations
@@ -529,12 +537,91 @@ def choose(mutator: Mutator, args: argparse.Namespace) -> list[Mutant]:
     if args.lines:
         low, high = (int(x) for x in args.lines.split("-"))
         chosen = [m for m in chosen if low <= int(described[id(m)]["line"]) <= high]
+    if args.since:
+        changed = changed_lines(mutator.source.path, args.since)
+        chosen = [m for m in chosen if int(described[id(m)]["line"]) in changed]
     if args.shard:
         number, of = (int(x) for x in args.shard.split("/"))
         chosen = chosen[number - 1 :: of]
     if args.sample and args.sample < len(chosen):
+        print(
+            f"notice: {args.sample} of {len(chosen)} mutants, a sample by seed {args.seed}",
+            flush=True,
+        )
         chosen = random.Random(args.seed).sample(chosen, args.sample)  # noqa: S311  no secret
     return chosen
+
+
+#: What the suite runs under besides its own folder, from the root of the repository: a change to
+#: any of these is a change to every test.
+TESTED_BY = ("tests/tools/py", "pyproject.toml", "requirements.txt", ".python-version")
+
+
+def changed_tests(tests: Path, since: str) -> tuple[set[str], bool]:
+    """The test modules whose files changed since a revision, by name, and whether anything else
+    the suite reads or runs under changed too (a helper, a fixture, a vector, a tool), which is
+    every test."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tests, capture_output=True, text=True, check=True
+        ).stdout
+
+    root = Path(git("rev-parse", "--show-toplevel").strip())
+    paths = [str(root / p) for p in TESTED_BY]
+    changed = git("diff", "--name-only", "--no-renames", since, "--", str(tests), *paths).split()
+    modules, every = set(), False
+    for name in changed:
+        path = root / name
+        if path.parent == tests and re.fullmatch(r"test_\w+\.py", path.name):
+            modules.add(path.stem)
+        else:
+            every = True
+    return modules, every
+
+
+def tests_sample(
+    mutator: Mutator, chosen: list[Mutant], reach: Reach, changed: tuple[set[str], bool], args: Any
+) -> list[Mutant]:
+    """At most ``--tests-sample`` mutants besides the chosen ones, drawn by the seed: of the
+    statements the changed test modules run first, then, for a change of every test, of the rest
+    with what is left, so that a helper touched beside a weakened module does not spread it thin."""
+    modules, every = changed
+    taken = {id(m) for m in chosen}
+
+    def theirs(m: Mutant) -> bool:
+        return any(t.split(".")[0] in modules for t in reach.tests(mutator.lines(m)))
+
+    pool = [m for m in mutator.mutants if id(m) not in taken]
+    named = [m for m in pool if theirs(m)]
+    rest = [m for m in pool if not theirs(m)] if every else []
+    picked: list[Mutant] = []
+    for which, tier in ((", ".join(sorted(modules)), named), ("every test", rest)):
+        n = min(args.tests_sample - len(picked), len(tier))
+        if tier and n > 0:
+            picked += random.Random(args.seed).sample(tier, n)  # noqa: S311  no secret
+            # Flushed now: the processes forked from here would otherwise take the line with them.
+            print(
+                f"notice: {n} of the {len(tier)} other mutants {which} runs, seed {args.seed}",
+                flush=True,
+            )
+    return picked
+
+
+def changed_lines(path: Path, since: str) -> set[int]:
+    """The lines (from 1) of a file that differ from a revision, by git's own diff."""
+    diff = subprocess.run(
+        ["git", "diff", "--unified=0", since, "--", path.name],
+        cwd=path.parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    lines: set[int] = set()
+    for m in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", diff, re.MULTILINE):
+        start = int(m[1])
+        lines.update(range(start, start + int(m[2] or "1")))
+    return lines
 
 
 KEYS = ("function", "on", "text", "operator", "replacement")
@@ -555,25 +642,46 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--shard", help="a part of them: NUMBER/OF")
     ap.add_argument("--sample", type=int, help="at most so many of them, at random")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--since", help="only the lines changed since this revision")
+    ap.add_argument(
+        "--tests-sample",
+        type=int,
+        default=0,
+        help="with --since, so many for a change of the tests",
+    )
     ap.add_argument("--count", action="store_true", help="say how many there are and stop")
     ap.add_argument("--out", type=Path, help="every outcome, as JSON")
+    ap.add_argument("--merged", type=Path, nargs="+", help="judge a campaign's shards as one")
     args = ap.parse_args(argv)
     source, tests = Source(args.module.resolve()), args.tests.resolve()
     mutator = Mutator(source)
-    chosen = choose(mutator, args)
-    counts = collections.Counter(m.operator for m in chosen)
-    print(f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}")
-    if args.count:
-        return 0
     file = args.module.as_posix()
     try:
         listed = entries(args.list, "mutant", file) if args.list else []
     except ValueError as e:
         print(e)
         return 2
+    if args.merged:
+        return merged(mutator, args.merged, listed, file)
+    chosen = choose(mutator, args)
     os.environ["REGISTER_MEASURED"] = "1"  # the tests of this tool do not run in it
+    changed = (
+        changed_tests(tests, args.since) if args.since and args.tests_sample else (set(), False)
+    )
+    reach = reach_of(source, tests) if changed != (set(), False) else None
+    if reach is not None:
+        chosen += tests_sample(mutator, chosen, reach, changed, args)
+    counts = collections.Counter(m.operator for m in chosen)
+    print(
+        f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}",
+        flush=True,
+    )
+    if args.count:
+        return 0
+    if not chosen:
+        return judge([], listed, file, whole=not mutator.mutants)
     begun = time.monotonic()
-    reach = reach_of(source, tests)
+    reach = reach or reach_of(source, tests)
     outcomes = campaign(source, mutator, chosen, reach, tests, args)
     found = [
         {**mutator.describe(o.mutant), "file": file, "result": o.result, "seconds": o.seconds}
@@ -584,6 +692,11 @@ def main(argv: list[str] | None = None) -> int:
     results = collections.Counter(o.result for o in outcomes)
     took = time.monotonic() - begun
     print(f"{dict(sorted(results.items()))} in {took:.0f} s")
+    return judge(found, listed, file, whole=len(chosen) == len(mutator.mutants))
+
+
+def judge(found: list[dict[str, Any]], listed: list[dict[str, Any]], file: str, whole: bool) -> int:
+    """Every mutant that stayed is listed; and, for a whole campaign, every entry still stays."""
     stayed = [
         {k: str(v) for k, v in f.items()}
         for f in found
@@ -595,10 +708,27 @@ def main(argv: list[str] | None = None) -> int:
             f"{m['result']}: {file}:{m['line']} {m['function']}: {m['operator']}: {m['text']!r} "
             f"-> {m['replacement']!r} on {m['on']!r}"
         )
-    whole = len(chosen) == len(mutator.mutants)
     for s in stale if whole else ():
         print(f"listed and killed, or gone: {s['function']}: {s['text']} -> {s['replacement']}")
     return 1 if unlisted or (stale and whole) else 0
+
+
+def merged(mutator: Mutator, reports: list[Path], listed: list[dict[str, Any]], file: str) -> int:
+    """The shards of one campaign, judged as the whole campaign they must add up to."""
+    found = [f for report in reports for f in json.loads(report.read_text("utf-8"))]
+
+    def key(d: dict[str, Any]) -> tuple[str, ...]:
+        return tuple(str(d[k]) for k in (*KEYS, "line"))
+
+    every = collections.Counter(key(mutator.describe(m)) for m in mutator.mutants)
+    held = collections.Counter(key(f) for f in found)
+    results = collections.Counter(f["result"] for f in found)
+    print(f"{len(found)} of {len(mutator.mutants)} mutants: {dict(sorted(results.items()))}")
+    if held != every:
+        missing, more = (every - held).total(), (held - every).total()
+        print(f"the reports miss {missing} mutants and hold {more} more")
+        return 1
+    return judge(found, listed, file, whole=True)
 
 
 if __name__ == "__main__":
