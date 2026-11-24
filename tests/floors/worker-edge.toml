@@ -38,5 +38,5 @@ exclusions = 69
 "worker/src/markdown.ts" = { line = 131, branch = 100, function = 24, condition = 52, forced = 104, mutant = 394 }
 "worker/src/messages.ts" = { line = 23, branch = 65, function = 4, condition = 35, forced = 70, mutant = 153 }
 "worker/src/texts.ts" = { line = 82, branch = 74, function = 21, condition = 37, forced = 74, mutant = 204 }
-"worker/src/web.ts" = { line = 344, branch = 376, function = 70, condition = 173, forced = 346, mutant = 1018 }
+"worker/src/web.ts" = { line = 344, branch = 378, function = 70, condition = 173, forced = 346, mutant = 1018 }
 "worker/src/webhook.ts" = { line = 75, branch = 126, function = 9, condition = 62, forced = 124, mutant = 380 }
