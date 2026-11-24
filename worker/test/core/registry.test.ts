@@ -294,6 +294,15 @@ describe("the recorder", () => {
     expect(Object.keys(must(w.gh.dispatches[0]))).toHaveLength(8);
   });
 
+  it("is refused by the fake, as by GitHub, an input record.yml does not declare, a kind off its options, or no kind", async () => {
+    const token = await registry.gh.token([registry.repo], { actions: "write" });
+    const send = (inputs: Record<string, string>) => registry.gh.request("POST", "/repos/kleidos-dev/cla/actions/workflows/record.yml/dispatches", { token }, { ref: "main", inputs });
+    for (const inputs of [{ kind: "sign", repo: SANDBOX, pr: "7", comment_ids: "99" }, { kind: "redact", repo: SANDBOX, pr: "7" }, { repo: SANDBOX, pr: "7" }]) await expect(send(inputs)).rejects.toBeTruthy();
+    expect(w.gh.strays).toEqual(Array(3).fill("POST api.github.com/repos/kleidos-dev/cla/actions/workflows/record.yml/dispatches: inputs record.yml does not declare"));
+    expect(w.gh.dispatches).toEqual([]);
+    w.gh.strays.length = 0;
+  });
+
   it("that cannot be dispatched is an error", async () => {
     w.gh.answer(DISPATCH, () => new Response(null, { status: 422 }));
     await expect(registry.dispatchRecorder({ kind: "coverage", repo: SANDBOX, pr: 7 })).rejects.toMatchObject({ kind: "unprocessable" });

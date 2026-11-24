@@ -10,7 +10,7 @@
  * Nothing reaches a network or a real GitHub, git, gh or python.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +40,7 @@ export interface Job {
   environment?: string;
   permissions?: Record<string, string>;
   "timeout-minutes"?: number;
+  "runs-on"?: string;
   steps?: Step[];
   with?: Record<string, unknown>;
 }
@@ -141,7 +142,23 @@ export interface Ran {
   done: () => void;
 }
 
-const BASH = process.env.CLA_TEST_BASH ?? "bash";
+/**
+ * bash by its absolute path, as the test's PATH finds it: a block runs with a PATH of its own
+ * (`<stubs>:/usr/bin:/bin`), where the bare name would find another bash than the one checked here.
+ */
+function onPath(name: string): string {
+  if (name.includes("/")) return name;
+  for (const dir of (process.env.PATH ?? "").split(":").filter(Boolean)) {
+    try {
+      accessSync(join(dir, name), constants.X_OK);
+      return join(dir, name);
+    } catch {
+      // Not in this folder.
+    }
+  }
+  throw new Error(`no ${name} on PATH: set CLA_TEST_BASH to a bash 4 or later`);
+}
+export const BASH = onPath(process.env.CLA_TEST_BASH ?? "bash");
 /** The mark of bash's trace lines (PS4), which no block prints. */
 const TRACE = "cla-trace:";
 const version = spawnSync(BASH, ["-c", "echo ${BASH_VERSINFO[0]}"], { encoding: "utf8" }).stdout.trim();

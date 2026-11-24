@@ -9,7 +9,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { codeLines, failures, holds, lineMutants, step, stepEnv, workflow } from "./support.mts";
 import type { Case, Ran } from "./support.mts";
@@ -19,12 +19,38 @@ const HEX = "89abcdef0123456789abcdef0123456789abcdef";
 const NEXT = "0123456789abcdef0123456789abcdef01234567";
 const context = (event: string) => ({ github: { event_name: event, token: "ghs_madeUpJobToken", server_url: "https://github.com", repository: "kleidos-dev/cla", run_id: "77" } });
 const calls = (r: Ran, cmd: string) => r.calls.filter((c) => c.cmd === cmd).map((c) => c.args);
+/** What starts the workflow (its `on:`, pinned below). */
+const EVENTS = ["workflow_run", "schedule", "workflow_dispatch"];
 const marker = (r: Ran, name: string) => (existsSync(join(r.cwd, ".verify", name)) ? readFileSync(join(r.cwd, ".verify", name), "utf8") : null);
 
 describe("the triggers and the job", () => {
   it("runs after a Record run, weekly and by hand, one run at a time, never cancelled", () => {
     assert.deepEqual(wf.on, { workflow_run: { workflows: ["Record"], types: ["completed"] }, schedule: [{ cron: "41 5 * * 1" }], workflow_dispatch: null });
     assert.deepEqual(wf.concurrency, { group: "verify", "cancel-in-progress": false });
+  });
+
+  it("has these keys and no other at the top, in its job and in each step", () => {
+    assert.deepEqual(Object.keys(wf), ["name", "on", "permissions", "concurrency", "jobs"]);
+    assert.deepEqual(Object.keys(wf.jobs), ["verify"]);
+    assert.deepEqual(Object.keys(wf.jobs.verify!), ["name", "runs-on", "timeout-minutes", "permissions", "steps"]);
+    assert.deepEqual(
+      wf.jobs.verify!.steps!.map((x) => [x.name ?? x.uses!.replace(/@.*/, ""), Object.keys(x)]),
+      [
+        ["actions/checkout", ["uses", "with"]],
+        ["Fetch the signatures branch", ["name", "run"]],
+        ["Restore the last cross-checked commit", ["name", "uses", "with"]],
+        ["Verify", ["name", "env", "run"]],
+        ["Keep the cross-checked commit for the next run", ["name", "uses", "with"]],
+        ["Report the problems", ["name", "if", "env", "run"]],
+      ],
+    );
+  });
+
+  it("no step may fail and pass all the same, and the job runs on GitHub's own runner", () => {
+    const job = wf.jobs.verify!;
+    assert.equal(job["runs-on"], "ubuntu-latest");
+    assert.ok(!Object.hasOwn(job, "continue-on-error"));
+    for (const x of job.steps!) assert.ok(!Object.hasOwn(x, "continue-on-error"), x.name ?? x.uses ?? "");
   });
 
   it("reads the code and the runs, and may only open an issue", () => {
@@ -39,9 +65,11 @@ describe("the triggers and the job", () => {
     const save = wf.jobs.verify!.steps!.find((s) => s.uses?.startsWith("actions/cache/save@"))!;
     assert.deepEqual(restore.with, { path: ".verify", key: "verified-${{ github.run_id }}", "restore-keys": "verified-" });
     assert.deepEqual(save.with, { path: ".verify", key: "verified-${{ github.run_id }}" });
-    // The save runs only when the verification passed (no if: means success()).
-    assert.equal(holds(save.if, context("schedule"), { failed: false }), true);
-    assert.equal(holds(save.if, context("schedule"), { failed: true }), false);
+    // The save runs only when the verification passed (no if: means success()), whatever started the run.
+    for (const event of EVENTS) {
+      assert.equal(holds(save.if, context(event), { failed: false }), true, event);
+      assert.equal(holds(save.if, context(event), { failed: true }), false, event);
+    }
   });
 });
 
@@ -126,8 +154,14 @@ describe("the verification", () => {
     },
   ];
 
+  // Run once for both tests, before either: each passes alone, filtered or shuffled.
+  let found: string[] = [];
+  before(() => {
+    found = failures(text, cases, seen);
+  });
+
   it("passes the right arguments for each state of the cache and moves the marker only after a pass", () => {
-    assert.deepEqual(failures(text, cases, seen), []);
+    assert.deepEqual(found, []);
   });
 
   it("every code line ran, and deleting any one of them fails a case", () => {
@@ -143,9 +177,11 @@ describe("the verification", () => {
 describe("the report of a failed verification", () => {
   const block = step(wf, "verify", "Report the problems");
 
-  it("runs only when a step before failed", () => {
-    assert.equal(holds(block.if, context("schedule"), { failed: true }), true);
-    assert.equal(holds(block.if, context("schedule"), { failed: false }), false);
+  it("runs only when a step before failed, whatever started the run", () => {
+    for (const event of EVENTS) {
+      assert.equal(holds(block.if, context(event), { failed: true }), true, event);
+      assert.equal(holds(block.if, context(event), { failed: false }), false, event);
+    }
   });
 
   it("opens one issue in this repository with the run", () => {

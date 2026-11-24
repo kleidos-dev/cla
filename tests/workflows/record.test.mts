@@ -7,9 +7,10 @@
  * real text of the workflow. Every code line of every block runs, and
  * every one of them, deleted, makes a case fail.
  */
-import { describe, it } from "node:test";
+import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { codeLines, failures, holds, lineMutants, runBlock, step, stepEnv, template, without, workflow } from "./support.mts";
+import { RECORD_INPUTS } from "../../worker/test/record-inputs.ts";
+import { codeLines, failures, holds, lineMutants, runBlock, step, stepEnv, strings, template, without, workflow } from "./support.mts";
 import type { Case, Ran } from "./support.mts";
 
 const wf = workflow("record.yml");
@@ -77,6 +78,66 @@ describe("which job runs", () => {
   });
 });
 
+describe("what other code depends on", () => {
+  it("is named Record, the name verify.yml's workflow_run starts after", () => {
+    assert.equal(wf.name, "Record");
+    assert.deepEqual(workflow("verify.yml").on.workflow_run, { workflows: [wf.name], types: ["completed"] });
+  });
+
+  it("runs by dispatch and on the daily stamp schedule, and nothing else", () => {
+    assert.deepEqual(Object.keys(wf.on), ["workflow_dispatch", "schedule"]);
+    assert.deepEqual(wf.on.schedule, [{ cron: "23 4 * * *" }]);
+  });
+
+  it("declares the inputs the Worker and the owner dispatch with: their names, types, options and defaults", () => {
+    const declared = (wf.on.workflow_dispatch as { inputs: Record<string, Record<string, unknown>> }).inputs;
+    const text = { type: "string", required: false, default: "" };
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(declared).map(([k, { description: _, ...v }]) => [k, v])),
+      { kind: { type: "choice", options: ["sign", "coverage", "signin", "stamp"], required: true }, repo: text, pr: text, comment_id: text, github_id: text, version: text, lang: text, site_commit: text, signin_token: text },
+    );
+    // The fake GitHub of the Worker's and the pages' tests refuses a dispatch with any input this file does not declare.
+    assert.deepEqual(Object.fromEntries(Object.entries(declared).map(([k, v]) => [k, (v.options as string[] | undefined) ?? null])), RECORD_INPUTS);
+  });
+});
+
+describe("the shape of the file", () => {
+  it("has these keys and no other at the top, in each job and in each step", () => {
+    assert.deepEqual(Object.keys(wf), ["name", "run-name", "on", "permissions", "concurrency", "jobs"]);
+    const job = ["name", "if", "runs-on", "timeout-minutes", "permissions", "steps"];
+    assert.deepEqual(Object.fromEntries(Object.entries(wf.jobs).map(([n, j]) => [n, Object.keys(j)])), { record: job, signin: ["name", "if", "runs-on", "timeout-minutes", "environment", "permissions", "steps"], stamp: job });
+    const steps = Object.fromEntries(Object.entries(wf.jobs).map(([n, j]) => [n, j.steps!.map((x) => [x.name ?? x.uses!.replace(/@.*/, ""), Object.keys(x)])]));
+    assert.deepEqual(steps, {
+      record: [
+        ["actions/checkout", ["uses", "with"]],
+        ["Record", ["name", "id", "env", "run"]],
+        ["Report a merged pull request the register cannot cover", ["name", "if", "env", "run"]],
+      ],
+      signin: [
+        ["actions/checkout", ["uses", "with"]],
+        ["Record", ["name", "env", "run"]],
+      ],
+      stamp: [
+        ["actions/checkout", ["uses", "with"]],
+        ["Stamp", ["name", "env", "run"]],
+      ],
+    });
+  });
+
+  it("no job or step may fail and pass all the same, and every job runs on GitHub's own runner", () => {
+    for (const [n, j] of Object.entries(wf.jobs)) {
+      assert.equal(j["runs-on"], "ubuntu-latest", n);
+      assert.ok(!Object.hasOwn(j, "continue-on-error"), n);
+      for (const x of j.steps!) assert.ok(!Object.hasOwn(x, "continue-on-error"), `${n}/${x.name ?? x.uses ?? ""}`);
+    }
+  });
+
+  it("only the recorder reads the event payload, which holds the sign-in token", () => {
+    const code = (text: string) => text.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+    for (const [where, text] of strings(wf.jobs)) assert.doesNotMatch(code(text), /GITHUB_EVENT_PATH|github\.event\b/, where);
+  });
+});
+
 describe("what a run shows", () => {
   const combos = [
     context("workflow_dispatch", { kind: "sign", repo: "kleidos-dev/cla", pr: "7", comment_id: "5" }),
@@ -110,6 +171,19 @@ describe("what a run shows", () => {
     const text = JSON.stringify({ ...wf, on: null });
     assert.doesNotMatch(text, /signin_token|github\.event\.inputs|toJSON\(inputs\)|toJSON\(github/);
     assert.ok(Object.hasOwn((wf.on.workflow_dispatch as { inputs: object }).inputs, "signin_token"));
+  });
+
+  it("no expression anywhere in the file yields the sign-in token: job env, job name, with:, run name or group", () => {
+    const given = { kind: "signin", repo: "kleidos-dev/cla", pr: "7", github_id: "123", version: "2", lang: "es", site_commit: HEX, signin_token: TOKEN };
+    const c = context("workflow_dispatch", given);
+    const everything = { ...c, github: { ...c.github, event: { inputs: inputs(given) } }, steps: { record: { outputs: { refused: "true" } } }, env: {}, job: {}, runner: {}, vars: {}, matrix: {}, strategy: {}, needs: {} };
+    let evaluated = 0;
+    for (const [where, text] of strings({ ...wf, on: null })) {
+      if (!text.includes("${{")) continue;
+      evaluated++;
+      assert.ok(!template(text, everything).includes(TOKEN), where);
+    }
+    assert.ok(evaluated >= 20, String(evaluated));
   });
 
   it("the sign-in app's secret reaches the sign-in job's recorder and nothing else", () => {
@@ -195,8 +269,14 @@ describe("the recorder's step (sign and coverage)", () => {
     },
   ];
 
+  // Run once for both tests, before either: each passes alone, filtered or shuffled.
+  let found: string[] = [];
+  before(() => {
+    found = failures(text, cases, ran("record"));
+  });
+
   it("passes the arguments byte for byte, refuses every input off its pattern, and maps the exit codes", () => {
-    assert.deepEqual(failures(text, cases, ran("record")), []);
+    assert.deepEqual(found, []);
   });
 
   it("every code line ran, and deleting any one of them fails a case, but the listed ones", () => {
@@ -254,8 +334,10 @@ describe("the sign-in recorder's step", () => {
     passes("a sign-in", good),
     passes("the edges of each field", { ...good, github_id: "999999999999999", version: "9999", lang: "en" }),
     passes("the smallest of each", { ...good, github_id: "1", version: "1", pr: "1" }),
-    refused("repo", "a/b c", "bad repository"),
-    refused("pr", "0", "bad pull request number"),
+    passes("the longest owner, name and number", { ...good, repo: `${"a".repeat(38)}-/${"n._-".repeat(25)}`, pr: "9999999999" }),
+    // The same repositories and numbers the recorder's step refuses.
+    ...[`${"a".repeat(40)}/x`, `a/${"n".repeat(101)}`, "a.b/c", "/c", "a/", "abc", "a/b/c", "a/b\nc/d", "a/b;touch x", "a/b ", "a/b c", ""].map((v) => refused("repo", v, "bad repository")),
+    ...["0", "07", "12345678901", "-7", "\u0667", ""].map((v) => refused("pr", v, "bad pull request number")),
     refused("github_id", "0", "bad account id"),
     refused("github_id", "1".repeat(16), "bad account id"),
     refused("github_id", "", "bad account id"),
@@ -285,8 +367,13 @@ describe("the sign-in recorder's step", () => {
     },
   ];
 
+  let found: string[] = [];
+  before(() => {
+    found = failures(text, cases, ran("signin"));
+  });
+
   it("passes every field byte for byte and refuses each one off its pattern, alone", () => {
-    assert.deepEqual(failures(text, cases, ran("signin")), []);
+    assert.deepEqual(found, []);
   });
 
   it("every code line ran, and deleting any one of them fails a case, but the listed ones", () => {
@@ -310,6 +397,12 @@ describe("the stamp", () => {
 });
 
 describe("the recorder's step, a line that bash never runs is not missed", () => {
+  it("runs every block under the bash whose version was checked, 4 or later, whatever bash the block's PATH finds", () => {
+    const r = runBlock('echo "${BASH_VERSINFO[0]}"\n', {}, {});
+    r.done();
+    assert.ok(Number(r.stdout.trim()) >= 4, r.stdout);
+  });
+
   it("the trace sees every command of a block, nested or not", () => {
     const r = runBlock("a=1\nif [[ $a -eq 1 ]]; then\n  echo $(printf x)\nfi\n", {}, {});
     r.done();

@@ -15,6 +15,7 @@
 import type { CommitNode } from "../src/authors";
 import type { SignatureRecord } from "../src/registry";
 import { b64urlDecode, b64urlEncode, must, sha256Hex, utf8 } from "../src/util";
+import { RECORD_INPUTS } from "./record-inputs";
 
 export const ORG_ID = 357318718;
 export const APP_ID = 1234567;
@@ -523,6 +524,10 @@ export class FakeGitHub {
       if (!this.can(t, repo, "actions", "write")) return json({ message: "Forbidden" }, 403);
       // workflow_dispatch takes string inputs only, and the recorder is run from the registry's main.
       if (repo !== REGISTRY || data.ref !== "main" || Object.values(data.inputs as object).some((x) => typeof x !== "string")) return this.stray(req, "not a dispatch of the recorder");
+      // GitHub answers 422 to an input the workflow does not declare, a choice off its options, and a missing kind.
+      const given = data.inputs as Record<string, string>;
+      const declared = ([k, v]: [string, string]) => Object.hasOwn(RECORD_INPUTS, k) && (RECORD_INPUTS[k] ?? [v]).includes(v);
+      if (!Object.hasOwn(given, "kind") || !Object.entries(given).every(declared)) return this.stray(req, "inputs record.yml does not declare");
       this.dispatches.push(data.inputs as never);
       return new Response(null, { status: 204 });
     }
