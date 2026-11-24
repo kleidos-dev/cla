@@ -93,7 +93,8 @@ async function upsertCheck(bot: Bot, a: Assessment, ctx: TextContext, token: str
 }
 
 async function upsertComment(bot: Bot, a: Assessment, ctx: TextContext, token: string): Promise<void> {
-  if (allClear(a) && !a.botComment) return;
+  // A comment that was not found among those read may still be there: a second one is never risked.
+  if (!a.botComment && (allClear(a) || a.commentsCut)) return;
   const body = commentBody(a, ctx);
   if (a.botComment) {
     if (a.botComment.body !== body) await bot.gh.request("PATCH", `/repos/${a.repo}/issues/comments/${a.botComment.id}`, { token }, { body });

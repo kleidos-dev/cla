@@ -66,6 +66,8 @@ export interface Assessment {
   tooManyCommits: boolean;
   acceptances: Acceptance[];
   botComment: { id: number; body: string } | null;
+  /** More comments than were read: the bot's own may be among the rest. */
+  commentsCut?: boolean;
 }
 
 const COMMITS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid commits(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor} nodes{commit{oid message authoredDate parents{totalCount} authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}`;
@@ -203,7 +205,7 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
     }
   }
 
-  return { repo, pr, opener, required, signed, missing, exempt, entityCovered, unknownCommits, unlistedBots, tooManyCommits, acceptances, botComment };
+  return { repo, pr, opener, required, signed, missing, exempt, entityCovered, unknownCommits, unlistedBots, tooManyCommits, acceptances, botComment, commentsCut: comments.truncated };
 }
 
 /** Whether everything that blocks the check is cleared. */

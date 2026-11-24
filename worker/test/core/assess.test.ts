@@ -500,3 +500,14 @@ describe("a list GitHub cuts into too many pages", () => {
     expect([a.tooManyCommits, ids(a.required)]).toEqual([false, [alice.id, bob.id]]);
   });
 });
+
+describe("a list of comments GitHub cuts into too many pages", () => {
+  it("may hide the bot's own, and says so", async () => {
+    const pr = openPr(w, alice);
+    for (let i = 0; i < 500; i++) comment(pr, { body: "x", user: carol });
+    expect((await assessed(pr)).commentsCut).toBe(false);
+    comment(pr, { body: "x", user: carol });
+    expect((await assessed(pr)).commentsCut).toBe(true);
+    expect(w.gh.seen(/\/comments\?/)).toHaveLength(10);
+  });
+});

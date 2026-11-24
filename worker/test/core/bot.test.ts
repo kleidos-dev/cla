@@ -240,6 +240,27 @@ describe("an evaluation", () => {
   });
 });
 
+describe("a pull request with more comments than are read", () => {
+  const crowd = (pr: FakePr) => {
+    for (let i = 0; i < 501; i++) comment(pr, { body: "x", user: bob });
+  };
+
+  it("gets its check and no comment: the bot may already have one among those it did not read", async () => {
+    const pr = openPr(w, alice);
+    crowd(pr);
+    await evaluate(b, evaluation(pr));
+    expect(deeds).toEqual([`POST /repos/${SANDBOX}/check-runs`]);
+  });
+
+  it("has the comment edited that is found before them", async () => {
+    const pr = openPr(w, alice);
+    const mine = comment(pr, { body: `${MARKER}\nold text`, user: { id: BOT_ID, login: "kleidos-cla[bot]", type: "Bot" }, via_app: true });
+    crowd(pr);
+    await evaluate(b, evaluation(pr));
+    expect(deeds).toEqual([`POST /repos/${SANDBOX}/check-runs`, `PATCH /repos/${SANDBOX}/issues/comments/${mine.id}`]);
+  });
+});
+
 describe("an acceptance on the pull request", () => {
   const dispatched = () => w.gh.dispatches.map((d) => d.comment_id);
 
