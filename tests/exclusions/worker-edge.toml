@@ -10,8 +10,8 @@
 kind = "condition"
 file = "worker/src/web.ts"
 function = "agree"
-text = "e instanceof GitHubError"
-on = "e instanceof GitHubError && (e.kind === \"unauthorized\" || e.kind === \"forbidden\" || e.kind === \"not_found\")"
+text = "e instanceof GitHubFault"
+on = "e instanceof GitHubFault && (e.kind === \"unauthorized\" || e.kind === \"forbidden\" || e.kind === \"not_found\")"
 reason = "unreachable"
 why = """The try holds one call, bot.gh.request with the session's token, and request() turns every failure into a GitHubError
 (github.ts: a refused fetch, an unreadable body and bad JSON included); the token cannot make the header throw, since
