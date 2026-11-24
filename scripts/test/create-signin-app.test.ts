@@ -13,7 +13,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { WORKER_SECRETS, ensureEnvironment, escapeHtml, exchange, main, manifest, printable, run, sameText, settings } from "../create-signin-app.ts";
 import type { Settings } from "../create-signin-app.ts";
-import { BREAK_SPAWN, CODE, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
+import { BREAK_SPAWN, CODE, assertStrict, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
 import type { GitHub, Output } from "./support.ts";
 
 const SCRIPT = join(here, "..", "create-signin-app.ts");
@@ -95,6 +95,7 @@ async function complete(t: TestContext, fake: Record<string, string> = {}): Prom
   const r = await start(t, base(), fake);
   assert.ok(r.base, r.out.text());
   const page = await roundTrip(r.base);
+  assertStrict(page.headers, gh.url, `the callback's ${page.status}`);
   return { out: r.out, code: await r.done, page, port: Number(new URL(r.base).port) };
 }
 
@@ -380,32 +381,57 @@ describe("main, the local page", () => {
     assert.equal(await r.done, 0);
   });
 
+  it("each run has a state of its own", async (t) => {
+    const states: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await start(t);
+      states.push(new URL((await localPage(r.base!)).action).searchParams.get("state")!);
+      await roundTrip(r.base!);
+      assert.equal(await r.done, 0);
+      t.mock.restoreAll();
+    }
+    assert.equal(states.length, 2);
+    assert.notEqual(states[0], states[1]);
+  });
+
   it("another Host, path or method gets nothing", async (t) => {
     const r = await start(t);
     const port = new URL(r.base!).port;
-    for (const host of ["rebound.example", `localhost:${port}`]) assert.deepEqual(await rawGet(r.base!, host), { status: 421, body: "wrong host\n", type: "text/plain" });
-    for (const [method, path] of [["POST", ""], ["GET", "x"], ["POST", "callback"]] as const) assert.equal((await fetch(`${r.base!}${path}`, { method })).status, 404);
+    const got: [string, Awaited<ReturnType<typeof rawGet>>][] = [];
+    for (const host of ["rebound.example", `localhost:${port}`, "127.0.0.1", `127.0.0.1:${Number(port) + 1}`, `127.0.0.1.evil.example:${port}`, `127.0.0.1:${port}.evil.example`]) got.push([host, await rawGet(r.base!, host)]);
+    const other: number[] = [];
+    for (const [method, path] of [["POST", ""], ["GET", "x"], ["POST", "callback"]] as const) other.push((await fetch(`${r.base!}${path}`, { method })).status);
+    // The run ends before anything is asserted, so a refusal that fails ends the test instead of leaving the server up.
     await roundTrip(r.base!);
     assert.equal(await r.done, 0);
+    for (const [host, answer] of got) assert.deepEqual(answer, { status: 421, body: "wrong host\n", type: "text/plain" }, host);
+    assert.deepEqual(other, [404, 404, 404]);
   });
 
   it("a stray state is refused and the genuine redirect still completes; a bad code ends with 3", async (t) => {
     const r = await start(t);
     const state = new URL((await localPage(r.base!)).action).searchParams.get("state")!;
+    const refused: [string, Response, string][] = [];
     for (const query of [`code=${CODE}&state=${state.slice(1)}x`, `code=${CODE}`]) {
       const res = await fetch(`${r.base!}callback?${query}`);
-      assert.equal(res.status, 400);
-      assert.match(await res.text(), /Refused: this redirect did not start here\. Nothing was exchanged\./);
+      refused.push([query, res, await res.text()]);
     }
     assert.equal(r.out.lines.filter((l) => l.stream === "err" && l.text === "Refused a redirect whose state does not match; still waiting for GitHub's.").length, 2);
     assert.equal((await roundTrip(r.base!)).status, 200);
     assert.equal(await r.done, 0);
+    // Asserted once the run has ended, so that a failure ends the test instead of leaving the server up.
+    for (const [query, res, text] of refused) {
+      assert.equal(res.status, 400, query);
+      assertStrict(res.headers, gh.url, query);
+      assert.match(text, /Refused: this redirect did not start here\. Nothing was exchanged\./);
+    }
     t.mock.restoreAll();
     for (const query of [`state=${"S"}`, "code=a%2Bb"]) {
       const s = await start(t);
       const st = new URL((await localPage(s.base!)).action).searchParams.get("state")!;
       const res = await fetch(`${s.base!}callback?${query.startsWith("state") ? "" : `${query}&`}state=${st}`);
       assert.equal(res.status, 400);
+      assertStrict(res.headers, gh.url, query);
       assert.match(await res.text(), /<p>Refused: no valid code\.<\/p>/);
       assert.equal(await s.done, 3);
       assert.deepEqual(s.out.lines.at(-1), { stream: "err", text: "Refused: GitHub's redirect carried no valid code." });
@@ -423,11 +449,13 @@ describe("main, the local page", () => {
     const first = fetch(`${r.base!}callback?code=${CODE}&state=${state}`);
     await asked;
     const second = await fetch(`${r.base!}callback?code=${CODE}&state=${state}`);
-    assert.equal(second.status, 409);
-    assert.match(await second.text(), /<body><p>Already handled\.<\/p><\/body>/);
     release();
     assert.equal((await first).status, 200);
     assert.equal(await r.done, 0);
+    // Asserted once the run has ended, so that a failure ends the test instead of holding the exchange.
+    assert.equal(second.status, 409);
+    assertStrict(second.headers, gh.url);
+    assert.match(await second.text(), /<body><p>Already handled\.<\/p><\/body>/);
     assert.equal(gh.conversions.length, 1);
   });
 
@@ -592,6 +620,18 @@ describe("the script, as the owner runs it", () => {
     } finally {
       cleanup(r.work, r.tmp);
     }
+  });
+
+  it("a secret put or set that fails and echoes the value leaves it out of the script's output", async () => {
+    const r = await runChild(SCRIPT, ["--test"], { ...env(), FAKE_WRANGLER_FAIL: "SIGNIN_CLIENT_SECRET", FAKE_GH_FAIL: "secret" }, async (b) => void (await roundTrip(b)));
+    cleanup(r.work, r.tmp);
+    assert.equal(r.code, 1, r.out);
+    // Both fakes were handed the value and printed it on both of their outputs, which the script must not pass on.
+    assert.equal(puts().find((c) => c.args[2] === "SIGNIN_CLIENT_SECRET")?.input, SECRETS.client_secret);
+    assert.deepEqual(sets().map((c) => c.input), [SECRETS.client_secret]);
+    assert.ok(r.stderr.includes("wrangler secret put SIGNIN_CLIENT_SECRET failed (exit 1); its output is not shown, as it could echo the value.\n"), r.out);
+    assert.ok(r.stderr.includes("gh secret set failed (exit 1); its output is not shown, as it could echo the value.\n"), r.out);
+    assert.ok(!r.stdout.includes(SECRETS.client_secret) && !r.stderr.includes(SECRETS.client_secret), "the client secret reached the script's output");
   });
 
   it("out of file descriptors, wrangler cannot start: exit 2 with the sign-in hint, no trace, nothing run", async () => {

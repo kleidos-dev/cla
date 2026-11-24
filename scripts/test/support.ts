@@ -136,6 +136,19 @@ export function capture(t: TestContext): Output {
   };
 }
 
+/**
+ * The headers of every page a setup script serves, the callback's answers included, whose address holds
+ * GitHub's one-time code: kept from every cache and from a Referer, and able to load nothing and to post
+ * only to GitHub.
+ */
+export function assertStrict(headers: Headers, web: string, what = ""): void {
+  assert.deepEqual(
+    ["content-type", "cache-control", "content-security-policy", "referrer-policy"].map((h) => headers.get(h)),
+    ["text/html; charset=utf-8", "no-store", `default-src 'none'; form-action ${web}`, "no-referrer"],
+    what,
+  );
+}
+
 /** The local page as the browser gets it: the form's action and the manifest it posts, unescaped. */
 export interface LocalPage {
   status: number;
