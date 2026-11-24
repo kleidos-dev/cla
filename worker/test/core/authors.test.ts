@@ -13,13 +13,11 @@ describe("a GitHub no-reply address", () => {
     ["1+a", 1, "a", "User"],
     ["123456+alice", 123456, "alice", "User"],
     ["999999999999+al-ice", 999999999999, "al-ice", "User"],
-    ["00012+alice", 12, "alice", "User"],
     ["49699333+dependabot[bot]", 49699333, "dependabot[bot]", "Bot"],
     [`1+${"a".repeat(39)}`, 1, "a".repeat(39), "User"],
     [`1+${"a".repeat(39)}[bot]`, 1, `${"a".repeat(39)}[bot]`, "Bot"],
   ])("%s names the account", (local, id, login, type) => {
     expect(parseNoreply(local + NOREPLY)).toEqual({ id, login, type });
-    expect(parseNoreply(`  ${local}${NOREPLY}\n`)).toEqual({ id, login, type });
     expect(parseNoreply(local + NOREPLY.toUpperCase())).toEqual({ id, login, type });
   });
 
@@ -50,6 +48,14 @@ describe("a GitHub no-reply address", () => {
 
   it("no address names nobody", () => {
     expect(parseNoreply(null)).toBeNull();
+  });
+
+  it.each([` 1+alice${NOREPLY}`, `1+alice${NOREPLY} `, `1+alice${NOREPLY}\n`, `\ufeff1+alice${NOREPLY}`, `1+alice${NOREPLY}\u001c`, `012+alice${NOREPLY}`])("%j is not how GitHub writes one: the recorder reads none in it either", (email) => {
+    expect(parseNoreply(email)).toBeNull();
+  });
+
+  it.each([0, 5, true, {}, ["1+alice@users.noreply.github.com"]])("what is no text (%j) is none", (email) => {
+    expect(parseNoreply(email)).toBeNull();
   });
 
   it.each([`0+alice${NOREPLY}`, `000+alice${NOREPLY}`, `\u0661\u0662+alice${NOREPLY}`, `1+-a${NOREPLY}`, `1+a-${NOREPLY}`, `1+al--ice${NOREPLY}`, `1+\u017fam${NOREPLY}`, `1+\u212aelvin${NOREPLY}`, `1+${"a".repeat(40)}${NOREPLY}`, `1+alice[BOT]${NOREPLY}`])("%j would name an account GitHub cannot have, so it names none", (email) => {
@@ -83,6 +89,8 @@ describe("the Co-authored-by trailers of a message", () => {
     ["after a Unicode line separator", "S\u2028Co-authored-by: B <b@x.org>", ["b@x.org"]],
     ["after a Unicode paragraph separator", "S\u2029Co-authored-by: B <b@x.org>\u2029End", ["b@x.org"]],
     ["that is no address at all", "S\n\nCo-authored-by: B <b>", ["b"]],
+    ["twice when it is there twice", "Co-authored-by: B <b@x.org>\nCo-authored-by: B <b@x.org>", ["b@x.org", "b@x.org"]],
+    ["of JavaScript's reading first, then what only git's has, once", "Co-authored-by: A\r <c@x.org>\nCo-authored-by: A\r <c@x.org>\rCo-authored-by: B <b@x.org>", ["b@x.org", "c@x.org"]],
   ])("%s", (_what, message, emails) => {
     expect(coAuthorEmails(message)).toEqual(emails);
   });
@@ -199,6 +207,11 @@ describe("the authors of a commit", () => {
 
   it("a no-reply trailer GitHub did not list is its account", () => {
     expect(commitAuthors(commit([alice], { message: `S\n\nCo-authored-by: Bob <234567+bob${NOREPLY}>` }))).toMatchObject({ unidentified: 0, accounts: [{ id: 123456 }, { id: 234567, login: "bob", type: "User" }] });
+  });
+
+  it.each([5, true, {}, ["bob@example.org"]])("an author whose address is no text (%j) is no crash, and hides no trailer", (email) => {
+    const odd = { email, user: null } as unknown as GitActor;
+    expect(commitAuthors(commit([odd], { message: "S\n\nCo-authored-by: B <bob@example.org>" })).unidentified).toBe(2);
   });
 
   it("an author with no address hides no trailer", () => {
