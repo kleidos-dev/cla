@@ -196,6 +196,17 @@ describe("the sign page, signed in", () => {
     }
   });
 
+  it("of an author an entity with no name covers says an entity covers them, as the register file reads unchecked", async () => {
+    const w = await world();
+    w.gh.setFile("main", "registry/entities.json", JSON.stringify({ schema: 1, entities: [{ slug: "acme", version: 1, set_sha256: SET_1, signed_at: "2026-01-01", covered: [{ github_id: carol.id, from: "2026-01-01" }] }] }));
+    const p = openPr(w, alice, { commits: [commit(alice), commit(carol, { date: "2026-11-01T10:00:00Z" })] });
+    for (const lang of ["en", "es"] as const) {
+      const r = await get(w, `${signPath(p)}?lang=${lang}`, await sessionHeader(w, session(carol)));
+      expect(r.status, lang).toBe(200);
+      expect(statusOf(await r.text())).toEqual({ h1: S[lang].status.nothingTitle, card: S[lang].status.entity("carol", "an entity"), who: `${S[lang].accept.signedInAs} @carol` });
+    }
+  });
+
   it("of an author who signed says when, links the register entry and has the pull request checked again", async () => {
     const w = await world();
     await w.gh.signDirectly(alice);

@@ -426,7 +426,7 @@ export async function signPage(req: Request, env: ConfiguredEnv, bot: Bot, keys:
       case "exempt":
         return page(statusBody(lang, t, st0.nothingTitle, st0.exempt(login), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "entity":
-        return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(must(s.entity))), "info", who), { title: st0.nothingTitle, lang, path: t.path });
+        return page(statusBody(lang, t, st0.nothingTitle, st0.entity(login, escapeHtml(s.entity ?? "an entity")), "info", who), { title: st0.nothingTitle, lang, path: t.path });
       case "signed": {
         await env.CLA_QUEUE.send({ kind: "evaluate", repo: t.repo, pr: t.pr });
         const entry = `<a href="https://github.com/${escapeHtml(env.REGISTRY_REPO)}/blob/signatures/signatures/individual/${session.id}.json">${st0.entry}</a>`;
