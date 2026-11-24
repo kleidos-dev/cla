@@ -185,6 +185,23 @@ describe("the signature of an account", () => {
     await expect(registry.signature(alice.id)).rejects.toMatchObject({ kind: "transient" });
   });
 
+  it.each([
+    [403, "forbidden"],
+    [401, "unauthorized"],
+  ])("that GitHub answers %i to is an error: a signer is never taken for one who has not signed", async (status, kind) => {
+    await w.gh.signDirectly(alice);
+    w.gh.answer(exactly(RECORD), () => new Response(null, { status }));
+    await expect(registry.signature(alice.id)).rejects.toMatchObject({ kind, status });
+    expect(asked()).not.toContain(COMMITS);
+  });
+
+  it("is none once its file stops being a record, though its commit was read before", async () => {
+    await w.gh.signDirectly(alice);
+    expect(await registry.signature(alice.id)).not.toBeNull();
+    w.gh.setFile("signatures", "signatures/individual/123456.json", "{}");
+    expect(await registry.signature(alice.id)).toBeNull();
+  });
+
   const sha = "f".repeat(40);
   const facts = { sha, author: { id: ACTIONS_BOT_ID }, committer: { login: "web-flow" }, commit: { verification: { verified: true, reason: "valid" } } };
   const lastCommit = (c: unknown) => {
@@ -377,9 +394,14 @@ describe("the coverage records of a repository", () => {
     expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([]);
   });
 
-  it("that cannot be read are an error, not the absence of them", async () => {
-    w.gh.answer(exactly(LISTING), () => new Response(null, { status: 503 }));
-    await expect(registry.coverageNumbers(SANDBOX, [])).rejects.toMatchObject({ kind: "transient" });
+  const refused: [number, string][] = [
+    [503, "transient"],
+    [403, "forbidden"],
+    [401, "unauthorized"],
+  ];
+  it.each(refused)("that GitHub answers %i to are an error, not the absence of them", async (status, kind) => {
+    w.gh.answer(exactly(LISTING), () => new Response(null, { status }));
+    await expect(registry.coverageNumbers(SANDBOX, [])).rejects.toMatchObject({ kind });
   });
 
   const directory = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `${i + 1}.json`, type: "file" }));
@@ -400,9 +422,9 @@ describe("the coverage records of a repository", () => {
     expect(asked()).toEqual([LISTING]);
   });
 
-  it("that cannot be asked one by one are an error, not the absence of them", async () => {
+  it.each(refused)("that GitHub answers %i to one by one are an error, not the absence of them", async (status, kind) => {
     listing(directory(1000));
-    w.gh.answer(/1001\.json/, () => new Response(null, { status: 503 }));
-    await expect(registry.coverageNumbers(SANDBOX, [1001])).rejects.toMatchObject({ kind: "transient" });
+    w.gh.answer(/1001\.json/, () => new Response(null, { status }));
+    await expect(registry.coverageNumbers(SANDBOX, [1001])).rejects.toMatchObject({ kind });
   });
 });

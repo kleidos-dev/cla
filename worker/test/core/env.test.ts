@@ -17,7 +17,7 @@ describe("the Worker is configured", () => {
     expect(isConfigured(env({ [name]: "" }))).toBe(false);
   });
 
-  it.each([undefined, "", " ", ",", "abc", "0", "-1", "1.5", "0x10"])("not with an allowlist of %j", (ids) => {
+  it.each([undefined, "", " ", ",", "abc", "0", "-1", "1.5", "0x10", "1;2", "1 2", "1|2"])("not with an allowlist of %j", (ids) => {
     expect(isConfigured(env({ ALLOWED_ACCOUNT_IDS: ids }))).toBe(false);
   });
 

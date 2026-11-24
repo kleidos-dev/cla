@@ -203,6 +203,11 @@ describe("normalizeSentence", () => {
     );
   });
 
+  it.each(["\ufb01", "\uff21", "\u00b2", "\u2460", "\u017f", "\u2160"])("%j is not the plain letters it is compatible with", (c) => {
+    expect(c.normalize("NFKC")).not.toBe(c);
+    expect(normalizeSentence(c)).toBe(c);
+  });
+
   it("changes no character that is not white space", () => {
     expect(normalizeSentence("A.b,C-\u200b(89c1)")).toBe("A.b,C-\u200b(89c1)");
   });

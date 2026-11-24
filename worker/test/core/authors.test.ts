@@ -32,6 +32,8 @@ describe("a GitHub no-reply address", () => {
     `a1+alice${NOREPLY}`,
     `x 1+alice${NOREPLY}`,
     `1+alice${NOREPLY}.evil.example`,
+    "1+alice@x.users.noreply.github.com",
+    "1+alice@xusers.noreply.github.com",
     `1+alice${NOREPLY}>`,
     "1+alice@users-noreply.github.com",
     "1+alice@users.noreplyXgithub.com",
@@ -193,6 +195,13 @@ describe("the authors of a commit", () => {
     expect(commitAuthors(commit([{ email: `7+bob${NOREPLY}`, user: { databaseId: 0, login: "x" } }]))).toMatchObject({ accounts: [{ id: 7, login: "bob", type: "User" }], unidentified: 0 });
   });
 
+  it.each([
+    ["by its login of before it was renamed", `7+oldname${NOREPLY}`],
+    ["as another account", `8+bob${NOREPLY}`],
+  ])("an author whose no-reply address names it %s is the account GitHub links", (_what, email) => {
+    expect(commitAuthors(commit([{ email, user: { databaseId: 7, login: "newname" } }]))).toMatchObject({ accounts: [{ id: 7, login: "newname", type: "User" }], unidentified: 0 });
+  });
+
   it("the largest id a number holds exactly is an id", () => {
     expect(commitAuthors(commit([{ email: null, user: { databaseId: Number.MAX_SAFE_INTEGER, login: "x" } }]))).toMatchObject({ accounts: [{ id: Number.MAX_SAFE_INTEGER }], unidentified: 0 });
   });
@@ -204,6 +213,16 @@ describe("the authors of a commit", () => {
 
   it("a trailer GitHub did not list is unidentified", () => {
     expect(commitAuthors(commit([alice], { message: "S\n\nCo-authored-by: X <x@example.org>\nCo-authored-by: Y <y@example.org>" }))).toMatchObject({ unidentified: 2, accounts: [{ id: 123456 }] });
+  });
+
+  it("a trailer GitHub did not list is unidentified beside a co-author it listed", () => {
+    const bob: GitActor = { email: "bob@example.org", user: { databaseId: 234567, login: "bob" } };
+    const message = "S\n\nCo-authored-by: Bob <bob@example.org>\nCo-authored-by: X <x@example.org>";
+    expect(commitAuthors(commit([alice, bob], { message }))).toMatchObject({ unidentified: 1, accounts: [{ id: 123456 }, { id: 234567 }] });
+  });
+
+  it("a trailer GitHub did not list is unidentified in a merge commit too", () => {
+    expect(commitAuthors(commit([alice], { parents: { totalCount: 2 }, message: "Merge\n\nCo-authored-by: X <x@example.org>" }))).toMatchObject({ unidentified: 1, accounts: [{ id: 123456 }] });
   });
 
   it("a no-reply trailer GitHub did not list is its account", () => {

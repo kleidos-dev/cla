@@ -281,12 +281,21 @@ describe("the commits", () => {
     expect((await assessed(pr)).tooManyCommits).toBe(false);
   });
 
-  it("that moved while they were read are never assessed, on any page", async () => {
+  it("of a head that moved before they were read are never assessed", async () => {
     const pr = openPr(w, alice);
     pages(pr, { nodes: [commit(alice)], total: 1, head: sha() });
     await expect(assessed(pr)).rejects.toBeInstanceOf(HeadMovedError);
-    pages(pr, { nodes: [commit(alice)], total: 2, more: true, next: "1" }, { nodes: [commit(alice)], total: 2, head: sha() });
-    await expect(assessed(openPr(w, alice))).rejects.toBeInstanceOf(HeadMovedError);
+    expect(queries()).toHaveLength(1);
+    expect(w.gh.writes()).toEqual([]);
+  });
+
+  it.each([1, 2])("of a head that moved after %i pages of them are never assessed", async (good) => {
+    const pr = openPr(w, alice);
+    const page = (n: number) => ({ nodes: [commit(alice)], total: 3, more: n < 2, next: n < 2 ? String(n + 1) : null, head: n < good ? pr.head.sha : sha() });
+    pages(pr, page(0), page(1), page(2));
+    await expect(assessed(pr)).rejects.toBeInstanceOf(HeadMovedError);
+    expect(queries()).toHaveLength(good + 1);
+    expect(w.gh.writes()).toEqual([]);
   });
 
   it.each([[{ repository: null }], [{ repository: { pullRequest: null } }], [{ repository: { pullRequest: { headRefOid: "x", commits: null } } }], [{}]])("that GitHub does not give (%j) are an error, not none", async (data) => {
