@@ -583,3 +583,15 @@ describe("an answer GitHub did not finish, or that holds nothing", () => {
     expect([e.status, e.kind]).toEqual([200, "transient"]);
   });
 });
+
+describe("a Retry-After that is no time to wait", () => {
+  it.each([
+    [429, "-1"],
+    [429, "-3600"],
+    [403, "-1"],
+  ])("with %i and %s is no delay, never a negative one", async (status, after) => {
+    sent(() => new Response(null, { status, headers: { "retry-after": after } }));
+    const e = await failure(gh.request("GET", "/x", { token: "t" }));
+    expect([e.kind, e.retryAfter]).toEqual(["rate_limited", 0]);
+  });
+});

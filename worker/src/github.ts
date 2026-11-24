@@ -98,7 +98,7 @@ function classify(res: Response): GitHubError {
   const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
   const reset = Number.parseInt(res.headers.get("x-ratelimit-reset") ?? "", 10);
   if (res.status === 429 || (res.status === 403 && (Number.isFinite(retryAfter) || res.headers.get("x-ratelimit-remaining") === "0"))) {
-    const delay = Number.isFinite(retryAfter) ? retryAfter : Number.isFinite(reset) ? Math.max(1, reset - nowSeconds()) : 60;
+    const delay = Number.isFinite(retryAfter) ? Math.max(0, retryAfter) : Number.isFinite(reset) ? Math.max(1, reset - nowSeconds()) : 60;
     return new GitHubError(res.status, "rate_limited", Math.min(delay, 3600), requestId);
   }
   if (res.status >= 500) return new GitHubError(res.status, "transient", undefined, requestId);
