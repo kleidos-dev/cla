@@ -74,7 +74,8 @@ const strongRule: InlineRule = (src, at, opts) => {
 };
 
 const emphasisRule: InlineRule = (src, at, opts) => {
-  if (src[at + 1] === " " || src[at + 1] === "*") return null;
+  if (src[at + 1] === " ") return null;
+  // A second star closes nothing: it is at at + 1, which the check below refuses.
   const end = src.indexOf("*", at + 1);
   if (end <= at + 1 || src[end - 1] === " " || src[end - 1] === "\\") return null;
   return { nodes: [{ tag: "em", children: parseInline(src.slice(at + 1, end), opts) }], end: end + 1 };
