@@ -34,7 +34,7 @@ exclusions = 69
 "worker/src/button.ts" = { line = 66, branch = 51, function = 8, condition = 29, forced = 58, mutant = 216 }
 "worker/src/html.ts" = { line = 43, branch = 56, function = 15, condition = 17, forced = 34, mutant = 159 }
 "worker/src/i18n.ts" = { line = 43, branch = 15, function = 33, condition = 10, forced = 20, mutant = 624 }
-"worker/src/index.ts" = { line = 93, branch = 106, function = 11, condition = 52, forced = 104, mutant = 281 }
+"worker/src/index.ts" = { line = 95, branch = 108, function = 11, condition = 53, forced = 106, mutant = 283 }
 "worker/src/markdown.ts" = { line = 131, branch = 100, function = 24, condition = 52, forced = 104, mutant = 394 }
 "worker/src/messages.ts" = { line = 23, branch = 65, function = 4, condition = 35, forced = 70, mutant = 153 }
 "worker/src/texts.ts" = { line = 82, branch = 74, function = 21, condition = 37, forced = 74, mutant = 204 }

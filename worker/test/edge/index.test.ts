@@ -265,14 +265,13 @@ describe("/healthz", () => {
   it("of a Worker that is not configured says so, at the version it would show", async () => {
     const w = await world({ configure: false });
     w.env.BUILD_COMMIT = "unknown";
-    // What the isolate last showed is not asked for here: a page read of a configured register sets it to version 1
-    // (healthz reads the register too, but only a page records the version it shows).
-    expect(await shown(await world())).toBe("The text you sign · version 1");
+    // What the isolate last read is not asked for here: a read of a configured register's health sets it to version 1.
+    expect((await health(await world())).version).toBe(1);
     expect(await health(w)).toEqual({ ok: true, commit: "unknown", version: 1, set_sha256: SET_1, configured: false, signing: false, signin_app: false, reason: "not configured" });
   });
 
   it("says the register was not read, with no flow, when it cannot be read", async () => {
-    expect(await shown(await world())).toBe("The text you sign · version 1");
+    expect((await health(await world())).version).toBe(1);
     const w = await world({ config: {} });
     expect(await health(w)).toEqual({ ok: true, commit: w.env.BUILD_COMMIT, version: 1, set_sha256: SET_1, configured: true, signing: false, signin_app: false, reason: "registry not read" });
   });
@@ -296,11 +295,58 @@ describe("/healthz", () => {
   });
 });
 
-/** The eyebrow of the agreement page, which names the version shown. */
-async function shown(w: World): Promise<string> {
-  const html = await (await call(w, "/agreement")).text();
+/** The eyebrow of the agreement page, which names the version shown, in English or with ?lang=es in Spanish. */
+async function shown(w: World, path = "/agreement"): Promise<string> {
+  const html = await (await call(w, path)).text();
   return must(/<p class="eyebrow">([^<]*)<\/p>/.exec(html))[1] ?? "";
 }
+
+/** What both languages of both agreement pages show while the register cannot be read: the version last read. */
+async function shownUnread(): Promise<string[]> {
+  const w = await world({ config: {} });
+  const seen: string[] = [];
+  for (const path of ["/agreement", "/agreement?lang=es", "/agreement/entity", "/agreement/entity?lang=es"]) seen.push(await shown(w, path));
+  return seen;
+}
+
+/** shownUnread() of version v. */
+function shownAt(v: number): string[] {
+  return [`The text you sign · version ${v}`, `Traducción informativa · versión ${v}`, `The text you sign · version ${v}`, `Traducción informativa · versión ${v}`];
+}
+
+describe("the version /healthz reads", () => {
+  it("is recorded as the pages record theirs: the pages then show it, in both languages, while the register cannot be read", async () => {
+    expect((await health(await world({ config: CONFIG_V2 }))).version).toBe(2);
+    expect(await shownUnread()).toEqual(shownAt(2));
+    expect((await health(await world())).version).toBe(1);
+    expect(await shownUnread()).toEqual(shownAt(1));
+  });
+
+  it("is what a later /healthz says while the register cannot be read, or of a Worker not configured", async () => {
+    expect((await health(await world({ config: CONFIG_V2 }))).version).toBe(2);
+    expect(await health(await world({ config: {} }))).toMatchObject({ version: 2, set_sha256: SET_2, signing: false, reason: "registry not read" });
+    expect(await health(await world({ configure: false }))).toMatchObject({ version: 2, set_sha256: SET_2, configured: false, reason: "not configured" });
+    expect((await health(await world())).version).toBe(1);
+    expect(await health(await world({ config: {} }))).toMatchObject({ version: 1, set_sha256: SET_1, reason: "registry not read" });
+  });
+
+  it("is not recorded when it is not bundled here: the last one read stays, in both languages", async () => {
+    expect((await health(await world({ config: CONFIG_V2 }))).version).toBe(2);
+    const skew = await health(await world({ config: { ...CONFIG, current_version: 3, accepted_versions: [1] } }));
+    expect(skew).toMatchObject({ ok: false, version: 3, signing: false, reason: "version skew between the registry and this deployment" });
+    expect(await shownUnread()).toEqual(shownAt(2));
+    expect(await health(await world({ configure: false }))).toMatchObject({ version: 2, reason: "not configured" });
+  });
+
+  it("is not asked for when the allowlist names no account: /healthz then says the last one read, and the pages show it", async () => {
+    expect((await health(await world({ config: CONFIG_V2 }))).version).toBe(2);
+    const w = await world();
+    w.env.ALLOWED_ACCOUNT_IDS = "";
+    expect(await health(w)).toMatchObject({ version: 2, configured: false, reason: "not configured" });
+    expect([await shown(w), await shown(w, "/agreement?lang=es")]).toEqual(shownAt(2).slice(0, 2));
+    expect(w.gh.requests).toEqual([]);
+  });
+});
 
 describe("the version the public pages show", () => {
   it("is the register's current one, kept while the register cannot be read or names one that is not bundled", async () => {
