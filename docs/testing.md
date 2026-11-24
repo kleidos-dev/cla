@@ -62,6 +62,8 @@ A property test keeps a fixed seed on every pull request, so a run checks what w
 
 A failure found with a new seed becomes a named example in the tests, with the seed in its name or comment.
 
+On GitHub's runners, on 2026-11-24, a run of every area took 28 minutes from start to end: each share of the register's mutants about 1.5 minutes (3,482 mutants in all), each share of the Worker's mutants 9 to 16, its forced conditions 6 to 12, the scripts' mutants 21, the properties 1. A pull request's run takes about 3 minutes, each of its mutant jobs well under one when the change is small.
+
 ## Time and memory
 
 `python3 tests/tools/limited.py SECONDS GIB -- COMMAND` runs a command in a process group of its own and kills the whole group past its time or past its memory, counted as the resident memory of every process of the group together (a limit per process cannot hold Node and workerd, which reserve far more than they use); it then exits 137 and says which limit it passed, and otherwise passes the command's own exit code on. Every mutation, fuzz, property or hostile-input campaign runs under it, on a developer's machine and in CI, with two workers at most: an unbounded mutation run once took a whole machine down. `mutate.py` adds a limit of its own to each mutant's process (its time, and 2 GiB of address space on Linux); StrykerJS's per-mutant limit is `timeoutMS` in `worker/stryker.config.json`; `scripts-mut.mjs` takes `--timeout`. A mutant that ends by its time limit is counted as killed by timeout, apart from the others.
