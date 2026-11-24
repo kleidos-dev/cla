@@ -132,6 +132,8 @@ export class GitHub {
     if (res.status === 204) return { status: 204, data: undefined as T, headers: res.headers };
     if (!res.ok) {
       await res.body?.cancel();
+      // The retry of a cached token GitHub no longer takes buys another instead of sending it again.
+      if (res.status === 401 && "token" in auth) this.forgetToken(auth.token);
       throw classify(res);
     }
     const text = await res.text();
@@ -178,7 +180,7 @@ export class GitHub {
     return r.data.token;
   }
 
-  forgetToken(token: string): void {
+  private forgetToken(token: string): void {
     for (const [k, v] of state.tokens) if (v.token === token) state.tokens.delete(k);
   }
 

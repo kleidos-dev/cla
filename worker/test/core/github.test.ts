@@ -509,3 +509,33 @@ describe("the two ways to say no", () => {
     expect(new GitHubError(403, "rate_limited", 5, "A1")).toMatchObject({ status: 403, kind: "rate_limited", retryAfter: 5, requestId: "A1", message: "GitHub 403 rate_limited", retryable: true });
   });
 });
+
+describe("an installation token GitHub no longer takes (401)", () => {
+  const CALL = /^GET \/repos\/kleidos-dev\/cla-sandbox\/x$/;
+
+  it("is forgotten, so the retry buys another", async () => {
+    const stale = await gh.token([SANDBOX], { contents: "read" });
+    w.gh.answer(CALL, () => new Response(null, { status: 401 }), 1);
+    expect((await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token: stale }))).kind).toBe("unauthorized");
+    expect(await gh.token([SANDBOX], { contents: "read" })).not.toBe(stale);
+    expect(w.gh.seen(/access_tokens$/)).toHaveLength(2);
+  });
+
+  it("takes no other with it", async () => {
+    const stale = await gh.token([SANDBOX], { contents: "read" });
+    const other = await gh.token([SANDBOX], { actions: "read" });
+    w.gh.answer(CALL, () => new Response(null, { status: 401 }), 1);
+    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token: stale }));
+    expect(await gh.token([SANDBOX], { actions: "read" })).toBe(other);
+  });
+
+  it("is told by a 401 only, and by the credential that was sent", async () => {
+    const token = await gh.token([SANDBOX], { contents: "read" });
+    w.gh.answer(CALL, () => new Response(null, { status: 403 }), 1);
+    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token }));
+    w.gh.answer(CALL, () => new Response(null, { status: 401 }));
+    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { token: "ghu_a_signer" }));
+    await failure(gh.request("GET", `/repos/${SANDBOX}/x`, { jwt: true }));
+    expect(await gh.token([SANDBOX], { contents: "read" })).toBe(token);
+  });
+});
