@@ -79,4 +79,10 @@ export function check(root, { log = console.log, error = console.error } = {}) {
   return !failed;
 }
 
-if (import.meta.main) process.exit(check(join(dirname(fileURLToPath(import.meta.url)), "..", "..")) ? 0 : 1);
+/**
+ * The exit code of a check: 0 when every version passed, 1 otherwise.
+ * @param {boolean} ok
+ */
+export const exitCode = (ok) => (ok ? 0 : 1);
+
+if (import.meta.main) process.exit(exitCode(check(join(dirname(fileURLToPath(import.meta.url)), "..", ".."))));

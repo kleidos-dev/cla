@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { check, sentenceFor } from "../../worker/scripts/check-agreement.mjs";
+import { check, exitCode, sentenceFor } from "../../worker/scripts/check-agreement.mjs";
 import { hookArgs } from "../../tests/tools/node/child.mts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -214,6 +214,16 @@ describe("check-agreement.mjs", () => {
       assert.equal(worker, sentenceFor(v, info.set_sha256), `v${v}`);
       assert.equal(worker, info.sentence, `v${v}`);
     }
+  });
+
+  it("a check that passed exits 0, one that failed 1", () => {
+    assert.deepEqual([exitCode(true), exitCode(false)], [0, 1]);
+  });
+
+  it("the script, run on this repository, exits 0 with the lines check() gives", () => {
+    const r = spawnSync(process.execPath, [...hookArgs(), SCRIPT], { cwd: tmpdir(), encoding: "utf8", env: { PATH: process.env.PATH ?? "" } });
+    const v = verdict(ROOT);
+    assert.deepEqual([r.status, r.stdout, r.stderr], [0, v.log.map((l) => `${l}\n`).join(""), ""]);
   });
 
   it("the script itself exits 0 on a good tree and 1 on a tampered one, with the same lines", () => {
