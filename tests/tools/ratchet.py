@@ -197,11 +197,14 @@ def exclusions(path: Path) -> tuple[Counter[Miss], list[str]]:
 def compare(
     found: Counter[Miss],
     entries: Counter[Miss],
-    measured: set[str],
+    measured: dict[str, set[str]],
     files: set[str],
     floors: dict[str, int],
 ) -> list[str]:
-    """What the gate says about the misses of the area's files, for the measures that were taken."""
+    """What the gate says about the misses of the area's files.
+
+    ``measured`` is the files each kind was measured in: a shard's entries are judged by its shard,
+    and a count is held to its floor only where every file of the area was measured."""
     problems = []
     for m, n in sorted(found.items(), key=lambda x: str(x[0])):
         if n > entries[m]:
@@ -211,9 +214,13 @@ def compare(
             problems.append(f"listed for a file that is not of this area: {m}")
         elif m.gone():
             problems.append(f"listed, and its text is gone: {m}")
-        elif m.kind in measured and n > found[m]:
+        elif m.file in measured.get(m.kind, set()) and n > found[m]:
             problems.append(f"listed and no longer missed ({n - found[m]}): {m}")
-    totals = {k: sum(n for m, n in found.items() if m.kind == k) for k in measured}
+    totals = {
+        k: sum(n for m, n in found.items() if m.kind == k)
+        for k, where in measured.items()
+        if where >= files
+    }
     totals["exclusions"] = entries.total()
     for k, n in sorted(totals.items()):
         floor = floors.get(k)
@@ -226,21 +233,29 @@ def compare(
     return problems
 
 
+def files_of(report: Path) -> set[str] | None:
+    """The files a report is about, where it says so; a whole area otherwise."""
+    data = json.loads(report.read_text())
+    named = data.get("files")
+    return {relative(f) for f in named} if named is not None else None
+
+
 def check(area: str, args: argparse.Namespace) -> list[str]:
     floors = load(ROOT / "tests" / "floors" / f"{area}.toml")
     files = set(floors["files"])
     found: Counter[Miss] = Counter()
-    measured: set[str] = set()
-    for report, kinds, read in (
+    measured: dict[str, set[str]] = {}
+    for reports, kinds, read in (
         (args.istanbul, ("line", "branch", "function"), istanbul),
         (args.conditions, ("condition",), listed_misses),
         (args.forced, ("forced",), listed_misses),
         (args.mutants, ("mutant",), stryker),
     ):
-        if report is None:
-            continue
-        measured.update(kinds)
-        found.update(m for m in read(Path(report)) if m.file in files)
+        for report in map(Path, reports or []):
+            about = files if read is istanbul else files_of(report) or files
+            for kind in kinds:
+                measured.setdefault(kind, set()).update(about)
+            found.update(m for m in read(report) if m.file in files)
     entries, problems = exclusions(ROOT / "tests" / "exclusions" / f"{area}.toml")
     return problems + compare(found, entries, measured, files, floors["misses"])
 
@@ -294,7 +309,8 @@ def selftest() -> list[str]:
     none: Counter[Miss] = Counter()
     zero = {"condition": 0, "mutant": 0, "exclusions": 0}
     one = {"condition": 1, "mutant": 1, "exclusions": 1}
-    kinds = {"condition"}
+    kinds = {"condition": {file}}
+    mutants = {"mutant": {file}}
     cases = [
         ("a clean area passes", compare(none, none, kinds, {file}, zero), []),
         ("a planted condition", compare(Counter([miss]), none, kinds, {file}, one), ["not listed"]),
@@ -307,12 +323,17 @@ def selftest() -> list[str]:
         ("a measure with no floor", compare(none, none, kinds, {file}, {}), ["no floor"]),
         (
             "an entry now killed",
-            compare(none, Counter([here]), {"mutant"}, {file}, one),
+            compare(none, Counter([here]), mutants, {file}, one),
             ["no longer missed"],
         ),
         (
+            "an entry of a file that was not measured",
+            compare(none, Counter([here]), {"mutant": {"x"}}, {file, "x"}, one),
+            [],
+        ),
+        (
             "an entry whose text is gone",
-            compare(Counter(), Counter([miss]), {"mutant"}, {file}, one),
+            compare(Counter(), Counter([miss]), mutants, {file}, one),
             ["text is gone"],
         ),
         (
@@ -322,7 +343,7 @@ def selftest() -> list[str]:
         ),
         (
             "a mutant twice, listed once",
-            compare(Counter([here, here]), Counter([here]), {"mutant"}, {file}, one),
+            compare(Counter([here, here]), Counter([here]), mutants, {file}, one),
             ["not listed (1)"],
         ),
         ("a floor raised", raised({"misses": {"line": 0}}, {"misses": {"line": 1}}), ["went from"]),
@@ -398,7 +419,7 @@ def main(argv: list[str]) -> int:
     c = commands.add_parser("check", help="the area's reports against its floors and its list")
     c.add_argument("area")
     for report in ("istanbul", "conditions", "forced", "mutants"):
-        c.add_argument(f"--{report}")
+        c.add_argument(f"--{report}", nargs="+")
     b = commands.add_parser("base", help="the floors against another revision's")
     b.add_argument("revision")
     commands.add_parser("pragmas", help="no inline pragma in the sources")

@@ -8,9 +8,8 @@
  *   node test/tools/force.mjs [--out FILE] src/assess.ts src/bot.ts ...
  *
  * One build serves every mutant: the forcing is the MC/DC instrumentation's
- * own hook (mcdc.mjs), chosen at run time, inside the Workers runtime. Ends
- * with status 1 when one survives. The result is coverage/force.json, as
- * tests/tools/ratchet.py reads it.
+ * own hook (mcdc.mjs), chosen at run time, inside the Workers runtime. The result
+ * is coverage/force.json, and tests/tools/ratchet.py judges it.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -72,7 +71,7 @@ for (const m of base.testModules) {
 const mutants = [...decisions]
   .filter(([, d]) => args.length === 0 || args.includes(d.file))
   .flatMap(([key, d]) => d.atoms.flatMap((text, index) => [true, false].map((value) => ({ key, index, value, text, d }))));
-const result = { total: mutants.length, killed: 0, misses: [] };
+const result = { files: [...new Set(mutants.map((m) => `worker/${m.d.file}`))], total: mutants.length, killed: 0, misses: [] };
 for (const [n, { key, index, value, text, d }] of mutants.entries()) {
   const miss = (why) => result.misses.push({ kind: "forced", file: `worker/${d.file}`, function: d.function, text, on: d.text === text ? "" : d.text, operator: String(value), line: d.line, why });
   const r = reached.get(key);
@@ -93,4 +92,3 @@ writeFileSync(out, JSON.stringify(result, null, 1));
 console.log(`forced conditions: ${result.killed} of ${result.total} killed`);
 for (const m of result.misses) console.log(`${m.file}:${m.line} ${m.text} := ${m.operator}: ${m.why}`);
 await vitest.close();
-process.exitCode = result.misses.length > 0 ? 1 : 0;
