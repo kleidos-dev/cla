@@ -131,11 +131,6 @@ def entries(path: Path, kind: str, file: str) -> list[dict[str, Any]]:
     return found
 
 
-def floor(path: Path, name: str) -> int:
-    """How many entries of a kind the list may have (tests/floors/)."""
-    return int(tomllib.loads(path.read_text("utf-8"))["listed"][name])
-
-
 def ratchet(
     misses: list[dict[str, str]], listed: list[dict[str, Any]], keys: tuple[str, ...]
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:

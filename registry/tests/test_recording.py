@@ -86,6 +86,12 @@ def ready() -> FakeGitHub:
     return fake
 
 
+class Defaults(unittest.TestCase):
+    def test_a_run_that_is_told_nothing_more(self) -> None:
+        made = cla.Context(cla.GitHub("t"), REGISTRY, 1, CONFIG)
+        self.assertEqual((made.entities, made.stamper, made.commit), ([], None, ""))
+
+
 class Served(RegisterTest):
     """A repository the register records for: listed, and public."""
 

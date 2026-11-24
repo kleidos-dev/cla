@@ -154,10 +154,8 @@ def parse_time(s: Any) -> dt.datetime | None:
         return None
 
 
-def parse_http_date(s: str | None) -> dt.datetime | None:
-    """An HTTP ``Date`` header (RFC 9110 IMF-fixdate), as UTC."""
-    if s is None:
-        return None
+def parse_http_date(s: Any) -> dt.datetime | None:
+    """An HTTP ``Date`` header (RFC 9110 IMF-fixdate), as UTC; None for what is none, or missing."""
     try:
         d = email.utils.parsedate_to_datetime(s)
         return d.astimezone(dt.UTC) if d.tzinfo else None

@@ -858,6 +858,7 @@ class CoverageOfMerges(RegisterTest):
     def test_the_day_it_begins_and_the_hour_it_waits(self) -> None:
         for merged, found in (
             ("2026-10-31T23:59:59Z", False),
+            ("2026-11-01", True),
             ("2026-11-01T00:00:00Z", True),
             ("2026-12-01T09:23:02Z", True),  # an hour before the run
             ("2026-12-01T09:23:03Z", False),
@@ -886,9 +887,11 @@ class CoverageOfMerges(RegisterTest):
 
     def test_the_pages_are_read_until_one_updated_before_the_day(self) -> None:
         old = {"number": 1, "merged_at": "2026-11-02T00:00:00Z"}
-        idle = {"number": 2, "updated_at": "2026-11-01T00:00:00Z"}
-        self.merged(*[idle] * 150, old)
-        self.assertEqual(len(self.verify()), 1)
+        idle: dict[str, Any] = {"number": 2}
+        for updated in ("2026-11-01T00:00:00Z", "2026-11-01"):
+            idle["updated_at"] = updated
+            self.merged(*[idle] * 150, old)
+            self.assertEqual(len(self.verify()), 1)
         before = {"number": 3, "updated_at": "2026-10-31T23:59:59Z"}
         self.merged(*[idle] * 99, before, *[idle] * 100, old)
         self.fake.calls.clear()

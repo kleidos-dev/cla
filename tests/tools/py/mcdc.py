@@ -201,7 +201,7 @@ def misses(frames: Frames, file: str) -> list[dict[str, str]]:
                     "file": file,
                     "function": d.function,
                     "text": condition,
-                    "in": d.text,
+                    "on": d.text,
                     "line": str(d.line),
                     "got": why,
                 }
@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     code = 0
     for kind, found, keys in (
         ("line", not_run, ("function", "text")),
-        ("condition", missed, ("function", "text", "in")),
+        ("condition", missed, ("function", "text", "on")),
     ):
         unlisted, stale = ratchet(found, lists[kind], keys)
         for m in unlisted:

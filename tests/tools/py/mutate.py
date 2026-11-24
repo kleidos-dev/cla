@@ -210,7 +210,7 @@ class Mutator:
         return {
             "kind": "mutant",
             "function": self.source.function(node),
-            "in": self.source.line(node),
+            "on": self.source.line(node),
             "text": ast.unparse(node),
             "operator": mutant.operator,
             "replacement": _text(mutant.edit(copy.deepcopy(node))),
@@ -537,7 +537,7 @@ def choose(mutator: Mutator, args: argparse.Namespace) -> list[Mutant]:
     return chosen
 
 
-KEYS = ("function", "in", "text", "operator", "replacement")
+KEYS = ("function", "on", "text", "operator", "replacement")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -593,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
     for m in sorted(unlisted, key=lambda m: int(m["line"])):
         print(
             f"{m['result']}: {file}:{m['line']} {m['function']}: {m['operator']}: {m['text']!r} "
-            f"-> {m['replacement']!r} in {m['in']!r}"
+            f"-> {m['replacement']!r} on {m['on']!r}"
         )
     whole = len(chosen) == len(mutator.mutants)
     for s in stale if whole else ():

@@ -124,7 +124,7 @@ CONDITION = {
     "file": "src/planted.py",
     "function": "small",
     "text": "flag",
-    "in": "n < LIMIT and flag",
+    "on": "n < LIMIT and flag",
     "reason": "unreachable",
     "why": "planted",
 }
@@ -132,7 +132,7 @@ STARTING = {
     **CONDITION,
     "function": "",
     "text": "__name__ == '__main__'",
-    "in": "__name__ == '__main__'",
+    "on": "__name__ == '__main__'",
 }
 RETURNED = {**CONDITION, "kind": "line", "function": "unused", "text": "return 1"}
 PRINTED = {**RETURNED, "function": "", "text": "print(small(1, True))"}
@@ -232,7 +232,7 @@ SURVIVOR = {
     "kind": "mutant",
     "file": "src/planted.py",
     "function": "small",
-    "in": "if n < LIMIT and flag:",
+    "on": "if n < LIMIT and flag:",
     "text": "flag",
     "operator": "condition true",
     "replacement": "True",
@@ -259,7 +259,7 @@ class Mutate(Planted):
         self.assertIn(("small", "condition true", "flag", "survived"), stayed)
         self.assertIn(("unused", "return", "return 1", "no test"), stayed)
         self.assertIn(
-            "survived: src/planted.py:9 small: condition true: 'flag' -> 'True' in "
+            "survived: src/planted.py:9 small: condition true: 'flag' -> 'True' on "
             "'if n < LIMIT and flag:'\n",
             said,
         )
@@ -346,16 +346,16 @@ class Lists(unittest.TestCase):
         found: list[dict[str, Any]] = tomllib.loads(LIST.read_text("utf-8"))["entry"]
         return found
 
-    def test_the_list_is_as_long_as_its_floors(self) -> None:
+    def test_the_floors_are_what_the_list_holds(self) -> None:
         kinds = Counter(e["kind"] for e in self.entries())
+        floors = tomllib.loads(FLOORS.read_text("utf-8"))
         self.assertEqual(
-            {k: pysource.floor(FLOORS, k) for k in ("line", "condition", "mutant")},
-            {k: kinds[k] for k in ("line", "condition", "mutant")},
+            floors["misses"],
+            {**dict.fromkeys(("line", "branch", "condition", "mutant"), 0), **kinds}
+            | {"exclusions": len(self.entries())},
         )
-        self.assertEqual(
-            sum(len(pysource.entries(LIST, k, "registry/cla.py")) for k in kinds),
-            len(self.entries()),
-        )
+        self.assertEqual(floors["files"], ["registry/cla.py"])
+        self.assertEqual({e["file"] for e in self.entries()}, set(floors["files"]))
 
     def test_every_text_is_still_in_the_source(self) -> None:
         source = pysource.Source(Path(cla.__file__))
@@ -370,7 +370,9 @@ class Lists(unittest.TestCase):
     def test_every_listed_mutant_exists(self) -> None:
         mutator = mutate.Mutator(pysource.Source(Path(cla.__file__)))
         made = {tuple(mutator.describe(m)[k] for k in mutate.KEYS) for m in mutator.mutants}
-        for e in pysource.entries(LIST, "mutant", "registry/cla.py"):
+        listed = pysource.entries(LIST, "mutant", "registry/cla.py")
+        self.assertEqual(len({tuple(e[k] for k in mutate.KEYS) for e in listed}), len(listed))
+        for e in listed:
             self.assertIn(tuple(e[k] for k in mutate.KEYS), made)
 
     def test_no_pragma_hides_anything(self) -> None:

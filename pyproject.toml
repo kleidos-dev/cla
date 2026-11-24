@@ -17,6 +17,11 @@ relative_files = true
 branch = true
 include = ["registry/cla.py"]
 
+[tool.coverage.report]
+# Every line and every branch, and nothing excluded (tests/tools/py/ measures
+# the conditions and the mutants).
+fail_under = 100
+
 [tool.mypy]
 # >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
 strict = true
@@ -25,6 +30,6 @@ enable_error_code = ["ignore-without-code"]
 # <<< kleidos-quality mypy
 python_version = "3.15"
 # The recorder and verifier and their tests (the tests import cla.py from
-# beside it), and the tools that measure them.
-files = ["registry", "tests/tools/py"]
-mypy_path = ["registry", "tests/tools/py"]
+# beside it), and the ratchet of the test measures.
+files = ["registry", "tests/tools"]
+mypy_path = ["registry"]
