@@ -111,6 +111,15 @@ describe("a signed delivery", () => {
     expect(w.limiters.RL_WEBHOOK?.keys).toEqual([]);
   });
 
+  it("is refused when it names the app's id in any other spelling: the id is compared as text", async () => {
+    const w = await world();
+    for (const target of [`0${APP_ID}`, `${APP_ID}.0`, `+${APP_ID}`, `${APP_ID}0`]) {
+      const r = await deliver(w, '{"installation":{"id":1}}', { "x-github-hook-installation-target-id": target });
+      expect([r.status, await r.text()], target).toEqual([400, "wrong app\n"]);
+    }
+    expect(w.limiters.RL_WEBHOOK?.keys).toEqual([]);
+  });
+
   it("is read when it names no app at all", async () => {
     const w = await world();
     expect((await deliver(w, "{}", { "x-github-hook-installation-target-id": null })).status).toBe(202);
@@ -332,12 +341,12 @@ describe("mapEvent, the table from an event to its messages", () => {
     it("is ignored unless it completed with success, from record.yml on main", () => {
       expect(done(record, "requested")).toEqual([]);
       expect(done({ ...record, conclusion: "failure" })).toEqual([]);
-      expect(done({ ...record, path: ".github/workflows/verify.yml" })).toEqual([]);
+      for (const path of [".github/workflows/verify.yml", ".github/workflows/x-record.yml", "record.yml", ".github/workflows/record.yml/", ".github/workflows/sub/record.yml"]) expect(done({ ...record, path }), path).toEqual([]);
       expect(done({ ...record, head_branch: "signatures" })).toEqual([]);
     });
 
     it("is ignored when its title is not one the recorder writes", () => {
-      for (const display_title of [7, [`Record sign ${SANDBOX}#7 4242`], `Record coverage ${SANDBOX}#7 4242`, `Record sign ${SANDBOX}#0 4242`, `Record sign ${SANDBOX}#7 0`, `Record sign ${SANDBOX}#7`, `Record sign ${SANDBOX}#12345678901 1`, `Record sign ${SANDBOX}#7 4242 `, ` Record sign ${SANDBOX}#7 4242`]) {
+      for (const display_title of [7, [`Record sign ${SANDBOX}#7 4242`], `Record coverage ${SANDBOX}#7 4242`, `Record sign ${SANDBOX}#0 4242`, `Record sign ${SANDBOX}#7 0`, `Record sign ${SANDBOX}#7`, `Record sign ${SANDBOX}#12345678901 1`, `Record sign ${SANDBOX}#7 4242 `, ` Record sign ${SANDBOX}#7 4242`, `Record sign ${"o".repeat(40)}/r#7 4242`, `Record sign o/${"r".repeat(101)}#7 4242`]) {
         expect(done({ ...record, display_title }), String(display_title)).toEqual([]);
       }
     });

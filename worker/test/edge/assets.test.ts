@@ -98,8 +98,8 @@ describe("a SHA256SUMS that is not as written", () => {
     }
   });
 
-  it("with a line that has anything before its digest or after its name is never ok", async () => {
-    for (const edit of [(t: string) => t.replace("2f891b84", "x2f891b84"), (t: string) => t.replace("individual.md", "individual.md x")]) {
+  it("with a line that has anything before its digest or after its name, or other than two spaces between them, is never ok", async () => {
+    for (const edit of [(t: string) => t.replace("2f891b84", "x2f891b84"), (t: string) => t.replace("individual.md", "individual.md x"), (t: string) => t.replace("  individual.md", " individual.md"), (t: string) => t.replace("  individual.md", "   individual.md"), (t: string) => t.replace("  individual.md", " *individual.md")]) {
       await editing({ [`${V2}SHA256SUMS`]: edit });
       const { agreement } = await fresh();
       expect((await agreement.checkIntegrity(2)).ok).toBe(false);

@@ -439,6 +439,8 @@ describe("the sign page after a posted acceptance", () => {
     expect(html).toContain(`<p class="where">${S.en.done.whereRecording}</p>`);
     expect(html).toContain(`<p class="status is-pending">${S.en.done.statusRecording}</p>`);
     expect(w.gh.seen(/\/commits/)).toEqual([]);
+    // Each read is made with a token narrowed to what it reads: the comment with pull requests read only.
+    expect(w.gh.seen(/^GET \/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+$/).map((q) => q.permissions)).toEqual([{ pull_requests: "read" }, { pull_requests: "read" }]);
   });
 
   it("whose comment's author GitHub no longer knows does not stand", async () => {
@@ -529,6 +531,15 @@ describe("the sign page after a sign-in acceptance", () => {
     expect(html).toContain(`<dd>2 · SHA-256 <code>${CONFIG.versions["2"].set_sha256}</code></dd>`);
     expect(html).toContain(`<div><dt class="eyebrow">Pull request</dt><dd><a href="https://github.com/${SANDBOX}/pull/${p.number}">${SANDBOX}#${p.number}</a></dd></div>`);
     expect(html).not.toContain(`>${S.en.done.comment}</dt>`);
+  });
+
+  it("of a version that is not the current one shows that version's own digest while it is recorded", async () => {
+    const w = await world({ config: CONFIG_V2, signinSecrets: true });
+    const p = openPr(w, alice);
+    w.gh.recordRuns.push(run(p));
+    const html = await (await get(w, signPath(p), await pending(w, p, 1))).text();
+    expect(html).toContain(`<title>${S.en.done.titleRecording}</title>`);
+    expect(html).toContain(`<dd>1 · SHA-256 <code>${CONFIG.versions["1"].set_sha256}</code></dd>`);
   });
 
   it("whose run cannot be found or read is shown as being recorded, at the current digest for a version the register lost", async () => {

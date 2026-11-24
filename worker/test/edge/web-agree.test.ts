@@ -196,6 +196,22 @@ describe("an acceptance that is refused", () => {
     const w = await world();
     await expectMessage(await agree(w, { accept: "yes" }, { "content-type": "multipart/form-data" }), 400, "formUnreadable");
     await expectMessage(await call(w, "/agree?lang=es", { method: "POST", headers: FORM, body: `csrf=${"x".repeat(4096)}` }), 400, "formUnreadable", "es");
+    await expectMessage(await agree(w, { accept: "yes" }, { "content-type": "text/plain; x=application/x-www-form-urlencoded" }), 400, "formUnreadable");
+  });
+
+  it("is read up to 4096 bytes and no further", async () => {
+    const w = await world();
+    const body = (n: number) => `lang=es&pad=${"x".repeat(n - "lang=es&pad=".length)}`;
+    expect(body(4096)).toHaveLength(4096);
+    // Read, the form's language shows; one byte more, it is not read and the request's language shows.
+    await expectMessage(await call(w, "/agree?lang=en", { method: "POST", headers: FORM, body: body(4096) }), 401, "sessionExpired", "es");
+    await expectMessage(await call(w, "/agree?lang=en", { method: "POST", headers: FORM, body: body(4097) }), 400, "formUnreadable", "en");
+  });
+
+  it("is answered in the form's language over the address's", async () => {
+    const w = await world();
+    await expectMessage(await call(w, "/agree?lang=en", { method: "POST", headers: FORM, body: "lang=es" }), 401, "sessionExpired", "es");
+    await expectMessage(await call(w, "/agree?lang=es", { method: "POST", headers: FORM, body: "lang=en" }), 401, "sessionExpired", "en");
   });
 
   it("with no session, or one that expired, is refused in the form's language", async () => {
@@ -318,7 +334,9 @@ describe("an acceptance that is refused", () => {
     const w = await world();
     const { b, form } = await atAcceptance(w);
     const keys = await keysOf(w);
-    await expectMessage(await b.post("/agree", { ...form, set_sha256: CONFIG.versions["2"].set_sha256, accept: "yes" }), 409, "changed");
+    for (const set_sha256 of [CONFIG.versions["2"].set_sha256, "", CONFIG.versions["1"].set_sha256.slice(0, 12), CONFIG.versions["1"].set_sha256.toUpperCase(), `${CONFIG.versions["1"].set_sha256}0`]) {
+      await expectMessage(await b.post("/agree", { ...form, set_sha256, accept: "yes" }), 409, "changed");
+    }
     const session = must(await readSession(new Request(ORIGIN, { headers: { cookie: b.cookieHeader() } }), keys));
     const v2csrf = await csrfToken(keys.csrf, [session.sid, "agree", `${SANDBOX}#${form.pr ?? ""}`, "2"]);
     await expectMessage(await b.post("/agree", { ...form, version: "2", csrf: v2csrf, accept: "yes" }), 409, "changed");

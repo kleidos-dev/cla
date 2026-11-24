@@ -39,10 +39,10 @@ describe("signing", () => {
     expect(await signingState(config({ ...CONFIG, current_version: 3 }), await env())).toEqual({ on: false, reason: "version skew between the registry and this deployment", version: 3, setSha256: "", flow: "comment", app: null });
   });
 
-  it("is off when the register does not describe its current version as bundled here", async () => {
+  it("is off when the register does not describe its current version as bundled here, its digest differing past the twelve digits the sentence names included", async () => {
     const skew = "version skew between the registry and this deployment";
     const v1 = CONFIG.versions["1"];
-    for (const versions of [{ "2": CONFIG.versions["2"] }, { "1": { ...v1, set_sha256: SET_2 } }, { "1": { ...v1, sentence: `${v1.sentence} ` } }, { "1": { ...v1, sentence: sentenceFor(1, SET_2) } }]) {
+    for (const versions of [{ "2": CONFIG.versions["2"] }, { "1": { ...v1, set_sha256: SET_2 } }, { "1": { ...v1, set_sha256: `${SET_1.slice(0, 12)}${SET_2.slice(12)}` } }, { "1": { ...v1, sentence: `${v1.sentence} ` } }, { "1": { ...v1, sentence: sentenceFor(1, SET_2) } }]) {
       expect(await signingState(config({ ...CONFIG, versions }), await env()), JSON.stringify(Object.keys(versions))).toEqual({ on: false, reason: skew, version: 1, setSha256: SET_1, flow: "comment", app: null });
     }
   });

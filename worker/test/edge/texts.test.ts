@@ -145,6 +145,19 @@ describe("the comment", () => {
     expect(body.split("\n").slice(3, 4)).toEqual(["No signature needed: `dependabot[bot]` (Kleidos automation), account id 6 (x), [bob](https://github.com/bob) (covered by the agreement of Ñandú \\<b\\>\\*\\_Co\\_\\*\\</b\\> \\| \\#1 \\@x \\!)."]);
   });
 
+  it("escapes the brackets of an entity's name, so that no name is a link", () => {
+    const body = commentBody(assessment({ required: [alice], entityCovered: [{ account: bob, entity: "[x](https://e.example)" }] }), ctx());
+    expect(body).toContain("[bob](https://github.com/bob) (covered by the agreement of \\[x\\](https://e.example)).");
+    expect(checkOutput(assessment({ required: [alice], entityCovered: [{ account: bob, entity: "[x](https://e.example)" }] }), ctx()).summary).toContain("- `bob` (id 22) is covered by the agreement of \\[x\\](https://e.example).");
+  });
+
+  it("links a register entry at a commit only when it is 40 lowercase hex digits, and on the branch otherwise", () => {
+    for (const commit of [COMMIT.slice(0, 7), COMMIT.slice(0, 39), COMMIT.toUpperCase(), `${COMMIT}\n`]) {
+      const body = commentBody(assessment({ required: [alice], signedBy: [alice] }), ctx({ recordCommits: new Map([[alice.id, commit]]) }));
+      expect(body, commit).toContain("<sub>Register entries: [alice](https://github.com/kleidos-dev/cla/blob/signatures/signatures/individual/11.json) · ");
+    }
+  });
+
   it("when everyone signed links each register entry at the commit that added it, and says the checks run", () => {
     const body = commentBody(assessment({ required: [alice, bob, { id: 44, login: "x y", type: "User" }], signedBy: [alice, bob, { id: 44, login: "x y", type: "User" }] }), ctx({ recordCommits: new Map([[alice.id, COMMIT], [bob.id, `${COMMIT}0`], [44, `x${COMMIT}`]]) }));
     expect(body).toBe(

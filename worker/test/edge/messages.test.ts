@@ -31,6 +31,14 @@ describe("a queue message of each kind", () => {
     for (const m of Object.values(FULL)) expect(parseMessage({ ...m, title: "<script>", token: "ghu_x" })).toEqual(m);
   });
 
+  it("carries no attempt where its kind counts none: held, coverage and installation", () => {
+    for (const kind of ["held", "coverage", "installation"] as const) {
+      const m = parseMessage({ ...FULL[kind], attempt: 2 });
+      expect(m, kind).toEqual(FULL[kind]);
+      expect(Object.keys(m ?? {}), kind).toEqual(Object.keys(FULL[kind]));
+    }
+  });
+
   it("drops an optional field that is absent rather than writing it as undefined", () => {
     const evaluate = parseMessage({ kind: "evaluate", repo: REPO, pr: 7 });
     expect(evaluate).toEqual({ kind: "evaluate", repo: REPO, pr: 7 });
