@@ -43,6 +43,13 @@ from support import (
 from test_recording import signin
 from test_timestamps import UNREACHABLE
 
+#: Values that are right in some field of some record, and wrong in most.
+NEAR: tuple[Any, ...] = (
+    *("bob", "a-b", "a" * 39, "web", "comment", "en", "es", "e" * 40, "e" * 64, "a" * 16),
+    *("2026-12-01T10:22:40Z", "2026-12-01T10:23:10Z", "2026-12-01T09:00:00Z"),
+    *(1, 2, 7, 2**53 - 1, f"https://github.com/{REPO}/pull/9"),
+)
+
 
 class Property(RegisterTest):
     def setUp(self) -> None:
@@ -146,11 +153,13 @@ class Records(Property):
                     target = record["evidence"]
                 if not target:
                     continue
-                target[self.given.choice(list(target))] = self.given.json()
+                key = self.given.choice(list(target))
+                near = self.given.random() < 0.6
+                target[key] = self.given.choice(NEAR) if near else self.given.json()
             if cla.check_record(CONFIG, path, json.dumps(record).encode()) is None:
                 verified += 1
                 self.assertTrue(make_vectors.is_shape(schema, record), record)
-        self.assertGreater(verified, 10)
+        self.assertGreater(verified, 20, "too few of them verified to say anything")
 
     def test_a_signature_the_recorder_writes_verifies(self) -> None:
         for _ in range(200):
