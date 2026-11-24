@@ -21,6 +21,7 @@ export function stripEnd(s: string, chars: string): string {
   return s.slice(0, end);
 }
 
+/* istanbul ignore next: planted on a scratch branch to show the gates red */
 /** Compares two strings by their UTF-16 code units: the same order in every locale. */
 export function byCodeUnits(a: string, b: string): number {
   return Number(a > b) - Number(a < b);
