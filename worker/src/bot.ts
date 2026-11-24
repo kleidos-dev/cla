@@ -58,7 +58,7 @@ async function githubEntry(bot: Bot, repo: string, sha: string, token: string): 
 export async function githubState(bot: Bot, repo: string, baseSha: string, sha: string, token: string): Promise<GithubState> {
   try {
     const cmp = (await bot.gh.request<{ merge_base_commit?: { sha?: string } }>("GET", `/repos/${repo}/compare/${baseSha}...${sha}?per_page=1`, { token })).data;
-    const base = cmp.merge_base_commit?.sha ?? "";
+    const base = String(cmp.merge_base_commit?.sha);
     if (!SHA.test(base)) return "unknown";
     const before = await githubEntry(bot, repo, base, token);
     const after = await githubEntry(bot, repo, sha, token);
