@@ -71,16 +71,38 @@ describe("the fields", () => {
     expect(written("m", { reason: v })).toEqual({ msg: "m", reason: "redacted" });
   });
 
+  it.each([
+    ["a list of unsafe texts", ["ghs_secretToken", "x@example.org"]],
+    ["a list of safe ones", ["a", "b"]],
+    ["a long list", ["a".repeat(500)]],
+    ["an empty list", []],
+    ["an object", { login: "alice" }],
+    ["an object that says it is a safe text", { secret: "ghs_secretToken", toString: () => "safe" }],
+    ["an object that says it is JSON", { toJSON: () => "ghs_secretToken" }],
+    ["a text in an object", new String("safe")],
+    ["an error", new Error("x@example.org")],
+    ["a function", () => "safe"],
+    ["a symbol", Symbol("safe")],
+    ["an integer JSON cannot hold", 7n],
+  ])("what is no text, number or boolean is written as redacted, whatever it says it is: %s", (_what, v) => {
+    expect(written("m", { reason: v as unknown as LogValue, pr: 7 })).toEqual({ msg: "m", reason: "redacted", pr: 7 });
+    expect(written(v as unknown as string)).toEqual({ msg: "redacted" });
+  });
+
   it("one field's redaction does not touch another's value, and the order is the caller's", () => {
     log("m", { repo: "a/b", reason: "a=b", pr: 1, secret: "x", count: 2 });
     expect(lines).toEqual(['{"msg":"m","repo":"a/b","reason":"redacted","pr":1,"count":2}']);
   });
 
   it("whatever is logged, the line is one JSON object with allowed names and safe values only", () => {
+    const typed = fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null));
+    const other = fc.oneof(fc.array(fc.string()), fc.object(), fc.string().map((s) => ({ toString: () => s })), fc.bigInt());
+    const name = fc.oneof(fc.constantFrom(...ALLOWED), fc.string());
     fc.assert(
-      fc.property(fc.string(), fc.dictionary(fc.oneof(fc.constantFrom(...ALLOWED), fc.string()), fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null))), (m, fields) => {
-        for (const [k, v] of Object.entries(written(m, fields))) {
+      fc.property(fc.oneof(fc.string(), fc.array(fc.string())), fc.dictionary(name, fc.oneof(typed, other)), (m, fields) => {
+        for (const [k, v] of Object.entries(written(m as string, fields as Record<string, LogValue>))) {
           expect(k === "msg" || ALLOWED.includes(k)).toBe(true);
+          expect(["string", "number", "boolean"]).toContain(typeof v);
           if (typeof v === "string") expect(v).toMatch(/^[A-Za-z0-9_./:#,\- [\]]{0,120}$/);
         }
       }),
