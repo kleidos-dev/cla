@@ -114,7 +114,7 @@ export class FakeGitHub {
   recordCommits = new Map<number, string>();
   /** Records whose last commit was pushed by somebody other than the recorder. */
   forgedRecords = new Set<number>();
-  runs: { id: number; repo: string; head_sha: string; head_repository: string; status: string; approved: boolean; jobs?: { labels: string[]; runner_group_name?: string | null }[] }[] = [];
+  runs: { id: number; repo: string; head_sha: string; head_repository: string; status: string; approved: boolean; jobs?: { labels?: string[]; runner_group_name?: string | null }[] }[] = [];
   /** The `.github` tree object of a commit, when a test pins it (otherwise derived from the pull request's files). */
   githubTrees = new Map<string, string | null>();
   /** Called before every request is answered, to move state mid-flight. */
