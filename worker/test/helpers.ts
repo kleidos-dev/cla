@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: MIT
-import { vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import type { Env } from "../src/env";
 import { resetGitHubCaches } from "../src/github";
 import { handleFetch, handleQueue } from "../src/index";
@@ -119,7 +119,11 @@ export async function world(opts: { configure?: boolean; signinSecrets?: boolean
   vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
     logs.push(args.map(String).join(" "));
   });
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => gh.handle(new Request(input, init)));
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => gh.fetch(new Request(input, init)));
+  // A request the fake refused is a failure of the test that made it, whatever the Worker did about the answer.
+  onTestFinished(() => {
+    expect(gh.strays).toEqual([]);
+  });
   return { gh, env, queue, limiters, logs };
 }
 
