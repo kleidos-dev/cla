@@ -9,6 +9,8 @@
 #                  ├─ 🐍 Register tests ──────────────┬─ 📦 Coverage reports ── 📊 SonarCloud
 #                  ├─ 🧪 Worker tests ────────────────┤
 #                  ├─ 🔑 Setup scripts and workflows ─┘
+#                  ├─ 🧬 Mutants of the changed register lines (pull requests)
+#                  ├─ 🧬 Mutants of the changed Worker lines (pull requests)
 #                  ├─ 🧬 Mutants of the changed scripts (pull requests)
 #                  ├─ 🌐 Pages
 #                  ├─ 🛡️ Dependency vulnerabilities (OSV)
@@ -19,7 +21,12 @@
 # records; the kit's sync.py keeps those references. The lint job runs
 # every pre-commit hook, the agreement digests among them. The Worker's
 # vitest run, the setup scripts', workflows' and pages' tests are this
-# repository's own.
+# repository's own. Each test job holds its area at what main reaches:
+# 100 % of lines and branches (and functions, for the Worker and the
+# scripts), and the conditions and lists of tests/floors and
+# tests/exclusions; the mutants of the lines a pull request changes run
+# here, and all of them every Monday (mutation.yml). docs/testing.md says
+# how to run each one by hand.
 #
 # No job here holds a secret or writes to the repository: pull requests from
 # forks run with the read-only token like everyone else's, and the SonarCloud
@@ -82,9 +89,13 @@ jobs:
     uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d # quality-v2.3.0
     with:
       install: python -m pip install --require-hashes -r requirements.txt
+      # Every line and branch (pyproject.toml's fail_under, which coverage
+      # xml enforces), the conditions measured inside the suite
+      # (test_tools.Measured), the lines a failure misses printed.
       run: >-
         python -m coverage run -m unittest discover -s registry/tests -v
         && python -m coverage xml
+        || { python -m coverage report --show-missing --skip-covered; exit 1; }
       coverage-artifact: coverage-register
     permissions:
       contents: read
@@ -124,6 +135,8 @@ jobs:
           python3 tests/tools/ratchet.py base FETCH_HEAD
       - working-directory: worker
         run: npm ci
+      # Istanbul's four thresholds at 100 (vitest.config.ts), then MC/DC,
+      # then both against tests/floors and tests/exclusions.
       - name: Vitest in the Workers runtime, GitHub mocked
         working-directory: worker
         run: npm run test:coverage
@@ -201,8 +214,65 @@ jobs:
       - name: Every mutant of the changed lines, at most 120, two at a time
         run: |
           git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
-          node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 120 --workers 2 --timeout 60
+          python3 tests/tools/limited.py 480 6 -- node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 120 --workers 2 --timeout 60
           node tests/tools/node/scripts-mut.mjs --listed coverage/scripts-mutation.json
+
+  # The mutants of the lines a pull request changes in registry/cla.py, 120
+  # at most, a seeded sample past that, each in a process of its own with a
+  # time and a memory limit (all of them run every Monday, mutation.yml): a
+  # survivor that tests/exclusions/register.toml does not list fails.
+  register-mutants:
+    name: "🧬 Mutants of the changed register lines"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Every mutant of the changed lines, at most 120, two at a time
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          python3 tests/tools/limited.py 480 6 -- python3 tests/tools/py/mutate.py registry/cla.py registry/tests --since FETCH_HEAD --sample 120 --seed 1 --workers 2 --list tests/exclusions/register.toml
+
+  # The mutants of the lines a pull request changes in worker/src, as
+  # test/tools/changed.mjs picks them (120 at most, a seeded choice past
+  # that; all of them run every Monday, mutation.yml), planted by StrykerJS
+  # in the Workers runtime: a survivor that the list of its area does not
+  # name fails.
+  worker-mutants:
+    name: "🧬 Mutants of the changed Worker lines"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every mutant of the changed lines, at most 120, two at a time
+        working-directory: worker
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          mutate="$(node test/tools/changed.mjs --since FETCH_HEAD --max 120)"
+          if [ -z "$mutate" ]; then
+            echo "No mutant on the lines this pull request changes in worker/src."
+            exit 0
+          fi
+          python3 ../tests/tools/limited.py 540 6 -- npx --no-install stryker run --mutate "$mutate" --concurrency 2
+          python3 ../tests/tools/ratchet.py listed worker-core --mutants coverage/mutation.json
+          python3 ../tests/tools/ratchet.py listed worker-edge --mutants coverage/mutation.json
 
   # The sign pages in chromium, behind a network fence (tests/pages/).
   pages:

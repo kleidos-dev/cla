@@ -2,14 +2,24 @@
 # SPDX-License-Identifier: MIT
 #
 # The mutants, every Monday and by hand: what a test noticed, where ci.yml
-# measures what a test ran. Each job plants its share of them in one area of
-# the Worker (worker-core, worker-edge), inside the Workers runtime, or in the
-# setup scripts and the agreement gate (tests/tools/node/scripts-mut.mjs), and
-# holds the survivors to tests/floors/<area>.toml and
-# tests/exclusions/<area>.toml, so a survivor nobody listed, a listed one that
-# is now killed, and a file with fewer mutants than it has are red. The shares
-# are made from the area's own list of files: none can be left out. Nothing is
-# written anywhere: a red job and its log are the report.
+# measures what a test ran. Each job plants its share of them in one area:
+# registry/cla.py (tests/tools/py/mutate.py, each mutant in a process of its
+# own), the Worker's core and edge (StrykerJS and the forced conditions,
+# inside the Workers runtime), or the setup scripts and the agreement gate
+# (tests/tools/node/scripts-mut.mjs). The survivors are held to
+# tests/floors/<area>.toml and tests/exclusions/<area>.toml, so a survivor
+# nobody listed, a listed one that is now killed, a score that falls and a
+# file with fewer mutants than it has are red. The shares are made from the
+# area's own list of files, or from every mutant of the register: none can
+# be left out, and the register's shards are judged once more as one whole.
+# A last job runs every property with a seed no run tried before, and the
+# Worker's suite in a random order, and prints both seeds.
+#
+# Every campaign runs under tests/tools/limited.py, which kills it whole
+# past its time or its memory (the sum of its processes) and says which;
+# two workers at most, and a time limit on each mutant. A red job, its
+# summary on the run's page and its report, kept a week as an artifact,
+# are what it reports: the token is read-only and nothing else is written.
 name: Mutation
 
 on:
@@ -19,10 +29,14 @@ on:
   workflow_dispatch:
     inputs:
       area:
-        description: "the area whose mutants to plant: all, worker-core, worker-edge or scripts"
+        description: "what to run: all, register, worker-core, worker-edge, scripts or properties"
         type: choice
-        options: [all, worker-core, worker-edge, scripts]
+        options: [all, register, worker-core, worker-edge, scripts, properties]
         default: all
+      seed:
+        description: "the seed of the properties, digits only, to run a Monday's again (empty: a new one)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -32,6 +46,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  register:
+    name: "🧬 Mutants of the register (${{ matrix.share }})"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'register'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        share: [1/4, 2/4, 3/4, 4/4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Every mutant of the share, two at a time, each with its own limits
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          mkdir -p coverage
+          python3 tests/tools/limited.py 2400 6 -- python3 tests/tools/py/mutate.py registry/cla.py registry/tests --shard "$SHARE" --workers 2 --list tests/exclusions/register.toml --out coverage/register-mutation.json
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: register-mutation-${{ strategy.job-index }}
+          path: coverage/register-mutation.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The four shards as the one campaign they add up to: every mutant once,
+  # and every entry of the list still a survivor (no shard alone can tell).
+  register-whole:
+    name: "🧬 Mutants of the register, as one"
+    needs: [register]
+    if: always() && needs.register.result != 'skipped' && needs.register.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: register-mutation-*
+          path: shards
+      - name: Every mutant once, and the list judged whole
+        run: python3 tests/tools/py/mutate.py registry/cla.py registry/tests --list tests/exclusions/register.toml --merged shards/*/register-mutation.json
+
   mutants:
     name: "🧬 Mutants of the Worker's core (${{ matrix.share }})"
     if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-core'
@@ -59,7 +127,15 @@ jobs:
           SHARE: ${{ matrix.share }}
         run: |
           files="$(python3 ../tests/tools/ratchet.py files worker-core --share "$SHARE")"
-          npm run test:mutation -- --mutate "$files"
+          python3 ../tests/tools/limited.py 2400 6 -- npm run test:mutation -- --mutate "$files"
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worker-core-mutation-${{ strategy.job-index }}
+          path: worker/coverage/mutation.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: No survivor that is not listed
         working-directory: worker
         env:
@@ -88,7 +164,15 @@ jobs:
         working-directory: worker
         run: |
           files="$(python3 ../tests/tools/ratchet.py files worker-core)"
-          npm run test:forced -- "$files"
+          python3 ../tests/tools/limited.py 2400 6 -- npm run test:forced -- "$files"
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worker-core-forced
+          path: worker/coverage/force.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: No survivor that is not listed
         working-directory: worker
         run: python3 ../tests/tools/ratchet.py check worker-core --forced coverage/force.json
@@ -120,7 +204,15 @@ jobs:
           SHARE: ${{ matrix.share }}
         run: |
           files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
-          npm run test:mutation -- --mutate "$files"
+          python3 ../tests/tools/limited.py 2400 6 -- npm run test:mutation -- --mutate "$files"
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worker-edge-mutation-${{ strategy.job-index }}
+          path: worker/coverage/mutation.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: No survivor that is not listed
         working-directory: worker
         env:
@@ -156,7 +248,15 @@ jobs:
           SHARE: ${{ matrix.share }}
         run: |
           files="$(python3 ../tests/tools/ratchet.py files worker-edge --share "$SHARE")"
-          npm run test:forced -- "$files"
+          python3 ../tests/tools/limited.py 2400 6 -- npm run test:forced -- "$files"
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worker-edge-forced-${{ strategy.job-index }}
+          path: worker/coverage/force.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: No survivor that is not listed
         working-directory: worker
         env:
@@ -182,7 +282,7 @@ jobs:
       - working-directory: worker
         run: npm ci
       - name: Every mutant, sixty seconds each at most, two at a time
-        run: node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60
+        run: python3 tests/tools/limited.py 2400 6 -- node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60
       - name: Keep the report a week
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -193,3 +293,51 @@ jobs:
           retention-days: 7
       - name: No survivor that is not listed
         run: python3 tests/tools/ratchet.py check scripts --mutants coverage/scripts-mutation.json
+
+  # Every property with a seed no run tried: the register's (REGISTER_SEED,
+  # registry/tests/generate.py) and the Worker's (PROPERTY_SEED,
+  # worker/test/seed.ts), with the Worker's files in an order drawn by the
+  # same seed. The seed is printed first: a failure is run again with it
+  # (this workflow's seed input) and becomes a named example.
+  properties:
+    name: "🎲 Properties with a new seed"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'properties'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: The seed of this run
+        id: seed
+        env:
+          ASKED: ${{ inputs.seed }}
+        run: |
+          if [ -n "$ASKED" ]; then
+            case "$ASKED" in *[!0-9]*) echo "The seed is digits only." >&2; exit 2 ;; esac
+            seed="$ASKED"
+          else
+            seed="$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')"
+          fi
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "Seed of this run: $seed"
+          echo "**Seed of the properties**: \`$seed\` (run again with the seed input of this workflow)" >> "$GITHUB_STEP_SUMMARY"
+      - name: The register's properties
+        env:
+          REGISTER_SEED: ${{ steps.seed.outputs.seed }}
+        run: python3 tests/tools/limited.py 600 4 -- python3 -m unittest discover -s registry/tests
+      - name: The Worker's properties, its files in a random order
+        working-directory: worker
+        env:
+          PROPERTY_SEED: ${{ steps.seed.outputs.seed }}
+        run: python3 ../tests/tools/limited.py 600 6 -- npx --no-install vitest run --sequence.shuffle --sequence.seed="$PROPERTY_SEED"
