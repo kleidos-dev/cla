@@ -15,7 +15,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage && npm run test:conditions && npm run test:ratchet",
     "test:conditions": "node test/tools/selftest.mjs && vitest run -c vitest.mcdc.config.mjs",
-    "test:ratchet": "python3 ../tests/tools/ratchet.py check worker-core --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json",
+    "test:ratchet": "python3 ../tests/tools/ratchet.py check worker-core --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json && python3 ../tests/tools/ratchet.py check worker-edge --istanbul coverage/coverage-final.json --conditions coverage/mcdc.json",
     "test:forced": "node test/tools/force.mjs",
     "test:mutation": "stryker run",
     "deploy": "node scripts/check-agreement.mjs && git diff --quiet HEAD && git verify-commit HEAD && git fetch --quiet origin main && git merge-base --is-ancestor HEAD origin/main && wrangler deploy --var BUILD_COMMIT:$(git rev-parse HEAD)",
