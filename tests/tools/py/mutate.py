@@ -544,7 +544,10 @@ def choose(mutator: Mutator, args: argparse.Namespace) -> list[Mutant]:
         number, of = (int(x) for x in args.shard.split("/"))
         chosen = chosen[number - 1 :: of]
     if args.sample and args.sample < len(chosen):
-        print(f"notice: {args.sample} of {len(chosen)} mutants, a sample by seed {args.seed}")
+        print(
+            f"notice: {args.sample} of {len(chosen)} mutants, a sample by seed {args.seed}",
+            flush=True,
+        )
         chosen = random.Random(args.seed).sample(chosen, args.sample)  # noqa: S311  no secret
     return chosen
 
@@ -590,7 +593,11 @@ def tests_sample(
     pool = [m for m in mutator.mutants if id(m) not in taken and theirs(m)]
     picked = random.Random(args.seed).sample(pool, min(args.tests_sample, len(pool)))  # noqa: S311
     which = "every test" if modules is None else ", ".join(sorted(modules))
-    print(f"notice: {len(picked)} of the {len(pool)} other mutants {which} runs, seed {args.seed}")
+    # Flushed now: the processes forked from here would otherwise take the line with them.
+    print(
+        f"notice: {len(picked)} of the {len(pool)} other mutants {which} runs, seed {args.seed}",
+        flush=True,
+    )
     return picked
 
 
@@ -656,7 +663,10 @@ def main(argv: list[str] | None = None) -> int:
     if reach is not None:
         chosen += tests_sample(mutator, chosen, reach, modules, args)
     counts = collections.Counter(m.operator for m in chosen)
-    print(f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}")
+    print(
+        f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}",
+        flush=True,
+    )
     if args.count:
         return 0
     if not chosen:
