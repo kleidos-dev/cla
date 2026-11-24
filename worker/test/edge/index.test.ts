@@ -286,6 +286,19 @@ describe("the version the public pages show", () => {
     expect(await shown(await world({ configure: false }))).toBe("The text you sign · version 2");
     expect(await shown(await world())).toBe("The text you sign · version 1");
   });
+
+  it("is the last one seen, asked of nobody, when every secret exists but the allowlist names no account", async () => {
+    expect(await shown(await world({ config: CONFIG_V2 }))).toBe("The text you sign · version 2");
+    const w = await world();
+    w.env.ALLOWED_ACCOUNT_IDS = "";
+    for (const path of ["/agreement", "/agreement/entity"]) {
+      const r = await call(w, path);
+      expect(r.status, path).toBe(200);
+      expect(await r.text(), path).toContain(`/agreement/v2/`);
+    }
+    expect(await shown(w)).toBe("The text you sign · version 2");
+    expect(w.gh.requests).toEqual([]);
+  });
 });
 
 describe("a configured Worker", () => {

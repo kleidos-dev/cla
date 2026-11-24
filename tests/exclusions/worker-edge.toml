@@ -39,15 +39,6 @@ why = "Held true, an empty name is added to the accepted encodings, and the empt
 [[entry]]
 kind = "forced"
 file = "worker/src/index.ts"
-function = "shownVersion"
-text = "isConfigured(env)"
-operator = "true"
-reason = "equivalent"
-why = "Unconfigured, makeBot's first read of the register needs the app's JWT, whose key is missing: it throws before any request, and the catch keeps the last version, as skipping the read does."
-
-[[entry]]
-kind = "forced"
-file = "worker/src/index.ts"
 function = "healthz"
 text = "signing.flow"
 operator = "true"
@@ -307,17 +298,6 @@ operator = "StringLiteral"
 replacement = "\"Stryker was here!\""
 reason = "equivalent"
 why = "With no Accept-Encoding the mutant's text names no encoding (it is neither br nor gzip), as the empty text names none."
-
-[[entry]]
-kind = "mutant"
-file = "worker/src/index.ts"
-function = "shownVersion"
-text = "isConfigured(env)"
-on = "if (isConfigured(env)) {"
-operator = "ConditionalExpression"
-replacement = "true"
-reason = "equivalent"
-why = "Unconfigured, makeBot's first read of the register needs the app's JWT, whose key is missing: it throws before any request, and the catch keeps the last version, as skipping the read does."
 
 [[entry]]
 kind = "mutant"

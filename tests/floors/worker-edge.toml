@@ -22,9 +22,9 @@ line = 0
 branch = 0
 function = 0
 condition = 1
-forced = 26
-mutant = 44
-exclusions = 71
+forced = 25
+mutant = 43
+exclusions = 69
 
 # What there is of each in each file: what a run must have measured, no more
 # and no less. A number that falls needs a dated line in a table [lowered],
