@@ -160,7 +160,8 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
     const open = await gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
     if (open.truncated) tooManyCommits = true;
     for (const other of open.items) {
-      if (other.number !== pr.number && other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
+      // The pull request itself is among them, opened by the same account on the same date.
+      if (other.head.sha === pr.head.sha) add(accountOf(other.user), other.created_at.slice(0, 10));
     }
   }
 

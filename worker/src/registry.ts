@@ -171,10 +171,9 @@ export function resetRegistryCache(): void {
 }
 
 function isConfig(v: unknown): v is Config {
-  if (typeof v !== "object" || v === null) return false;
-  const c = v as Unchecked<Config>;
+  const c = v as Unchecked<Config> | null;
   return (
-    c.schema === 1 &&
+    c?.schema === 1 &&
     typeof c.current_version === "number" &&
     Array.isArray(c.accepted_versions) &&
     typeof c.versions === "object" &&
@@ -213,13 +212,11 @@ export class Registry {
     const now = nowSeconds();
     if (hit && hit.expires > now) return hit.value;
     const text = await this.raw(path, ref);
-    let value: unknown = null;
-    if (text !== null) {
-      try {
-        value = JSON.parse(text);
-      } catch {
-        throw new GitHubError(200, "bad_response");
-      }
+    let value: unknown;
+    try {
+      value = JSON.parse(text ?? "null");
+    } catch {
+      throw new GitHubError(200, "bad_response");
     }
     cache.set(key, { value, expires: now + ttl });
     return value;
@@ -245,10 +242,9 @@ export class Registry {
    */
   async signature(id: number): Promise<SignatureRecord | null> {
     const text = await this.raw(`signatures/individual/${id}.json`, SIGNATURES_BRANCH);
-    if (text === null) return null;
     let rec: unknown;
     try {
-      rec = JSON.parse(text);
+      rec = JSON.parse(text ?? "null");
     } catch {
       return null;
     }

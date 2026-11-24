@@ -58,8 +58,8 @@ async function githubEntry(bot: Bot, repo: string, sha: string, token: string): 
 export async function githubState(bot: Bot, repo: string, baseSha: string, sha: string, token: string): Promise<GithubState> {
   try {
     const cmp = (await bot.gh.request<{ merge_base_commit?: { sha?: string } }>("GET", `/repos/${repo}/compare/${baseSha}...${sha}?per_page=1`, { token })).data;
-    const base = cmp.merge_base_commit?.sha;
-    if (!base || !SHA.test(base)) return "unknown";
+    const base = cmp.merge_base_commit?.sha ?? "";
+    if (!SHA.test(base)) return "unknown";
     const before = await githubEntry(bot, repo, base, token);
     const after = await githubEntry(bot, repo, sha, token);
     if (before === undefined || after === undefined) return "unknown";
@@ -160,7 +160,7 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
     if (!chosen || acc.commentId === msg.record_comment) byAccount.set(acc.account, acc);
   }
   // A sign-in handed to the recorder posts no comment: the account the sign page named is waited for until its record shows.
-  if (msg.await_signin && a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
+  if (a.missing.some((m) => m.id === msg.await_signin)) pendingRecord = true;
   for (const acc of byAccount.values()) {
     // Only a first look dispatches: the delayed re-checks that follow it just watch for the record.
     const asked = msg.record_comment === acc.commentId || now - Date.parse(acc.createdAt) > RECORD_AFTER_MS;
@@ -177,13 +177,8 @@ export async function evaluate(bot: Bot, msg: Extract<QueueMessage, { kind: "eva
   if (clear && repoConf.auto_approve && github === "untouched") {
     await send(bot.env, { kind: "release", repo: msg.repo, pr: msg.pr, sha: a.pr.head.sha });
   }
-  if (!clear && pendingRecord && attempt < RECORD_DELAYS.length) {
-    await send(
-      bot.env,
-      { kind: "evaluate", repo: msg.repo, pr: msg.pr, attempt: attempt + 1, ...(msg.record_comment ? { record_comment: msg.record_comment } : {}), ...(msg.await_signin ? { await_signin: msg.await_signin } : {}) },
-      RECORD_DELAYS[attempt],
-    );
-  }
+  // Only an account that is missing is waited for, so nothing is once everybody is clear.
+  if (pendingRecord && attempt < RECORD_DELAYS.length) await send(bot.env, { ...msg, attempt: attempt + 1 }, RECORD_DELAYS[attempt]);
   log("evaluated", { repo: msg.repo, pr: msg.pr, outcome: clear ? "success" : "action_required", count: a.missing.length, attempt });
 }
 

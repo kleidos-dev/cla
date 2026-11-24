@@ -101,6 +101,7 @@ describe("the Co-authored-by trailers of a message", () => {
     ["a line that only mentions the key", "S\n\nsee Co-authored-by: B <b@x.org>"],
     ["an indented one", "S\n\n Co-authored-by: B <b@x.org>"],
     ["no bracket", "S\n\nCo-authored-by: b@x.org"],
+    ["no bracket and no space", "S\n\nCo-authored-by:b@x.org>"],
     ["no closing bracket", "S\n\nCo-authored-by: B <b@x.org"],
     ["text after the bracket", "S\n\nCo-authored-by: B <b@x.org> and more"],
     ["an empty address", "S\n\nCo-authored-by: B <>"],

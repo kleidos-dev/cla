@@ -40,8 +40,7 @@ export function b64urlDecode(s: string): Uint8Array<ArrayBuffer> | null {
 }
 
 export function hex(bytes: ArrayBuffer | Uint8Array): string {
-  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  return Array.from(u, (b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function sha256Hex(data: string | Uint8Array<ArrayBuffer>): Promise<string> {
@@ -104,7 +103,7 @@ export function clientIp(req: Request): string {
  */
 export async function readCapped(req: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
   const declared = Number.parseInt(req.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declared) && declared > max) {
+  if (declared > max) {
     await req.body?.cancel();
     return null;
   }

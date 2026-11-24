@@ -133,7 +133,7 @@ export class GitHub {
     if (!res.ok) {
       await res.body?.cancel();
       // The retry of a cached token GitHub no longer takes buys another instead of sending it again.
-      if (res.status === 401 && "token" in auth) this.forgetToken(auth.token);
+      if (res.status === 401) this.forgetToken(headers.get("authorization"));
       throw classify(res);
     }
     const text = await res.text().catch(() => {
@@ -183,8 +183,8 @@ export class GitHub {
     return r.data.token;
   }
 
-  private forgetToken(token: string): void {
-    for (const [k, v] of state.tokens) if (v.token === token) state.tokens.delete(k);
+  private forgetToken(authorization: string | null): void {
+    for (const [k, v] of state.tokens) if (`Bearer ${v.token}` === authorization) state.tokens.delete(k);
   }
 
   async graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
