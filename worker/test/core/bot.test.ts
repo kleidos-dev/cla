@@ -1030,6 +1030,22 @@ describe("the cron", () => {
     expect(w.gh.seen(/coverage/)).toEqual([]);
   });
 
+  it("of one behind a hundred that changed after it is asked for too, and behind three hundred is not", async () => {
+    only();
+    const behind = merged(HOUR, { updated_at: time(NOW - HOUR) });
+    const later = (n: number) => {
+      for (let i = 0; i < n; i++) merged(HOUR, { merged: false, merged_at: null, updated_at: time(NOW) });
+    };
+    later(299);
+    await cron(b);
+    expect(coverageAsked()).toEqual([behind.number]);
+    expect(w.gh.seen(/state=closed/)).toHaveLength(3);
+    later(1);
+    w.queue.sent.length = 0;
+    await cron(b);
+    expect(coverageAsked()).toEqual([]);
+  });
+
   it("of one whose record is past the thousand files GitHub lists is not asked for again", async () => {
     only();
     const [covered, missing] = [merged(HOUR, { updated_at: time(NOW) }), merged(HOUR)];

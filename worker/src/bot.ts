@@ -323,9 +323,9 @@ export async function cron(bot: Bot): Promise<void> {
       const token = await bot.gh.token([repo], { pull_requests: "read" });
       const open = await bot.gh.paginate<PullRequest>(`/repos/${repo}/pulls?state=open`, { token }, 3);
       for (const pr of open.items) await send(bot.env, { kind: "evaluate", repo, pr: pr.number });
-      const closed = await bot.gh.request<{ number: number; merged_at: string | null }[]>("GET", `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`, { token });
+      const closed = await bot.gh.paginate<{ number: number; merged_at: string | null }>(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { token }, 3);
       const now = Date.now();
-      const merged = closed.data.filter((p) => p.merged_at && now - Date.parse(p.merged_at) < COVERAGE_WINDOW_MS && now - Date.parse(p.merged_at) > COVERAGE_SETTLE_MS && p.merged_at.slice(0, 10) >= coverageFrom);
+      const merged = closed.items.filter((p) => p.merged_at && now - Date.parse(p.merged_at) < COVERAGE_WINDOW_MS && now - Date.parse(p.merged_at) > COVERAGE_SETTLE_MS && p.merged_at.slice(0, 10) >= coverageFrom);
       if (merged.length) {
         const have = await bot.registry.coverageNumbers(
           repo,
