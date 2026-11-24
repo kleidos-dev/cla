@@ -12,7 +12,7 @@ import { readSession } from "../../src/session";
 import { must, nowSeconds } from "../../src/util";
 import { CLIENT_ID, SIGNIN_CLIENT_ID, commit } from "../fakegh";
 import type { FakePr, User } from "../fakegh";
-import { Browser, CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, openPr, queueDown, restoring, sessionHeader, sessionSet, world } from "./support";
+import { Browser, CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, NEAR_ORIGINS, openPr, queueDown, restoring, sessionHeader, sessionSet, world } from "./support";
 import type { World } from "./support";
 
 restoring();
@@ -183,10 +183,10 @@ describe("an acceptance through the sign-in app", () => {
 });
 
 describe("an acceptance that is refused", () => {
-  it("from another site, or from no origin, is refused before the form is read", async () => {
+  it("from another site, one whose origin only looks like the site's, or from no origin, is refused before the form is read", async () => {
     const w = await world();
     const { form } = await atAcceptance(w);
-    for (const headers of [{ origin: "https://evil.example" }, { origin: "null" }, { "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "none" }]) {
+    for (const headers of [...NEAR_ORIGINS.map((origin) => ({ origin })), { origin: "null" }, { "sec-fetch-site": "cross-site" }, { "sec-fetch-site": "none" }]) {
       await expectMessage(await agree(w, { ...form, accept: "yes" }, headers), 403, "refusedOrigin");
     }
     expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });

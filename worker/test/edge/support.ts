@@ -35,6 +35,12 @@ export const alice = { id: 123456, login: "alice", type: "User" as const };
 export const bob = { id: 234567, login: "bob", type: "User" as const };
 export const carol = { id: 345678, login: "carol", type: "User" as const };
 
+/**
+ * Origins that are not the site's own though they begin with it or differ
+ * from it only in case, scheme or port: the origin check is an exact match.
+ */
+export const NEAR_ORIGINS = ["https://evil.example", `${ORIGIN}.evil.example`, `${ORIGIN}:8443`, ORIGIN.replace("cla.", "CLA."), ORIGIN.replace("https:", "http:")];
+
 /** The page of one message (html.ts messagePage), by its status, title and sentence in the reader's language. */
 export async function expectMessage(r: Response, status: number, key: MessageKey, lang: Lang = "en"): Promise<string> {
   const html = await r.text();

@@ -13,7 +13,7 @@ import { OAUTH_COOKIE, OAUTH_TTL, SESSION_COOKIE, readTransaction } from "../../
 import { b64urlEncode, must, nowSeconds, utf8 } from "../../src/util";
 import { CLIENT_ID, SIGNIN_CLIENT_ID } from "../fakegh";
 import type { FakePr, User } from "../fakegh";
-import { CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, openPr, restoring, sent, sessionHeader, sessionSet, transactionHeader, world } from "./support";
+import { CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, expectMessage, keysOf, lines, NEAR_ORIGINS, openPr, restoring, sent, sessionHeader, sessionSet, transactionHeader, world } from "./support";
 import type { World } from "./support";
 
 restoring();
@@ -360,10 +360,10 @@ describe("the sign-out", () => {
     expect(lines(w).at(-1)).toEqual({ msg: "grant revocation failed", status: 0 });
   });
 
-  it("from another site, or with no origin, is refused and keeps the session", async () => {
+  it("from another site, one whose origin only looks like the site's, or with no origin, is refused and keeps the session", async () => {
     const w = await world();
     const cookie = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", token: "ghu_x" });
-    for (const headers of [{ ...form, origin: "https://evil.example" }, { ...form, origin: "null" }, { "content-type": form["content-type"] }, { ...form, "sec-fetch-site": "cross-site" }, { ...form, "sec-fetch-site": "same-site" }]) {
+    for (const headers of [...NEAR_ORIGINS.map((origin) => ({ ...form, origin })), { ...form, origin: "null" }, { "content-type": form["content-type"] }, { ...form, "sec-fetch-site": "cross-site" }, { ...form, "sec-fetch-site": "same-site" }]) {
       const r = await post(w, { ...headers, cookie }, "lang=es");
       await expectMessage(r, 403, "refusedOrigin");
       expect(r.headers.getSetCookie()).toEqual([]);
