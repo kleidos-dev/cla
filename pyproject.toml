@@ -25,6 +25,6 @@ enable_error_code = ["ignore-without-code"]
 # <<< kleidos-quality mypy
 python_version = "3.15"
 # The recorder and verifier and their tests (the tests import cla.py from
-# beside it).
-files = ["registry"]
-mypy_path = ["registry"]
+# beside it), and the tools that measure them.
+files = ["registry", "tests/tools/py"]
+mypy_path = ["registry", "tests/tools/py"]

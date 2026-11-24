@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What the measures of registry/cla.py leave out, each entry with its reason:
+# "unreachable" and "equivalent" with the argument, "boundary" and "tool" with
+# the test that covers it another way. tests/tools/py/ fails on a miss that is
+# not here and on an entry that is now covered, killed or gone;
+# tests/floors/register.toml says how many there may be.
+
+[[entry]]
+kind = "line"
+file = "registry/cla.py"
+function = ""
+text = "sys.exit(main())"
+reason = "boundary"
+why = "It runs only when the file is started, and the measure imports it."
+test = "test_command.Child"
+
+[[entry]]
+kind = "condition"
+file = "registry/cla.py"
+function = ""
+text = "__name__ == '__main__'"
+in = "__name__ == '__main__'"
+reason = "boundary"
+why = "It is true only when the file is started, and the measure imports it."
+test = "test_command.Child"

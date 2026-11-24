@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# How many statements, conditions and mutants of registry/cla.py the list in
+# tests/exclusions/register.toml leaves out. Nothing else is missed: zero
+# statements, branches, conditions and mutants without a test that checks them.
+# A number only falls; one that rises needs a dated line under [raised].
+
+[listed]
+line = 1
+condition = 1
+mutant = 0
+
+[raised]
