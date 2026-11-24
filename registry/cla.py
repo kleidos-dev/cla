@@ -46,11 +46,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import email.utils
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import secrets
@@ -152,8 +154,10 @@ def parse_time(s: Any) -> dt.datetime | None:
         return None
 
 
-def parse_http_date(s: str) -> dt.datetime | None:
+def parse_http_date(s: str | None) -> dt.datetime | None:
     """An HTTP ``Date`` header (RFC 9110 IMF-fixdate), as UTC."""
+    if s is None:
+        return None
     try:
         d = email.utils.parsedate_to_datetime(s)
         return d.astimezone(dt.UTC) if d.tzinfo else None
@@ -253,10 +257,8 @@ def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
     return out
 
 
-def record_valid(config: dict[str, Any], rec: dict[str, Any] | None) -> bool:
+def record_valid(config: dict[str, Any], rec: dict[str, Any]) -> bool:
     """Whether a record counts now: a version still accepted, with that version's digest."""
-    if not rec:
-        return False
     return rec.get("version") in config["accepted_versions"] and record_published(config, rec)
 
 
@@ -275,10 +277,10 @@ def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
 # --- GitHub -----------------------------------------------------------------
 
 
-#: A transport answers (status, body) or (status, body, headers); header names in lower case.
-Transport = Callable[
+#: A transport answers the status, the body and the headers, their names in lower case.
+type Transport = Callable[
     [str, str, dict[str, str], bytes | None],
-    "tuple[int, bytes] | tuple[int, bytes, dict[str, str]]",
+    tuple[int, bytes, dict[str, str]],
 ]
 
 
@@ -308,11 +310,7 @@ def _open(
         with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310  scheme checked above
             return res.status, res.read(), {k.lower(): v for k, v in res.headers.items()}
     except urllib.error.HTTPError as e:
-        return e.code, e.read(), {k.lower(): v for k, v in (e.headers or {}).items()}
-
-
-def _answer(res: tuple[Any, ...]) -> tuple[int, bytes, dict[str, str]]:
-    return res[0], res[1], (res[2] if len(res) > 2 else {})
+        return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
 
 
 @dataclass
@@ -345,7 +343,7 @@ class GitHub:
         if body is not None:
             headers["content-type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
-        return _answer(self.transport(method, f"{self.api}{path}", headers, data))
+        return self.transport(method, f"{self.api}{path}", headers, data)
 
     def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
         """The status and the JSON of an answer; None when it is not JSON (a proxy's error page)."""
@@ -433,7 +431,7 @@ def commit_files(
     The files are a record's JSON and its time-stamp token. Tried again when the branch moved
     between the read and the write, and when GitHub's answer says nothing: a commit whose answer was
     lost is on the branch by then, so it is found there and not made a second time."""
-    last = ""
+    last: Exception | None = None
     for attempt in range(attempts):
         try:
             head = _head(gh, registry)
@@ -441,7 +439,7 @@ def commit_files(
                 return head
             return _commit(gh, registry, head, additions, deletions, headline)
         except (RuntimeError, *UNREACHABLE) as e:
-            last = str(e)
+            last = e
     raise RuntimeError(f"could not commit {', '.join(additions)}: {last}")
 
 
@@ -524,10 +522,10 @@ def _openssl(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def tsr_text(tsr: bytes) -> str | None:
     """`openssl ts -reply -text` of a response, None when it does not parse."""
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "r.tsr"
-        path.write_bytes(tsr)
-        out = _openssl(["ts", "-reply", "-in", str(path), "-text"])
+    with tempfile.NamedTemporaryFile() as f:
+        f.write(tsr)
+        f.flush()
+        out = _openssl(["ts", "-reply", "-in", f.name, "-text"])
     return out.stdout if out.returncode == 0 else None
 
 
@@ -539,11 +537,12 @@ TSR_TIME_RE = re.compile(
 def tsr_time(text: str) -> dt.datetime | None:
     """The second a token states, whatever fraction of it an authority adds."""
     m = TSR_TIME_RE.search(text)
+    if m is None:
+        return None
     try:
-        when = m and dt.datetime.strptime(f"{m[1]} {m[2]} +0000", "%b %d %H:%M:%S %Y %z")
+        return dt.datetime.strptime(f"{m[1]} {m[2]} +0000", "%b %d %H:%M:%S %Y %z")
     except ValueError:
         return None
-    return when
 
 
 def verify_tsr(
@@ -572,14 +571,14 @@ def verify_tsr(
         or QTST_STATEMENT_DER not in tsr
     ):
         return "the time-stamp token is not a qualified one"
-    with tempfile.TemporaryDirectory() as d:
-        resp = Path(d) / "r.tsr"
-        resp.write_bytes(tsr)
-        args = ["ts", "-verify", "-in", str(resp), "-attime", str(int(when.timestamp()))]
+    with tempfile.NamedTemporaryFile() as response, tempfile.NamedTemporaryFile() as request:
+        response.write(tsr)
+        response.flush()
+        args = ["ts", "-verify", "-in", response.name, "-attime", str(int(when.timestamp()))]
         if query is not None:
-            q = Path(d) / "q.tsq"
-            q.write_bytes(query)
-            args += ["-queryfile", str(q)]
+            request.write(query)
+            request.flush()
+            args += ["-queryfile", request.name]
         else:
             args += ["-digest", digest_hex]
         for root in roots:
@@ -605,7 +604,8 @@ class TSAStamper:
     qualified: bool
     transport: Transport = tsa_transport
     sleep: Callable[[float], None] = time.sleep
-    last: float = 0.0
+    #: When the authority was last asked (time.monotonic); never, before the first time.
+    last: float = -math.inf
 
     @classmethod
     def from_config(cls, config: dict[str, Any], **kw: Any) -> TSAStamper | None:
@@ -617,21 +617,19 @@ class TSAStamper:
     def stamp(self, digest_hex: str) -> bytes | None:
         for attempt in range(2):
             wait = TSA_SPACING_S - (time.monotonic() - self.last)
-            if self.last and wait > 0:
+            if wait > 0:
                 self.sleep(wait)
             query = timestamp_query(digest_hex, secrets.randbits(63) | 1)
             self.last = time.monotonic()
             try:
-                status, body, _ = _answer(
-                    self.transport(
-                        "POST",
-                        self.url,
-                        {
-                            "content-type": "application/timestamp-query",
-                            "user-agent": "kleidos-cla-recorder",
-                        },
-                        query,
-                    )
+                status, body, _ = self.transport(
+                    "POST",
+                    self.url,
+                    {
+                        "content-type": "application/timestamp-query",
+                        "user-agent": "kleidos-cla-recorder",
+                    },
+                    query,
                 )
             except UNREACHABLE as e:
                 print(
@@ -841,10 +839,10 @@ def record_signin(
     app: SigninApp,
     repo: str,
     pr: int,
-    gid: int,
-    version: int,
-    lang: str,
-    site_commit: str,
+    gid: int | None,
+    version: int | None,
+    lang: str | None,
+    site_commit: str | None,
     token: str,
 ) -> str:
     """Records the acceptance the Worker reports for ``gid``, once GitHub vouches for the token.
@@ -861,10 +859,10 @@ def record_signin(
     answered before the token is checked: a re-run of a run that recorded
     it carries the same token, revoked by then, and must stay green."""
     try:
-        if gid <= 0:
+        if not _pos_int(gid):
             raise Refused("no account id")
         served(ctx, repo)
-        if not HEX40_RE.fullmatch(site_commit):
+        if not _matches(site_commit, HEX40_RE):
             raise Refused("the site commit is not a commit id")
         if lang not in LANGS:
             raise Refused("unknown interface language")
@@ -896,7 +894,7 @@ def record_signin(
         if status != 200:
             raise RuntimeError(f"checking the sign-in token answered {status}")
         answer = parse_json(body)
-        accepted = parse_http_date(headers.get("date", ""))
+        accepted = parse_http_date(headers.get("date"))
         authorized = parse_time(dig(answer, "created_at"))
         if accepted is None or authorized is None:
             raise RuntimeError("GitHub's answer has no usable Date or created_at")
@@ -972,7 +970,7 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
         if content is None or check_record(ctx.config, path, content) is not None:
             continue
         last = ctx.gh.get_list(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=1")
-        c = last[0] if last else None
+        c = next(iter(last), None)
         if (
             dig(c, "author", "id") != ACTIONS_BOT_ID
             or dig(c, "committer", "login") != "web-flow"
@@ -1022,13 +1020,15 @@ def _trailers(lines: list[str]) -> list[str]:
 
 
 #: An account that wrote part of a pull request: its id, its login and its type.
-Account = tuple[int, str, str]
+type Account = tuple[int, str, str]
 
 
 def noreply_account(email: object) -> Account | None:
     """The account a no-reply address names, and its type."""
     found = parse_noreply(email)
-    return found and (*found, "Bot" if found[1].endswith(BOT_SUFFIX) else "User")
+    if found is None:
+        return None
+    return *found, "Bot" if found[1].endswith(BOT_SUFFIX) else "User"
 
 
 def commit_authors(c: dict[str, Any]) -> tuple[list[Account], int]:
@@ -1142,15 +1142,12 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
     for gid, (kind, dates) in sorted(people.items()):
         if gid in exempt or all(covering_entity(ctx, gid, d) for d in dates):
             continue
-        if kind != "User":
+        rec = existing_record(ctx, gid) if kind == "User" else None
+        if rec is not None and record_valid(ctx.config, rec):
+            ids.append(gid)
+            versions[str(gid)] = rec["version"]
+        else:
             missing.append(gid)
-            continue
-        rec = existing_record(ctx, gid)
-        if rec is None or not record_valid(ctx.config, rec):
-            missing.append(gid)
-            continue
-        ids.append(gid)
-        versions[str(gid)] = rec["version"]
     if missing:
         raise Refused(
             f"merged without a signature from account id(s) {', '.join(map(str, missing))}"
@@ -1191,6 +1188,10 @@ def git_lines(root: Path, *args: str) -> list[str]:
     """What git says, line by line: a line feed ends a line and nothing else does, and bytes that
     are no text are shown."""
     return git(root, *args).decode("utf-8", "backslashreplace").split("\n")[:-1]
+
+
+#: What a finding of no commit is about.
+NO_COMMIT = "0" * 12
 
 
 @dataclass
@@ -1430,10 +1431,10 @@ class Pending(Exception):
 
 
 def cross_check(
-    config: dict[str, Any], registry: str, path: str, rec: dict[str, Any], witness: Witness
+    config: dict[str, Any], registry: str, rec: dict[str, Any], witness: Witness
 ) -> str | None:
-    """The record's evidence, re-read from GitHub: the acceptance comment it cites and the recorder
-    run that wrote it.
+    """The evidence of a record check_record passed, re-read from GitHub: the acceptance comment it
+    cites and the recorder run that wrote it.
 
     This is what a GitHub-signed github-actions[bot] commit made anywhere
     else (a fork's Actions, say) and pushed here cannot pass."""
@@ -1441,7 +1442,9 @@ def cross_check(
     if not _pos_int(run_id):
         return "no recorder run id"
     head_sha = None
-    if path.startswith("signatures/") and rec.get("schema") == 2:
+    if rec["kind"] == "coverage":
+        title = f"Record coverage {rec['repo']}#{rec['pr']}"
+    elif rec["schema"] == 2:
         m = PR_URL_RE.fullmatch(rec["evidence"]["context_pr_url"])
         if m is None:
             return "the evidence's context_pr_url is not a pull request address"
@@ -1452,7 +1455,7 @@ def cross_check(
         head_sha = rec["recorder_commit"]
         if rec["evidence"]["signin_client_id"] not in signin_client_ids(config):
             return "signed in through an app registry/config.json does not name"
-    elif path.startswith("signatures/"):
+    else:
         m = PR_URL_RE.fullmatch(rec["evidence"]["pr_url"])
         if m is None:
             return "the evidence's pr_url is not a pull request address"
@@ -1472,8 +1475,6 @@ def cross_check(
             return "the comment's text does not hash to comment_body_sha256"
         if (c["pr"], c["repo"]) != (pr, repo):
             return "the comment is not on the pull request the record names"
-    else:
-        title = f"Record coverage {rec.get('repo')}#{rec.get('pr')}"
     run = witness.run(run_id)
     if run is None:
         return f"recorder run {run_id} is not a run of {registry}"
@@ -1484,7 +1485,7 @@ def cross_check(
         or run.get("head_branch") != "main"
     ):
         return f"run {run_id} is not {RECORD_WORKFLOW_PATH} dispatched on main of {registry}"
-    if " ".join(str(run.get("display_title", "")).split()) != title:
+    if " ".join(str(run.get("display_title")).split()) != title:
         return f"run {run_id} recorded something else"
     if head_sha is not None and run.get("head_sha") != head_sha:
         return f"run {run_id} did not run the commit the record names"
@@ -1504,11 +1505,11 @@ def signin_client_ids(config: dict[str, Any]) -> set[str]:
     return ids
 
 
-CommitInfo = Callable[[str], "Facts | None"]
+type CommitInfo = Callable[[str], Facts | None]
 
 
 #: What a commit did to one path, as git diff-tree --name-status says it: the status and the path.
-Change = tuple[str, str]
+type Change = tuple[str, str]
 
 
 def change_shape(changes: list[Change]) -> str | None:
@@ -1523,7 +1524,7 @@ def change_shape(changes: list[Change]) -> str | None:
         return "changes nothing"
     paths = {path: status for status, path in changes}
     for path, status in paths.items():
-        if not RECORD_PATH_RE.fullmatch(path) or status[0] not in "AMD":
+        if not RECORD_PATH_RE.fullmatch(path) or status not in ("A", "M", "D"):
             return f"{status} {path}: only adding or changing one record (and its token) is allowed"
     if len(paths) == 1:
         ((path, status),) = paths.items()
@@ -1601,20 +1602,20 @@ def verify_history(
     cross-checked against the comment and the run they cite (``witness``)."""
     findings: list[Finding] = []
     log = git_lines(
-        root, "log", "--reverse", "--format=%H%x00%P%x00%an%x00%s", "--end-of-options", ref, "--"
+        root, "log", "--reverse", "--format=%H%x00%P%x00%s%x00%an", "--end-of-options", ref, "--"
     )
     commits = [line.split("\x00") for line in log]
-    start = 0
+    shas = [c[0] for c in commits]
+    checked: set[str] = set()
     if since:
-        shas = [c[0] for c in commits]
         if since not in shas:
             return Verified(
                 [Finding(since, "the previous head is no longer in the history (rewritten?)")], None
             )
-        start = shas.index(since) + 1
+        checked = set(shas[: shas.index(since) + 1])
     checked_through = since
     pending = False
-    for i, (sha, parents, author, subject) in enumerate(commits):
+    for i, (sha, parents, subject, author) in enumerate(commits):
         if len(parents.split()) > 1:
             findings.append(Finding(sha, "a merge commit: the history must be linear"))
         if i == 0:
@@ -1636,7 +1637,6 @@ def verify_history(
                 )
             )
         ]
-        before = len(findings)
         if owners:
             # A removal at its holder's request deletes; it never adds or changes an entry.
             for status, path in changes:
@@ -1667,9 +1667,9 @@ def verify_history(
                 problem = check_record(config, path, content)
                 if problem:
                     findings.append(Finding(sha, f"{path}: {problem}"))
-                elif witness is not None and i >= start and not pending:
+                elif witness is not None and sha not in checked and not pending:
                     try:
-                        problem = cross_check(config, registry, path, json.loads(content), witness)
+                        problem = cross_check(config, registry, json.loads(content), witness)
                     except Pending:
                         pending = True
                         problem = None
@@ -1683,7 +1683,7 @@ def verify_history(
             problem = tsr_problem(root, config, sha, gid)
             if problem:
                 findings.append(Finding(sha, f"signatures/individual/{gid}.tsr: {problem}"))
-        if i >= start and not pending and len(findings) == before:
+        if not pending:
             checked_through = sha
     return Verified(findings, checked_through if not findings else since)
 
@@ -1701,15 +1701,16 @@ def verify_coverage(
     for repo in config["served_repositories"]:
         for p in gh.pages(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc"):
             # Merged is updated: what follows was merged before that date too.
-            if str(p.get("updated_at"))[:10] < merged_since:
+            if str(p.get("updated_at")) < merged_since:
                 break
             merged = p.get("merged_at")
-            if not merged or merged[:10] < merged_since or merged > settled:
+            if not merged or merged < merged_since or merged > settled:
                 continue
             if gh.file(registry, f"coverage/{repo}/{p['number']}.json", BRANCH) is None:
+                sha = p.get("merge_commit_sha")
                 findings.append(
                     Finding(
-                        p.get("merge_commit_sha") or "0" * 12,
+                        NO_COMMIT if sha is None else sha,
                         f"{repo}#{p['number']} was merged with no coverage record",
                     )
                 )
@@ -1775,7 +1776,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise Refused("--comment-id is required")
                 print(record_sign(ctx, args.repo, args.pr, args.comment_id))
             elif args.kind == "signin":
-                token = signin_token_from_event(os.environ.get("GITHUB_EVENT_PATH", ""))
+                token = signin_token_from_event()
                 app = SigninApp(
                     str(config.get("signin_client_id") or ""),
                     os.environ.get("SIGNIN_CLIENT_SECRET", ""),
@@ -1788,10 +1789,10 @@ def main(argv: list[str] | None = None) -> int:
                         app,
                         args.repo,
                         args.pr,
-                        args.github_id or 0,
-                        args.version or 0,
-                        args.lang or "",
-                        args.site_commit or "",
+                        args.github_id,
+                        args.version,
+                        args.lang,
+                        args.site_commit,
                         token,
                     )
                 )
@@ -1833,15 +1834,15 @@ def main(argv: list[str] | None = None) -> int:
 TOKEN_RE = re.compile(r"gh[uo]_[A-Za-z0-9_]{20,255}")
 
 
-def signin_token_from_event(path: str) -> str:
+def signin_token_from_event() -> str:
     """The sign-in token from the workflow_dispatch payload.
 
     Masked in the log before anything else; never on a command line or in
     the environment."""
-    try:
-        token = dig(parse_json(Path(path).read_bytes()), "inputs", "signin_token")
-    except OSError:
-        token = None
+    token = None
+    with contextlib.suppress(KeyError, OSError):
+        event = parse_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+        token = dig(event, "inputs", "signin_token")
     if not _matches(token, TOKEN_RE):
         raise Refused("no well-formed sign-in token in the event")
     if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -1927,7 +1928,7 @@ def verify_workflows(gh: GitHub, registry: str) -> list[Finding]:
     for wf in ("record.yml", "verify.yml"):
         state = gh.get(f"/repos/{registry}/actions/workflows/{wf}").get("state")
         if state != "active":
-            findings.append(Finding("0" * 12, f"the workflow {wf} is {state}, not active"))
+            findings.append(Finding(NO_COMMIT, f"the workflow {wf} is {state}, not active"))
     return findings
 
 

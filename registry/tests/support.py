@@ -244,6 +244,7 @@ class FakeGitHub:
         if path == "/graphql":
             name += f" {self._asked(data['query'])}"
         self.calls.append(name)
+        assert len(self.calls) < 3000, "asked for ever"
         for i, (call, answer) in enumerate(self.upcoming):
             if name.startswith(call):
                 del self.upcoming[i]
@@ -405,6 +406,7 @@ class FakeGitHub:
         assert set(input["message"]) == {"headline"}, input
         changes = input["fileChanges"]
         assert set(changes) <= {"additions", "deletions"}, input
+        assert changes.get("deletions") != [], "an empty list of deletions"
         if input["expectedHeadOid"] != self.head:
             raise graphql.Refused("STALE_DATA")
         additions = {}

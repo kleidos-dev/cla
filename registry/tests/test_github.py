@@ -301,8 +301,8 @@ class Commits(RegisterTest):
         self.fake = FakeGitHub()
         self.gh = github(self.fake)
 
-    def commit(self, deletions: list[str] | None = None, attempts: int = 5) -> str:
-        return cla.commit_files(self.gh, REGISTRY, self.FILES, deletions or [], "sign: 1", attempts)
+    def commit(self, deletions: list[str] | None = None, **kw: Any) -> str:
+        return cla.commit_files(self.gh, REGISTRY, self.FILES, deletions or [], "sign: 1", **kw)
 
     def test_the_files_go_in_one_commit_on_the_head_that_was_read(self) -> None:
         self.assertEqual(self.commit(), self.fake.head)
@@ -369,9 +369,11 @@ class Commits(RegisterTest):
         ):
             self.setUp()
             self.fake.next("POST /graphql repository.ref", *[ok({"data": data})] * 5)
-            with self.assertRaises(RuntimeError) as caught:
+            with self.fails(
+                "could not commit signatures/individual/1.json, signatures/individual/1.tsr: "
+                "the branch signatures does not exist"
+            ):
                 self.commit()
-            self.assertTrue(str(caught.exception).endswith("the branch signatures does not exist"))
             self.assertEqual(self.fake.writes, [])
 
     def test_a_commit_whose_answer_was_lost_is_found_and_not_written_twice(self) -> None:

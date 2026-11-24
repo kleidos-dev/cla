@@ -14,13 +14,143 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cla
 import make_vectors
-from support import ALICE, BOB, CONFIG, NOW, REPO, VECTORS, coverage_record, dump
+from support import (
+    ALICE,
+    BOB,
+    CONFIG,
+    DIGEST,
+    NOW,
+    REPO,
+    SENTENCE,
+    VECTORS,
+    comment_record,
+    config_with,
+    coverage_record,
+    dump,
+    individual,
+    signin_record,
+)
 
 COVERAGE_PATH = f"coverage/{REPO}/7.json"
 
 
 def without(record: dict[str, Any], key: str) -> dict[str, Any]:
     return {k: v for k, v in record.items() if k != key}
+
+
+class Individual(unittest.TestCase):
+    """What no schema can say of a signature: its path, its version's flow and its times."""
+
+    def check(self, record: Any, path: str = individual(1), config: Any = CONFIG) -> str | None:
+        return cla.check_record(config, path, dump(record))
+
+    def test_the_path_names_the_account(self) -> None:
+        longest = 10**15
+        self.assertIsNone(self.check(comment_record(longest), individual(longest)))
+        self.assertIsNone(self.check(comment_record(2), individual(2)))
+        for path in (
+            individual(2),
+            "signatures/individual/1.txt",
+            "signatures/individual/1xjson",
+            "signatures/individual/01.json",
+            "signatures/individual/x/1.json",
+            "signatures/entity/1.json",
+            "signatures/individual/" + "1" * 5000 + ".json",
+        ):
+            with self.subTest(path):
+                self.assertEqual(
+                    self.check(comment_record(1), path), "the record does not match its path"
+                )
+
+    def test_a_number_too_long_for_an_account(self) -> None:
+        record = comment_record(10**16)
+        self.assertEqual(
+            self.check(record, individual(10**16)), "the record does not match its path"
+        )
+
+    def test_the_address_of_a_pull_request(self) -> None:
+        for url, good in (
+            ("https://github.com/a/b/pull/7", True),
+            (f"https://github.com/{'a' * 39}/{'b' * 100}/pull/{'9' * 10}", True),
+            ("https://github.com/A-9/b.C_-9/pull/1", True),
+            (f"https://github.com/{'a' * 40}/b/pull/7", False),
+            (f"https://github.com/a/{'b' * 101}/pull/7", False),
+            (f"https://github.com/a/b/pull/{'9' * 11}", False),
+            ("https://github.com//b/pull/7", False),
+            ("https://github.com/a//pull/7", False),
+            ("https://github.com/a/b/pull/0", False),
+            ("https://github.com/a/b/pull/", False),
+            ("https://github.com/a/b/pull/7/files", False),
+            ("https://githubxcom/a/b/pull/7", False),
+            ("http://github.com/a/b/pull/7", False),
+            ("https://github.com.example.org/a/b/pull/7", False),
+            ("https://github.com/a/b/issues/7", False),
+            ("https://github.com/a/b/pull/7\n", False),
+            ("", False),
+        ):
+            with self.subTest(url):
+                problem = None if good else "malformed record"
+                record = comment_record(1)
+                record["evidence"] |= {"pr_url": url, "comment_url": f"{url}#issuecomment-1"}
+                self.assertEqual(self.check(record), problem)
+                self.assertEqual(self.check(signin_record(1, {"context_pr_url": url})), problem)
+
+    def test_the_largest_number_the_worker_reads(self) -> None:
+        for run, good in ((2**53 - 1, True), (2**53, False)):
+            record = comment_record(1, recorder_run_id=run)
+            self.assertEqual(self.check(record), None if good else "malformed record")
+
+    def test_a_comment_posted_through_the_app_is_not_of_a_sign_in_version(self) -> None:
+        for method, problem in (("comment", None), ("web", "malformed record")):
+            record = comment_record(1, version=2, method=method)
+            self.assertEqual(self.check(record), problem)
+        config = config_with()
+        del config["versions"]["1"]["flow"]  # a version of before there were flows
+        self.assertIsNone(self.check(comment_record(1), config=config))
+
+    def test_a_sign_in_is_of_a_sign_in_version_and_its_sentence(self) -> None:
+        v1: dict[str, Any] = {
+            "version": 1,
+            "set_sha256": DIGEST,
+            "sentence_sha256": cla.sha256(SENTENCE),
+        }
+        self.assertEqual(self.check(signin_record(1, **v1)), "malformed record")
+        config = config_with()
+        config["versions"]["1"]["flow"] = "signin"
+        self.assertIsNone(self.check(signin_record(1, **v1), config=config))
+        config["versions"]["1"]["sentence"] += "x"
+        self.assertEqual(self.check(signin_record(1, **v1), config=config), "malformed record")
+
+    def test_the_agreement_is_that_of_the_registry(self) -> None:
+        config = config_with(agreement="another")
+        for record in (comment_record(1), signin_record(1)):
+            self.assertEqual(self.check(record, config=config), "malformed record")
+
+    def test_the_times_of_a_sign_in_are_in_order_to_the_second(self) -> None:
+        wrong = "the authorization, acceptance and recording times are out of order"
+        for authorized, accepted, recorded, problem in (
+            ("10:00:00", "10:00:00", "10:00:00", None),
+            ("10:01:00", "10:00:00", "10:00:00", None),
+            ("10:01:01", "10:00:00", "10:00:00", wrong),
+            ("10:00:00", "12:00:00", "12:00:00", None),
+            ("10:00:00", "12:00:01", "12:00:01", wrong),
+            ("10:00:00", "10:01:00", "10:00:00", None),
+            ("10:00:00", "10:01:01", "10:00:00", wrong),
+            ("10:00:00", "10:00:00", "23:59:59", None),
+        ):
+            with self.subTest(authorized=authorized, accepted=accepted, recorded=recorded):
+                record = signin_record(
+                    1,
+                    {"authorized_at": f"2026-12-01T{authorized}Z"},
+                    accepted_at=f"2026-12-01T{accepted}Z",
+                    recorded_at=f"2026-12-01T{recorded}Z",
+                )
+                self.assertEqual(self.check(record), problem)
+
+    def test_a_file_that_holds_no_object(self) -> None:
+        for content in (b"", b"[]", b"null", b"1", b"\xff", b"[" * 100_000):
+            for path in (individual(1), COVERAGE_PATH):
+                self.assertEqual(cla.check_record(CONFIG, path, content), "not a JSON object")
 
 
 class CoverageRecord(unittest.TestCase):
@@ -90,6 +220,7 @@ class CoverageRecord(unittest.TestCase):
             {"versions": {str(BOB): 1}},
             {"versions": {str(ALICE): 0}},
             {"versions": {str(ALICE): "1"}},
+            {"github_ids": [2**53], "versions": {str(2**53): 1}},
         )
         for over in cases:
             with self.subTest(over):

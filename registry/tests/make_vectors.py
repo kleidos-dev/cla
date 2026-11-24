@@ -118,8 +118,8 @@ EDGES: dict[str, tuple[str, ...]] = {
         "a-",
         "a_b",
         "alice[bot]",
-        "ſalice",
-        "K",
+        "\u017falice",
+        "\u212a",
     ),
     CLIENT: ("a" * 15, "a" * 16, "a" * 40, "a" * 41, "Iv1." + "a" * 12, "a-" + "a" * 16),
 }
@@ -137,7 +137,7 @@ def walk(schema: dict[str, Any], value: Any, at: Path_) -> Iterator[tuple[Path_,
             inner = schema.get("properties", {}).get(key)
             inner = inner or next(iter(schema.get("patternProperties", {}).values()))
             yield from walk(inner, v, [*at, key])
-        for key in ("0", "01", "1x", "١", ""):
+        for key in ("0", "01", "1x", "\u0661", ""):
             if "patternProperties" in schema:
                 yield [*at, key], "set", 1
     if isinstance(value, list):

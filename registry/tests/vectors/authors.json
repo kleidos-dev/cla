@@ -49,6 +49,8 @@
     {"name": "no name, and a line that does not end", "message": "Co-authored-by: <a@x.y>\nCo-authored-by: A <b@x.y", "emails": ["a@x.y"]},
     {"name": "the same trailer twice", "message": "Co-authored-by: A <a@x.y>\nCo-authored-by: A <a@x.y>", "emails": ["a@x.y", "a@x.y"]},
     {"name": "text after the bracket", "message": "Co-authored-by: A <a@x.y>.", "emails": []},
+    {"name": "a letter after the bracket, alone and after blanks", "message": "Co-authored-by: A <a@x.y>X\nCo-authored-by: A <a@x.y> X", "emails": []},
+    {"name": "no bracket and no blank", "message": "Co-authored-by:a@x.y>", "emails": []},
     {"name": "a blank inside", "message": "Co-authored-by: A <a @x.y>", "emails": []},
     {"name": "a tab inside", "message": "Co-authored-by: A <a\t@x.y>", "emails": []},
     {"name": "no address", "message": "Co-authored-by: A <>", "emails": []},
