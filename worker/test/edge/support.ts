@@ -42,14 +42,16 @@ function fixedParts(v: unknown): string[] {
 /**
  * Every English text of the pages that Spanish says otherwise, as a page
  * writes it: the page strings, the ways back and the one-message pages,
- * less what only names something (the parts both languages share).
+ * less what only names something (the parts both languages share). Read
+ * inside each test, not at collection: a string that is no string fails a
+ * test, not the file.
  */
-const ENGLISH_ONLY: string[] = (() => {
+function englishOnly(): string[] {
   const es = new Set([...fixedParts(S.es), BACK.sign.es, BACK.pr.es, ...Object.values(MESSAGES).flatMap((m) => m.es)]);
   const esText = [...es].join("\n");
   const en = [...fixedParts(S.en), BACK.sign.en, BACK.pr.en, ...Object.values(MESSAGES).flatMap((m) => m.en)];
   return [...new Set(en.flatMap((t) => t.split(/<[^>]*>/)).map((t) => t.trim()))].filter((t) => /[a-z]{3}/i.test(t) && !esText.includes(t));
-})();
+}
 
 /**
  * A page less what may be English on purpose: whatever is marked
@@ -64,7 +66,7 @@ function withoutEnglishParts(html: string): string {
 /** The English page strings a page in Spanish shows: none, on every Spanish page of the edge. */
 export function englishIn(html: string): string[] {
   const rest = withoutEnglishParts(html);
-  return ENGLISH_ONLY.filter((t) => rest.includes(t) || rest.includes(escapeHtml(t)));
+  return englishOnly().filter((t) => rest.includes(t) || rest.includes(escapeHtml(t)));
 }
 
 /** A Spanish page answered to an edge test is checked for English before the test reads it. */
