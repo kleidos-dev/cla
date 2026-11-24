@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import tomllib
 import unittest
 from collections import Counter
@@ -312,6 +313,7 @@ class Mutate(Planted):
 
         def chosen(**over: Any) -> list[int]:
             nothing = {"functions": None, "operators": None, "lines": None, "shard": None}
+            nothing |= {"since": None}
             args = argparse.Namespace(**{**nothing, "sample": None, "seed": 0, **over})
             order = {id(m): i for i, m in enumerate(mutator.mutants)}
             return [order[id(m)] for m in mutate.choose(mutator, args)]
@@ -334,6 +336,53 @@ class Mutate(Planted):
             self.assertEqual(found, value)
         done = self.run_tool("mutate.py", "--count")
         self.assertEqual((done.returncode, len(done.stdout.splitlines())), (0, 1))
+
+    def test_the_mutants_of_the_lines_a_change_made(self) -> None:
+        git = ("git", "-c", "user.name=t", "-c", "user.email=t@example.org")
+        for command in (("init", "-q"), ("add", "."), ("commit", "-q", "--no-gpg-sign", "-m", "p")):
+            subprocess.run([*git, *command], cwd=self.root, check=True, capture_output=True)
+        planted = self.root / "src" / "planted.py"
+        planted.write_text(
+            MODULE.replace('return "large"', 'return "large" if flag else "large"'), "utf-8"
+        )
+        mutator = mutate.Mutator(pysource.Source(planted))
+        nothing = {"functions": None, "operators": None, "lines": None, "shard": None}
+        args = argparse.Namespace(**nothing, since="HEAD", sample=None, seed=0)
+        chosen = mutate.choose(mutator, args)
+        self.assertEqual({mutator.describe(m)["line"] for m in chosen}, {"11"})
+        self.assertIn("flag", {mutator.describe(m)["text"] for m in chosen})
+        self.assertEqual(mutate.changed_lines(planted, "HEAD"), {11})
+        planted.write_text(MODULE, "utf-8")
+        self.assertEqual(mutate.changed_lines(planted, "HEAD"), set())
+        done = self.run_tool("mutate.py", "--since", "HEAD", "--count")
+        self.assertRegex(done.stdout, r"^0 of \d+ mutants: \{\}\n$")
+
+    def test_a_sample_says_so(self) -> None:
+        done = self.run_tool("mutate.py", "--sample", "2", "--seed", "7", "--count")
+        self.assertEqual(done.returncode, 0)
+        self.assertRegex(done.stdout, r"^notice: 2 of \d+ mutants, a sample by seed 7\n2 of ")
+
+    def test_the_shards_of_a_campaign_are_judged_whole(self) -> None:
+        self.write(MODULE, SUITE + FLAG + STARTED)
+        one, two = self.root / "1.json", self.root / "2.json"
+        for share, out in (("1/2", one), ("2/2", two)):
+            done = self.run_tool("mutate.py", "--shard", share, "--out", str(out))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        stale = self.listed(SURVIVOR)
+        alone = self.run_tool("mutate.py", "--shard", "1/2", "--list", stale)
+        self.assertEqual(alone.returncode, 0, "a shard alone cannot tell a stale entry")
+        whole = self.run_tool("mutate.py", "--merged", str(one), str(two))
+        self.assertEqual(whole.returncode, 0, whole.stdout)
+        self.assertRegex(whole.stdout, r"^(\d+) of \1 mutants: \{'killed': \1\}\n$")
+        listed = self.run_tool("mutate.py", "--merged", str(one), str(two), "--list", stale)
+        self.assertEqual(listed.returncode, 1)
+        self.assertIn("listed and killed, or gone: small: flag -> True\n", listed.stdout)
+        half = self.run_tool("mutate.py", "--merged", str(one))
+        self.assertEqual(half.returncode, 1)
+        self.assertRegex(half.stdout, r"the reports miss \d+ mutants and hold 0 more\n$")
+        twice = self.run_tool("mutate.py", "--merged", str(one), str(two), str(two))
+        self.assertEqual(twice.returncode, 1)
+        self.assertRegex(twice.stdout, r"the reports miss 0 mutants and hold \d+ more\n$")
 
     def test_the_mutants_of_a_pattern(self) -> None:
         self.assertEqual(
@@ -405,6 +454,60 @@ class Lists(unittest.TestCase):
         for path in (Path(cla.__file__), *Path(__file__).parent.glob("*.py"), *TOOLS.glob("*.py")):
             for hidden in ("pragma: no " + "cover", "pragma: no " + "branch", "NO" + "SONAR"):
                 self.assertNotIn(hidden, path.read_text("utf-8"), path.name)
+
+
+@unittest.skipIf(MEASURED, "this is the measure itself")
+class Limited(unittest.TestCase):
+    """tests/tools/limited.py: a campaign ends at its time or memory, its children's counted."""
+
+    def limited(self, seconds: str, gib: str, code: str) -> tuple[int, str, float]:
+        begun = time.monotonic()
+        done = subprocess.run(
+            [sys.executable, str(TOOLS.parent / "limited.py"), seconds, gib, "--"]
+            + [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done.returncode, done.stdout + done.stderr, time.monotonic() - begun
+
+    def test_the_command_s_own_exit_code_and_output_pass_through(self) -> None:
+        code, said, _ = self.limited("30", "1", "print('done'); raise SystemExit(3)")
+        self.assertEqual((code, said), (3, "done\n"))
+
+    def test_past_its_time_the_run_is_killed_and_says_so(self) -> None:
+        code, said, took = self.limited("0.5", "1", "import time; time.sleep(60)")
+        self.assertEqual(code, 137)
+        self.assertRegex(said, r"^limited: killed, over 0.5 s: ")
+        self.assertLess(took, 20)
+
+    def test_past_its_memory_the_run_is_killed_and_says_so(self) -> None:
+        held = "import time; x = b'x' * (600 << 20); time.sleep(60)"
+        code, said, took = self.limited("120", "0.25", held)
+        self.assertEqual(code, 137)
+        self.assertRegex(said, r"^limited: killed, over 0.25 GiB: ")
+        self.assertLess(took, 60)
+
+    def test_the_memory_of_what_it_starts_counts_too(self) -> None:
+        child = "import time; x = b'x' * (200 << 20); time.sleep(60)"
+        parent = (
+            "import subprocess, sys, time\n"
+            f"kids = [subprocess.Popen([sys.executable, '-c', {child!r}]) for _ in range(3)]\n"
+            "time.sleep(60)"
+        )
+        code, said, _ = self.limited("120", "0.5", parent)
+        self.assertEqual(code, 137)
+        self.assertIn("over 0.5 GiB", said)
+
+    def test_a_run_with_no_command_is_refused(self) -> None:
+        done = subprocess.run(
+            [sys.executable, str(TOOLS.parent / "limited.py"), "1", "1", "--"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("no command", done.stderr)
 
 
 @unittest.skipIf(MEASURED, "this is the measure itself")
