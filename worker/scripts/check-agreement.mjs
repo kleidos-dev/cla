@@ -62,9 +62,11 @@ export function check(root, { log = console.log, error = console.error } = {}) {
     }
     for (const [name, digest] of listed) {
       const bytes = read(join(dir, name));
-      const actual = bytes && sha(bytes);
-      if (!actual) fail(`v${version}: ${name} is listed in SHA256SUMS and cannot be read`);
-      else if (actual !== digest) fail(`v${version}: ${name} hashes to ${actual}, SHA256SUMS says ${digest}`);
+      if (!bytes) fail(`v${version}: ${name} is listed in SHA256SUMS and cannot be read`);
+      else {
+        const actual = sha(bytes);
+        if (actual !== digest) fail(`v${version}: ${name} hashes to ${actual}, SHA256SUMS says ${digest}`);
+      }
       if (info.files[name] !== digest) fail(`v${version}: config.json names ${info.files[name]} for ${name}, SHA256SUMS ${digest}`);
     }
     const set = sha(sums);
