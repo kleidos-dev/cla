@@ -49,6 +49,7 @@ import base64
 import datetime as dt
 import email.utils
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -99,6 +100,9 @@ SIGNIN_MAX_AGE = dt.timedelta(hours=2)
 QTST_STATEMENT_DER = bytes.fromhex("0607040081975e0101")
 #: ETSI EN 319 421 best-practices-ts-policy.
 QUALIFIED_POLICY = "0.4.0.2023.1.1"
+#: How a service that cannot be reached, or goes away before its answer ends, shows: a refused or
+#: cut connection, a time-out, a name that does not resolve, half an answer.
+UNREACHABLE = (OSError, http.client.HTTPException)
 #: Sectigo asks scripts to wait 15 s or more between time-stamp requests.
 TSA_SPACING_S = 15
 
@@ -539,17 +543,25 @@ class TSAStamper:
                 self.sleep(wait)
             query = timestamp_query(digest_hex, secrets.randbits(63) | 1)
             self.last = time.monotonic()
-            status, body, _ = _answer(
-                self.transport(
-                    "POST",
-                    self.url,
-                    {
-                        "content-type": "application/timestamp-query",
-                        "user-agent": "kleidos-cla-recorder",
-                    },
-                    query,
+            try:
+                status, body, _ = _answer(
+                    self.transport(
+                        "POST",
+                        self.url,
+                        {
+                            "content-type": "application/timestamp-query",
+                            "user-agent": "kleidos-cla-recorder",
+                        },
+                        query,
+                    )
                 )
-            )
+            except UNREACHABLE as e:
+                print(
+                    f"time-stamp attempt {attempt + 1}: the authority cannot be reached "
+                    f"({type(e).__name__})",
+                    file=sys.stderr,
+                )
+                continue
             if status == 200 and body:
                 problem = verify_tsr(body, digest_hex, self.roots, self.qualified, query)
                 if problem is None:
