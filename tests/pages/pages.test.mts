@@ -5,11 +5,12 @@
  * Worker (harness.mts) at its real origin through the fence (fence.mts):
  * every page in English and Spanish, light and dark, at 390 px and on a
  * desktop, with scripts on and off. Each page: its status, `lang` and
- * policy, no script and no console error, the same DOM with scripts off,
- * every control named, the keyboard in document order, and no axe violation
- * but those tests/exclusions/pages.toml lists; then the whole sign-in round
- * trip against a fake GitHub, and the session cookie as the browser keeps
- * it. Nothing leaves the machine: a request to any other host is a stray.
+ * policy, no script and no console error, no sideways scroll, the same DOM
+ * with scripts off, every control named, the keyboard in document order,
+ * and no axe violation but those tests/exclusions/pages.toml lists; then
+ * the whole sign-in round trip against a fake GitHub, and the session
+ * cookie as the browser keeps it. Nothing leaves the machine: a request to
+ * any other host is a stray.
  */
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -69,13 +70,12 @@ for (const js of [true, false])
       ] as const)
         VARIANTS.push({ name: `${lang}, ${scheme}, ${width} px, scripts ${js ? "on" : "off"}`, js, scheme, width, height, locale, lang });
 
+/** Each look of the pages (language, scheme and width), with scripts on and then off: one test holds both. */
+const LOOKS = VARIANTS.filter((v) => v.js).map((on) => [on, VARIANTS.find((off) => !off.js && off.scheme === on.scheme && off.width === on.width && off.lang === on.lang)!] as const);
+
 let browser: Browser;
 let wall: Fence;
 let ip = 0;
-/** What each page looked like with scripts on, to hold the same page with them off to it. */
-const dom = new Map<string, string>();
-/** Every axe violation seen: rule, page and language, how many nodes. */
-const violations = new Set<string>();
 
 before(async () => {
   await server.listen();
@@ -135,8 +135,8 @@ async function submit(page: Page): Promise<void> {
   await page.waitForLoadState("load");
 }
 
-/** Everything one page must be, in one variant. */
-async function checkPage(v: Variant, page: Page, errors: string[], path: string, status: number): Promise<void> {
+/** Everything one page must be, in one variant; `dom` holds what each page looked like with scripts on, for the same page with them off. */
+async function checkPage(v: Variant, page: Page, errors: string[], path: string, status: number, dom: Map<string, string>): Promise<void> {
   const res = await page.goto(ORIGIN + path);
   assert.ok(res, path);
   assert.equal(res.status(), status, path);
@@ -147,16 +147,17 @@ async function checkPage(v: Variant, page: Page, errors: string[], path: string,
   assert.equal(await page.locator("script").count(), 0, `${path} has a script`);
   assert.ok((await page.title()).length > 0, `${path} has no title`);
   const html = await page.content();
-  const key = `${path} ${v.lang} ${v.scheme} ${v.width}`;
   if (v.js) {
-    dom.set(key, html);
-    for (const x of (await new AxeBuilder({ page }).analyze()).violations) violations.add(`${x.id} ${path}`);
+    dom.set(path, html);
+    // On a phone the page fits its width: nothing to scroll sideways.
+    const fits = (await page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")) as [number, number];
+    assert.ok(fits[0] <= fits[1], `${path} is ${fits[0]} px wide in a viewport of ${fits[1]}`);
     const k = await keyboard(page);
     assert.deepEqual(k.tabbed, k.order, `${path}: Tab does not follow the document`);
     assert.equal(await page.locator("[tabindex]:not([tabindex='0']):not([tabindex='-1'])").count(), 0, path);
   } else {
     // The pages run no script, so what the browser built must not depend on one.
-    assert.equal(html, dom.get(key), `${path}: another DOM with scripts off`);
+    assert.equal(html, dom.get(path), `${path}: another DOM with scripts off`);
   }
   for (const control of await page.locator("input:not([type=hidden]), button, select, textarea").all()) {
     const name = (await control.getAttribute("aria-label")) ?? (await control.textContent()) ?? "";
@@ -168,26 +169,42 @@ async function checkPage(v: Variant, page: Page, errors: string[], path: string,
 }
 
 describe("every page, in every variant", () => {
-  for (const v of VARIANTS) {
-    it(v.name, async () => {
-      const { ctx, page, errors } = await open(v);
-      try {
-        for (const [path, status] of PAGES) await checkPage(v, page, errors, path, status);
-        for (const [from, to] of MOVED) {
-          await page.goto(ORIGIN + from);
-          assert.equal(page.url(), ORIGIN + to, from);
+  for (const [on, off] of LOOKS) {
+    it(`${on.lang}, ${on.scheme}, ${on.width} px, scripts on and then off`, async () => {
+      const dom = new Map<string, string>();
+      for (const v of [on, off]) {
+        const { ctx, page, errors } = await open(v);
+        try {
+          for (const [path, status] of PAGES) await checkPage(v, page, errors, path, status, dom);
+          for (const [from, to] of MOVED) {
+            await page.goto(ORIGIN + from);
+            assert.equal(page.url(), ORIGIN + to, from);
+          }
+          const missing = await page.goto(`${ORIGIN}/no-such-page`);
+          assert.deepEqual([missing?.status(), (await missing?.allHeaders())?.["content-type"]], [404, "text/plain; charset=utf-8"]);
+          assert.deepEqual(errors.filter((e) => !/404/.test(e)), [], v.name);
+        } finally {
+          await ctx.close();
         }
-        const missing = await page.goto(`${ORIGIN}/no-such-page`);
-        assert.deepEqual([missing?.status(), (await missing?.allHeaders())?.["content-type"]], [404, "text/plain; charset=utf-8"]);
-        assert.deepEqual(errors.filter((e) => !/404/.test(e)), []);
-      } finally {
-        await ctx.close();
       }
       assert.deepEqual(wall.stray, []);
     });
   }
 
-  it("no axe violation but the listed ones, each still there", () => {
+  it("no axe violation but the listed ones, each still there", async () => {
+    // Every page in every look with scripts on, here and not gathered by the tests above: this one passes alone.
+    const violations = new Set<string>();
+    for (const [v] of LOOKS) {
+      const { ctx, page } = await open(v);
+      try {
+        for (const [path] of PAGES) {
+          await page.goto(ORIGIN + path);
+          for (const x of (await new AxeBuilder({ page }).analyze()).violations) violations.add(`${x.id} ${path}`);
+        }
+      } finally {
+        await ctx.close();
+      }
+    }
     const list = listed("pages");
     assert.deepEqual([...violations].sort(), list.map((e) => `${e.text} ${e.function}`).sort());
     for (const e of list) assert.ok(e.kind === "axe rule" && ["unreachable", "equivalent", "boundary", "tool"].includes(e.reason) && e.why.trim() !== "", `${e.text} ${e.function}`);
