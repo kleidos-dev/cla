@@ -340,7 +340,7 @@ export class FakeGitHub {
     if (req.redirect !== "manual") return "a redirect would be followed";
     if (h.get("user-agent") !== USER_AGENT) return `user-agent ${h.get("user-agent")}`;
     if (h.get("x-github-api-version") !== "2022-11-28") return `api version ${h.get("x-github-api-version")}`;
-    const raw = /^\/repos\/[^/]+\/[^/]+\/contents\/(?!coverage\/)/.test(url.pathname);
+    const raw = /^\/repos\/[^/]+\/[^/]+\/contents\/(?!coverage\/[^/]+\/[^/]+$)/.test(url.pathname);
     if (h.get("accept") !== (raw ? "application/vnd.github.raw+json" : "application/vnd.github+json")) return `accept ${h.get("accept")}`;
     return null;
   }

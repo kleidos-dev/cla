@@ -351,28 +351,52 @@ describe("the coverage records of a repository", () => {
   it("are the numbers of the files in its directory, read once with a token that only reads contents", async () => {
     w.gh.setFile("signatures", `coverage/${SANDBOX}/7.json`, "{}");
     w.gh.setFile("signatures", `coverage/${SANDBOX}/1234567890.json`, "{}");
-    expect([...(await registry.coverageNumbers(SANDBOX))]).toEqual([7, 1234567890]);
+    expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([7, 1234567890]);
     expect(asked()).toEqual([LISTING]);
     expect(permissions(LISTING)).toEqual([{ contents: "read" }]);
   });
 
   it("are none when the directory is not there", async () => {
-    expect([...(await registry.coverageNumbers(SANDBOX))]).toEqual([]);
+    expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([]);
   });
 
   it("are the files named by a number only", async () => {
     const file = (name: string, type = "file") => ({ name, type });
     listing([file("8.json"), file("08.json"), file("0.json"), file("8.json.bak"), file("x8.json"), file("8xjson"), file("12345678901.json"), file("9.json", "dir"), file("README.md")]);
-    expect([...(await registry.coverageNumbers(SANDBOX))]).toEqual([8]);
+    expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([8]);
   });
 
   it("are none when what is there is a file", async () => {
     listing({ name: "cla-sandbox", type: "file" });
-    expect([...(await registry.coverageNumbers(SANDBOX))]).toEqual([]);
+    expect([...(await registry.coverageNumbers(SANDBOX, []))]).toEqual([]);
   });
 
   it("that cannot be read are an error, not the absence of them", async () => {
     w.gh.answer(exactly(LISTING), () => new Response(null, { status: 503 }));
-    await expect(registry.coverageNumbers(SANDBOX)).rejects.toMatchObject({ kind: "transient" });
+    await expect(registry.coverageNumbers(SANDBOX, [])).rejects.toMatchObject({ kind: "transient" });
+  });
+
+  const directory = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `${i + 1}.json`, type: "file" }));
+
+  it("are asked one by one where GitHub's listing of a thousand may not hold them", async () => {
+    listing(directory(1000));
+    w.gh.setFile("signatures", `coverage/${SANDBOX}/1001.json`, "{}");
+    const numbers = await registry.coverageNumbers(SANDBOX, [7, 1001, 1002]);
+    expect([numbers.has(7), numbers.has(1000), numbers.has(1001), numbers.has(1002)]).toEqual([true, true, true, false]);
+    const file = (n: number) => `GET /repos/kleidos-dev/cla/contents/coverage/${SANDBOX}/${n}.json?ref=signatures`;
+    expect(asked()).toEqual([LISTING, file(1001), file(1002)]);
+    expect(permissions(file(1001))).toEqual([{ contents: "read" }]);
+  });
+
+  it("are not asked again where the listing is whole", async () => {
+    listing(directory(999));
+    expect((await registry.coverageNumbers(SANDBOX, [1001])).has(1001)).toBe(false);
+    expect(asked()).toEqual([LISTING]);
+  });
+
+  it("that cannot be asked one by one are an error, not the absence of them", async () => {
+    listing(directory(1000));
+    w.gh.answer(/1001\.json/, () => new Response(null, { status: 503 }));
+    await expect(registry.coverageNumbers(SANDBOX, [1001])).rejects.toMatchObject({ kind: "transient" });
   });
 });

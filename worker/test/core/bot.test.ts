@@ -1030,6 +1030,15 @@ describe("the cron", () => {
     expect(w.gh.seen(/coverage/)).toEqual([]);
   });
 
+  it("of one whose record is past the thousand files GitHub lists is not asked for again", async () => {
+    only();
+    const [covered, missing] = [merged(HOUR, { updated_at: time(NOW) }), merged(HOUR)];
+    w.gh.answer(new RegExp(`/contents/coverage/${SANDBOX}\\?`), () => json(Array.from({ length: 1000 }, (_, i) => ({ name: `${100_000 + i}.json`, type: "file" }))));
+    w.gh.setFile("signatures", `coverage/${SANDBOX}/${covered.number}.json`, "{}");
+    await cron(b);
+    expect(coverageAsked()).toEqual([missing.number]);
+  });
+
   it("goes on to the next repository when the app is not installed on one, or on an account not allowed", async () => {
     w.gh.addRepo("stranger/repo", { installation: 9, account: 4242 });
     only(["kleidos-dev/gone", "stranger/repo", SANDBOX]);

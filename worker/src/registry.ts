@@ -73,6 +73,8 @@ export type SignatureRecord = CommentRecord | SigninRecord;
 export const CONFIG_PATH = "registry/config.json";
 export const ENTITIES_PATH = "registry/entities.json";
 export const SIGNATURES_BRANCH = "signatures";
+/** GitHub lists at most this many files of a directory. */
+const DIRECTORY_LIMIT = 1000;
 export const RECORD_WORKFLOW = "record.yml";
 /** github-actions[bot], the author of every commit the recorder makes. */
 export const ACTIONS_BOT_ID = 41898282;
@@ -279,20 +281,29 @@ export class Registry {
     return (await this.lastCommit(id))?.sha ?? null;
   }
 
-  /** The pull request numbers of a repository that have a coverage record (one directory listing). */
-  async coverageNumbers(repo: string): Promise<Set<number>> {
+  /**
+   * The pull request numbers of a repository that have a coverage record:
+   * one directory listing, and the file of each number asked about once the
+   * listing is as long as GitHub lets one be.
+   */
+  async coverageNumbers(repo: string, asked: number[]): Promise<Set<number>> {
+    const out = new Set<number>();
+    let files: unknown;
     try {
-      const r = await this.gh.request<{ name: string; type: string }[]>("GET", `/repos/${this.repo}/contents/coverage/${repo}?ref=${SIGNATURES_BRANCH}`, { token: await this.readToken() });
-      const out = new Set<number>();
-      for (const f of Array.isArray(r.data) ? r.data : []) {
-        const m = /^([1-9][0-9]{0,9})\.json$/.exec(f.name);
-        if (m && f.type === "file") out.add(Number(m[1]));
-      }
-      return out;
+      files = (await this.gh.request("GET", `/repos/${this.repo}/contents/coverage/${repo}?ref=${SIGNATURES_BRANCH}`, { token: await this.readToken() })).data;
     } catch (e) {
-      if (e instanceof GitHubError && e.kind === "not_found") return new Set();
+      if (e instanceof GitHubError && e.kind === "not_found") return out;
       throw e;
     }
+    if (!Array.isArray(files)) return out;
+    for (const f of files as { name: string; type: string }[]) {
+      const m = /^([1-9][0-9]{0,9})\.json$/.exec(f.name);
+      if (m && f.type === "file") out.add(Number(m[1]));
+    }
+    if (files.length >= DIRECTORY_LIMIT) {
+      for (const n of asked) if (!out.has(n) && (await this.raw(`coverage/${repo}/${n}.json`, SIGNATURES_BRANCH)) !== null) out.add(n);
+    }
+    return out;
   }
 
   /** Dispatches the registry's recorder; it re-reads everything from GitHub itself. */

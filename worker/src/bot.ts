@@ -327,7 +327,10 @@ export async function cron(bot: Bot): Promise<void> {
       const now = Date.now();
       const merged = closed.data.filter((p) => p.merged_at && now - Date.parse(p.merged_at) < COVERAGE_WINDOW_MS && now - Date.parse(p.merged_at) > COVERAGE_SETTLE_MS && p.merged_at.slice(0, 10) >= coverageFrom);
       if (merged.length) {
-        const have = await bot.registry.coverageNumbers(repo);
+        const have = await bot.registry.coverageNumbers(
+          repo,
+          merged.map((p) => p.number),
+        );
         for (const p of merged) {
           if (have.has(p.number)) continue;
           missingCoverage++;
