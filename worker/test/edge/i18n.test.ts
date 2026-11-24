@@ -217,6 +217,8 @@ describe("the language of a request", () => {
       ["es ; q=0.9 , en ; q=0.8", "es"],
       ["es; q=0.1, en; q=0.2", "en"],
       ["es;level=1;q=0.9, en;q=0.8", "es"],
+      ["est, es;q=0.5", "es"],
+      ["es;Q=0, en;q=0.1", "es"],
       [`${Array(20).fill("fr").join(",")},es`, "en"],
       [`${Array(19).fill("fr").join(",")},es`, "es"],
     ];

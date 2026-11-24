@@ -127,7 +127,8 @@ describe("a signed delivery", () => {
 
   it("is refused when its body is not a JSON object, with no budget spent", async () => {
     const w = await world();
-    for (const body of ["{not json", "", "7", '"text"', "null", "true"]) {
+    // JSON's own blanks are space, tab and the two line ends: no other space, nor a second byte order mark, comes before the object.
+    for (const body of ["{not json", "", "7", '"text"', "null", "true", "\u00a0{}", "{}\u2028", "\ufeff\ufeff{}"]) {
       const r = await deliver(w, body);
       expect(r.status, body).toBe(400);
       expect(await r.text()).toBe("bad json\n");
@@ -275,6 +276,9 @@ describe("mapEvent, the table from an event to its messages", () => {
   it("drops an event of a repository whose owner is not served, or names no owner", () => {
     for (const o of [{ id: 4242 }, { id: String(ORG_ID) }, { id: 0 }, {}, null]) expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 }, repository: { ...repository, owner: o } }, OPTS)).toEqual([]);
     expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 } }, OPTS)).toEqual([]);
+    // The owner is the repository's own: a served organization named elsewhere in the payload does not stand for it.
+    expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 }, repository: { ...repository, owner: { id: 4242 } }, organization: { id: ORG_ID } }, OPTS)).toEqual([]);
+    expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 }, repository: { full_name: SANDBOX, id: 77 }, organization: { id: ORG_ID } }, OPTS)).toEqual([]);
   });
 
   describe("a check run asked to run again", () => {

@@ -81,6 +81,8 @@ describe("the encoding of a response", () => {
       ["br;level=1", "br"],
       ["br;level=1;q=0, gzip;q=0", null],
       ["identity", null],
+      ["*", null],
+      ["br;q=0.0005", "br"],
       ["deflate", null],
       ["", null],
       [null, null],

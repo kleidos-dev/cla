@@ -64,14 +64,16 @@ describe("an inline rule", () => {
   });
 
   it("a link keeps only a target that is an address of a kept kind from its first character to its last", () => {
-    for (const target of ["xhttps://a.example/", "xhttp://a.example/", "xmailto:a@b.example", 'http://a.example/"x', "http://a.example/'x", "http://a.example/<x", 'mailto:a@b.example"x']) expect(renderInline(`[x](${target})`), target).toBe("x");
+    for (const target of ["xhttps://a.example/", "xhttp://a.example/", "xmailto:a@b.example", 'http://a.example/"x', "http://a.example/'x", "http://a.example/<x", 'mailto:a@b.example"x', "MAILTO:a@b.example", "Mailto:a@b.example"]) expect(renderInline(`[x](${target})`), target).toBe("x");
   });
 
   it("a bare address is a link when a space or a bracket comes before it, without the punctuation after it", () => {
     expect(renderInline("see https://x.example/a.")).toBe('see <a href="https://x.example/a">https://x.example/a</a>.');
     expect(renderInline("(http://x.example/a), b")).toBe('(<a href="http://x.example/a">http://x.example/a</a>), b');
     expect(renderInline("https://x.example/?q=1!")).toBe('<a href="https://x.example/?q=1">https://x.example/?q=1</a>!');
+    expect(renderInline("see https://x.example/a, b")).toBe('see <a href="https://x.example/a">https://x.example/a</a>, b');
     expect(renderInline("xhttps://x.example/")).toBe("xhttps://x.example/");
+    expect(renderInline("x>https://x.example/")).toBe("x&gt;https://x.example/");
     expect(renderInline("https://")).toBe("https://");
     expect(renderInline("hello")).toBe("hello");
   });
