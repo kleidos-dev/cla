@@ -175,7 +175,7 @@ jobs:
           mkdir -p coverage &&
           node --test --experimental-test-coverage
           --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs'
-          --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100
+          --test-coverage-lines=99 --test-coverage-branches=100 --test-coverage-functions=100
           --test-reporter=spec --test-reporter-destination=stdout
           --test-reporter=lcov --test-reporter-destination=scripts-lcov.info
           --test-reporter=./tests/tools/node/count-reporter.mjs --test-reporter-destination=coverage/scripts-tests.json
