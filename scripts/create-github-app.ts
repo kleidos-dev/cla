@@ -175,7 +175,8 @@ export async function main(s: Settings): Promise<number> {
   let handled = false;
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    // An http.Server always sets the request's url.
+    const url = new URL(req.url!, "http://127.0.0.1");
     const port = (server.address() as { port: number }).port;
     // Only this address: a page that rebinds a name to 127.0.0.1 sends its own Host and gets nothing, not even the state.
     if (req.headers.host !== `127.0.0.1:${port}`) {
@@ -250,7 +251,8 @@ export async function main(s: Settings): Promise<number> {
           page(res, s.web, failed.length ? 500 : 200, `<h1>${failed.length ? "Created, but not every secret was stored" : "Done"}</h1><p>Stored: ${escapeHtml(stored.join(", ") || "nothing")}.</p>${failed.length ? `<p>Not stored: ${escapeHtml(failed.join(", "))}. See the terminal.</p>` : "<p>You can close this tab and go back to the terminal.</p>"}`);
           finish(failed.length ? 1 : 0);
         } catch (e) {
-          console.error(`The exchange failed: ${e instanceof Error ? e.message : "unknown error"}. Nothing was stored.`);
+          // Everything the try can throw is an Error (fetch's, the key parser's, exchange's own).
+          console.error(`The exchange failed: ${(e as Error).message}. Nothing was stored.`);
           page(res, s.web, 502, "<p>The exchange with GitHub failed. See the terminal.</p>");
           finish(4);
         }
@@ -273,12 +275,5 @@ export async function main(s: Settings): Promise<number> {
   return code;
 }
 
-if (import.meta.main) {
-  main(settings(process.argv.slice(2), process.env)).then(
-    (code) => process.exit(code),
-    (e: unknown) => {
-      console.error(e instanceof Error ? e.message : "unknown error");
-      process.exit(1);
-    },
-  );
-}
+// main() does not reject: what can fail is answered inside it, and the server's callback is outside its chain.
+if (import.meta.main) void main(settings(process.argv.slice(2), process.env)).then((code) => process.exit(code));
