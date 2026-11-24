@@ -22,7 +22,7 @@ npm run check:agreement   # the digests
 npm run lint              # ESLint on the Kleidos quality kit's base
 npm run typecheck
 npm test                  # vitest in the Workers runtime, GitHub mocked
-npm run test:coverage     # the same, held to 100 % and to tests/floors and tests/exclusions
+npm run test:coverage     # the same, held to 100 %, to tests/floors and tests/exclusions, and to the number of tests
 npm run test:scripts      # the setup scripts and the agreement gate against a mock
 npm run test:workflows    # record.yml and verify.yml as GitHub runs them
 cd .. && python3 -m unittest discover -s registry/tests

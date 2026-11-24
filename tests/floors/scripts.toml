@@ -25,3 +25,11 @@ exclusions = 15
 "scripts/create-signin-app.ts" = { condition = 48, mutant = 429 }
 "worker/scripts/check-agreement.mjs" = { condition = 14, mutant = 94 }
 
+# The tests that ran in each file (tests/tools/ratchet.py tests): a run that
+# ran more or fewer, skipped one or left one to do fails. A number that falls,
+# or a file that leaves, needs a dated line in a table [lowered], such as
+# "tests scripts/test/check-agreement.test.ts 2026-11-24" = "why".
+[tests]
+"scripts/test/check-agreement.test.ts" = 25
+"scripts/test/create-github-app.test.ts" = 46
+"scripts/test/create-signin-app.test.ts" = 39

@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The tests of the Worker's suite, which measures both of its areas
+# (worker-core.toml and worker-edge.toml): vitest's JSON report of
+# `npm run test:coverage`, read by tests/tools/ratchet.py tests.
+
+# The tests that ran in each file (tests/tools/ratchet.py tests): a run that
+# ran more or fewer, skipped one or left one to do fails. A number that falls,
+# or a file that leaves, needs a dated line in a table [lowered], such as
+# "tests worker/test/core/keys.test.ts 2026-11-24" = "why".
+[tests]
+"worker/test/core/assess.test.ts" = 74
+"worker/test/core/authors.test.ts" = 137
+"worker/test/core/bot.test.ts" = 172
+"worker/test/core/env.test.ts" = 43
+"worker/test/core/github.test.ts" = 140
+"worker/test/core/keys.test.ts" = 31
+"worker/test/core/log.test.ts" = 97
+"worker/test/core/records.test.ts" = 596
+"worker/test/core/registry.test.ts" = 100
+"worker/test/core/session.test.ts" = 66
+"worker/test/core/util.test.ts" = 132
+"worker/test/core/vectors.test.ts" = 679
+"worker/test/edge/assets.test.ts" = 15
+"worker/test/edge/button.test.ts" = 13
+"worker/test/edge/html.test.ts" = 19
+"worker/test/edge/i18n.test.ts" = 19
+"worker/test/edge/index.test.ts" = 34
+"worker/test/edge/markdown.test.ts" = 24
+"worker/test/edge/messages.test.ts" = 15
+"worker/test/edge/texts.test.ts" = 22
+"worker/test/edge/web-agree.test.ts" = 27
+"worker/test/edge/web-auth.test.ts" = 32
+"worker/test/edge/web-pages.test.ts" = 19
+"worker/test/edge/web-sign.test.ts" = 46
+"worker/test/edge/web-state.test.ts" = 9
+"worker/test/edge/webhook.test.ts" = 40
+"worker/test/flow.test.ts" = 19
+"worker/test/markdown.test.ts" = 9
+"worker/test/pages.test.ts" = 15
+"worker/test/review.test.ts" = 25
+"worker/test/sign.test.ts" = 16
+"worker/test/signin.test.ts" = 10
+"worker/test/texts.test.ts" = 17
+"worker/test/webhook.test.ts" = 9

@@ -6,9 +6,11 @@
  * change what the code does. Runs in Node before every measured run.
  */
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { runInNewContext } from "node:vm";
-import { changedLines, patterns, shuffled } from "./changed.mjs";
-import { RUNTIME, independent, instrument, summarize } from "./mcdc.mjs";
+import { changedLines, coveredBy, patterns, sampled, shuffled, sourceFiles } from "./changed.mjs";
+import { RUNTIME, decisionsOf, independent, instrument, summarize } from "./mcdc.mjs";
+import { isSource } from "./sources.mjs";
 
 /** Runs the instrumented source in a world of its own and gives back its functions and what was measured. */
 function load(source) {
@@ -103,5 +105,30 @@ assert.match(said[0], new RegExp(`^notice: ${capped.planted} of the ${whole.plan
 assert.deepEqual(await patterns(new Map([["worker/src/a.ts", new Set([1, 2, 3, 4])]]), read, { max: 3, seed: 5 }), capped, "the same seed, the same choice");
 assert.deepEqual(shuffled([1, 2, 3, 4, 5], 7).sort(), [1, 2, 3, 4, 5]);
 assert.notDeepEqual(shuffled([1, 2, 3, 4, 5, 6, 7, 8], 7), shuffled([1, 2, 3, 4, 5, 6, 7, 8], 8));
+
+// The sources of the Worker, at any depth of src/, and nothing else; the MC/DC tool reads them all.
+assert.deepEqual(["src/a.ts", "src/rules/z.ts", "src/a.d.ts", "src/a.mjs", "test/a.ts", "node_modules/x/src/a.ts", "srcx/a.ts"].map(isSource), [true, true, false, false, false, false, false]);
+const sources = sourceFiles();
+assert.ok(sources.length > 10 && sources.every(isSource) && sources.includes("src/bot.ts"), `every source of src/: ${sources}`);
+const measuredFiles = new Set([...decisionsOf(join(import.meta.dirname, "..", "..")).keys()].map((k) => k.split("#")[0]));
+assert.ok(measuredFiles.size > 10 && [...measuredFiles].every((f) => sources.includes(f)), `the MC/DC tool reads the sources: ${[...measuredFiles]}`);
+
+// A change of the tests: the sources each changed test file is for, or every source.
+const tests = { "worker/test/core/keys.test.ts": 'import { a } from "../../src/keys";\nimport { must } from "../../src/util";', "worker/test/edge/web-sign.test.ts": 'import { b } from "../../src/session";', "worker/test/edge/assets.test.ts": 'import { AGREEMENTS } from "../../src/agreement.ts";', "worker/test/core/nothing.test.ts": "" };
+const all = ["src/agreement.ts", "src/keys.ts", "src/session.ts", "src/util.ts", "src/web.ts"];
+const readTest = (p) => tests[p] ?? null;
+assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts"], all, readTest), ["src/keys.ts", "src/util.ts"], "by its name and its imports");
+assert.deepEqual(coveredBy(["worker/test/edge/web-sign.test.ts", "worker/test/edge/assets.test.ts"], all, readTest), ["src/agreement.ts", "src/session.ts", "src/web.ts"], "web-sign is for web.ts");
+for (const other of ["worker/test/core/gone.test.ts", "worker/test/core/nothing.test.ts", "worker/test/helpers.ts", "worker/vitest.config.ts", "registry/tests/vectors/authors.json"]) {
+  assert.deepEqual(coveredBy(["worker/test/core/keys.test.ts", other], all, readTest), all, `${other} is for every source`);
+}
+const notes = [];
+const planted = new Set();
+const some = await sampled(["src/a.ts"], read, { max: 3, seed: 2, log: (l) => notes.push(l), planted });
+assert.ok(some.planted > 0 && some.planted <= 3 && planted.size === some.planted, `a sample plants what it says: ${some.planted}`);
+assert.match(notes[0], new RegExp(`^notice: ${some.planted} of the \\d+ mutants of 1 files the changed tests are for, chosen by seed 2$`));
+const again = await sampled(["src/a.ts"], read, { max: 10, seed: 2, planted });
+assert.ok(again.planted > 0 && planted.size === some.planted + again.planted, "what is planted already is not counted twice");
+assert.ok([...again.patterns].every((p) => !some.patterns.includes(p)), "a second sample takes other mutants");
 
 console.log("mcdc selftest: ok");

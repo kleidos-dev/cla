@@ -12,6 +12,7 @@ import ast
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -356,6 +357,40 @@ class Mutate(Planted):
         self.assertEqual(mutate.changed_lines(planted, "HEAD"), set())
         done = self.run_tool("mutate.py", "--since", "HEAD", "--count")
         self.assertRegex(done.stdout, r"^0 of \d+ mutants: \{\}\n$")
+
+    def test_a_change_of_the_tests_plants_the_mutants_its_tests_run(self) -> None:
+        git = ("git", "-c", "user.name=t", "-c", "user.email=t@example.org")
+        other = "import unittest, planted\n\nclass O(unittest.TestCase):\n"
+        other += "    def test_unused(self):\n        self.assertEqual(planted.unused(), 1)\n"
+        (self.root / "tests" / "test_other.py").write_text(other, "utf-8")
+        for command in (("init", "-q"), ("add", "."), ("commit", "-q", "--no-gpg-sign", "-m", "p")):
+            subprocess.run([*git, *command], cwd=self.root, check=True, capture_output=True)
+        asked = ("--since", "HEAD", "--tests-sample", "500", "--seed", "3")
+        unchanged = self.run_tool("mutate.py", *asked, "--count")
+        self.assertRegex(unchanged.stdout, r"^0 of \d+ mutants: \{\}\n$")
+        # The planted suite loses the assertion that tells n < LIMIT from n <= LIMIT.
+        weaker = SUITE.replace('        self.assertEqual(planted.small(10, True), "large")\n', "")
+        self.write(MODULE, weaker)
+        counted = self.run_tool("mutate.py", *asked, "--count")
+        notice = r"notice: (\d+) of the (\d+) other mutants test_planted runs, seed 3"
+        sampled = re.search(notice, counted.stdout)
+        self.assertIsNotNone(sampled, counted.stdout)
+        assert sampled is not None
+        self.assertEqual(sampled[1], sampled[2])
+        mutator = mutate.Mutator(pysource.Source(self.root / "src" / "planted.py"))
+        functions = {mutator.describe(m)["function"] for m in mutator.mutants}
+        self.assertIn("unused", functions)
+        self.assertLess(int(sampled[1]), len(mutator.mutants), "not those test_other alone runs")
+        self.assertEqual(mutate.changed_tests(self.root / "tests", "HEAD"), {"test_planted"})
+        code, found, said = self.results(*asked)
+        self.assertEqual(code, 1, said)
+        self.assertIn("n <= LIMIT", said)
+        self.assertNotIn("unused", {f["function"] for f in found}, "test_planted never runs it")
+        (self.root / "tests" / "helper.py").write_text("X = 1\n", "utf-8")
+        subprocess.run([*git, "add", "."], cwd=self.root, check=True, capture_output=True)
+        self.assertIsNone(mutate.changed_tests(self.root / "tests", "HEAD"), "a helper: every test")
+        every = self.run_tool("mutate.py", *asked, "--count")
+        self.assertIn("other mutants every test runs, seed 3", every.stdout)
 
     def test_a_sample_says_so(self) -> None:
         done = self.run_tool("mutate.py", "--sample", "2", "--seed", "7", "--count")

@@ -15,11 +15,15 @@
  *
  *   node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json \
  *     [--workers 2] [--timeout 60] [--files worker/scripts/check-agreement.mjs] \
- *     [--since <revision>] [--max 120] [--seed 1]
+ *     [--since <revision>] [--max 120] [--tests-max 60] [--seed 1]
  *
  * Run it under the memory guard; two workers at most on a developer's
  * machine. `--since` keeps the mutants of the lines changed since a
- * revision; `--max` a seeded sample of that many, with a notice.
+ * revision; `--max` a seeded sample of that many, with a notice. With
+ * `--tests-max`, a change since that revision to the tests or to what they
+ * run under (TESTED_BY) adds a seeded sample of at most that many mutants
+ * of the files those tests are for (`testedFiles`): a test that checks less
+ * kills fewer mutants and runs the same lines.
  * `--recheck <report>` runs each mutant of a report that was killed by
  * timeout once more with three times the limits, alone, and writes what it
  * then is: a loaded machine slows a whole run past a limit.
@@ -80,6 +84,27 @@ export function changedLines(since) {
     out.set(file, lines);
   }
   return out;
+}
+
+/** What the tests of the area run under besides their own files: a change to any of these is a change to every test. */
+export const TESTED_BY = ["scripts/test", "tests/tools/node", "scripts/tsconfig.json", "worker/package.json", "worker/package-lock.json"];
+
+/** The measured files whose tests a change since a revision touches: a test file's own (TESTS), or all of them for anything else. */
+export function testedFiles(changed) {
+  const out = new Set();
+  for (const path of changed) {
+    const of = MEASURED.filter((f) => TESTS[f].includes(path));
+    if (of.length === 0) return [...MEASURED];
+    for (const f of of) out.add(f);
+  }
+  return MEASURED.filter((f) => out.has(f));
+}
+
+/** The paths of the tests and of what they run under that changed since a revision, by git's own diff. */
+export function changedTests(since) {
+  const r = spawnSync("git", ["diff", "--name-only", "--no-renames", since, "--", ...TESTED_BY], { cwd: ROOT, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git diff: ${r.stderr}`);
+  return r.stdout.split("\n").filter(Boolean);
 }
 
 /** A sample of `n` drawn by a seeded generator, in the original order. */
@@ -145,21 +170,27 @@ function copyTree() {
 }
 
 /** Runs every mutant of `files` on `workers` copies; the report, in Stryker's shape. */
-export async function campaign({ files = MEASURED, workers = 2, limitMs = 60_000, lines = null, max = Infinity, seed = 1, log = () => undefined } = {}) {
+export async function campaign({ files = MEASURED, workers = 2, limitMs = 60_000, lines = null, max = Infinity, seed = 1, tested = [], testsMax = 0, log = () => undefined } = {}) {
   const jobs = [];
+  const others = [];
   const report = { schemaVersion: "2", thresholds: { high: 100, low: 100 }, files: {} };
-  for (const file of files) {
+  for (const file of new Set([...files, ...tested])) {
     const source = readFileSync(join(ROOT, file), "utf8");
     const all = await mutantsOf(file, source);
     report.files[file] = { language: file.endsWith(".ts") ? "typescript" : "javascript", source, mutants: [] };
     for (const m of all) {
       const at = m.location.start.line + 1;
-      if (lines && !lines.get(file)?.has(at)) continue;
-      jobs.push({ file, source, m });
+      if (files.includes(file) && !(lines && !lines.get(file)?.has(at))) jobs.push({ file, source, m });
+      else if (tested.includes(file)) others.push({ file, source, m });
     }
   }
   const chosen = sample(jobs, max, seed);
   if (chosen.length < jobs.length) log(`notice: ${chosen.length} of ${jobs.length} mutants, a sample by seed ${seed}`);
+  if (testsMax > 0 && others.length > 0) {
+    const more = sample(others, testsMax, seed);
+    log(`notice: ${more.length} of the ${others.length} other mutants of ${tested.join(", ")}, for the changed tests, a sample by seed ${seed}`);
+    chosen.push(...more);
+  }
   const copies = Array.from({ length: Math.max(1, Math.min(workers, chosen.length)) }, copyTree);
   // The unmutated tests must pass in a copy, and their count is what a survivor must reach.
   const expected = {};
@@ -253,7 +284,7 @@ export function unlisted(report) {
 }
 
 if (import.meta.main) {
-  const { values } = parseArgs({ options: { recheck: { type: "string" }, listed: { type: "string" }, out: { type: "string" }, workers: { type: "string", default: "2" }, timeout: { type: "string", default: "60" }, files: { type: "string" }, since: { type: "string" }, max: { type: "string" }, seed: { type: "string", default: "1" } } });
+  const { values } = parseArgs({ options: { recheck: { type: "string" }, listed: { type: "string" }, out: { type: "string" }, workers: { type: "string", default: "2" }, timeout: { type: "string", default: "60" }, files: { type: "string" }, since: { type: "string" }, max: { type: "string" }, "tests-max": { type: "string" }, seed: { type: "string", default: "1" } } });
   if (values.recheck) {
     const report = await recheck(JSON.parse(readFileSync(values.recheck, "utf8")), { limitMs: Number(values.timeout) * 1000, log: (l) => console.log(l) });
     writeFileSync(values.recheck, JSON.stringify(report, null, 1));
@@ -267,7 +298,7 @@ if (import.meta.main) {
     process.exit(problems.length ? 1 : 0);
   }
   if (!values.out) {
-    console.error("usage: scripts-mut.mjs --out <report.json> [--workers 2] [--timeout 60] [--files a,b] [--since rev] [--max n] [--seed n]");
+    console.error("usage: scripts-mut.mjs --out <report.json> [--workers 2] [--timeout 60] [--files a,b] [--since rev] [--max n] [--tests-max n] [--seed n]");
     process.exit(2);
   }
   const files = values.files ? values.files.split(",").filter(Boolean) : MEASURED;
@@ -277,7 +308,11 @@ if (import.meta.main) {
     process.exit(2);
   }
   const t0 = Date.now();
-  const report = await campaign({ files, workers: Math.min(2, Number(values.workers)), limitMs: Number(values.timeout) * 1000, lines: values.since ? changedLines(values.since) : null, max: values.max ? Number(values.max) : Infinity, seed: Number(values.seed), log: (l) => console.log(l) });
+  const testsMax = values.since && values["tests-max"] ? Number(values["tests-max"]) : 0;
+  const changed = testsMax > 0 ? changedTests(values.since) : [];
+  const tested = changed.length > 0 ? testedFiles(changed) : [];
+  if (changed.length > 0) console.log(`the tests changed: ${changed.join(", ")}`);
+  const report = await campaign({ files, workers: Math.min(2, Number(values.workers)), limitMs: Number(values.timeout) * 1000, lines: values.since ? changedLines(values.since) : null, max: values.max ? Number(values.max) : Infinity, seed: Number(values.seed), tested, testsMax, log: (l) => console.log(l) });
   mkdirSync(dirname(resolve(values.out)), { recursive: true });
   writeFileSync(values.out, JSON.stringify(report, null, 1));
   console.log(JSON.stringify(tally(report)), `${Math.round((Date.now() - t0) / 1000)} s`);

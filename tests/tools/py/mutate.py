@@ -21,9 +21,12 @@ A whole campaign runs under a memory and a time limit (AGENTS.md), with two work
         --list tests/exclusions/register.toml
 
 ``--since REVISION`` keeps the mutants of the lines changed since a revision (a pull request's), and
-``--sample`` caps them with a notice. ``--merged`` reads the ``--out`` reports of the shards of one
-campaign instead of running one: they must hold every mutant once, and the list is then judged as
-for a whole run, a stale entry included.
+``--sample`` caps them with a notice. ``--tests-sample N`` adds, when the change touches the suite
+or what it runs under (``TESTED_BY``), a seeded sample of at most N other mutants: of the statements
+the changed test modules run, or of the whole module for a change of a helper, a fixture or a tool
+(a test that checks less kills fewer mutants and runs the same lines). ``--merged`` reads the
+``--out`` reports of the shards of one campaign instead of running one: they must hold every mutant
+once, and the list is then judged as for a whole run, a stale entry included.
 """
 
 from __future__ import annotations
@@ -546,6 +549,51 @@ def choose(mutator: Mutator, args: argparse.Namespace) -> list[Mutant]:
     return chosen
 
 
+#: What the suite runs under besides its own folder, from the root of the repository: a change to
+#: any of these is a change to every test.
+TESTED_BY = ("tests/tools/py", "pyproject.toml", "requirements.txt", ".python-version")
+
+
+def changed_tests(tests: Path, since: str) -> set[str] | None:
+    """The test modules whose files changed since a revision, by name; None when anything else
+    the suite reads or runs under changed (a helper, a fixture, a vector, a tool): every test."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tests, capture_output=True, text=True, check=True
+        ).stdout
+
+    root = Path(git("rev-parse", "--show-toplevel").strip())
+    paths = [str(root / p) for p in TESTED_BY]
+    changed = git("diff", "--name-only", "--no-renames", since, "--", str(tests), *paths).split()
+    modules = set()
+    for name in changed:
+        path = root / name
+        if path.parent != tests or not re.fullmatch(r"test_\w+\.py", path.name):
+            return None
+        modules.add(path.stem)
+    return modules
+
+
+def tests_sample(
+    mutator: Mutator, chosen: list[Mutant], reach: Reach, modules: set[str] | None, args: Any
+) -> list[Mutant]:
+    """At most ``--tests-sample`` mutants besides the chosen ones, of the statements the changed
+    test modules run (of every statement, for None), drawn by the seed."""
+    taken = {id(m) for m in chosen}
+
+    def theirs(m: Mutant) -> bool:
+        return modules is None or any(
+            t.split(".")[0] in modules for t in reach.tests(mutator.lines(m))
+        )
+
+    pool = [m for m in mutator.mutants if id(m) not in taken and theirs(m)]
+    picked = random.Random(args.seed).sample(pool, min(args.tests_sample, len(pool)))  # noqa: S311
+    which = "every test" if modules is None else ", ".join(sorted(modules))
+    print(f"notice: {len(picked)} of the {len(pool)} other mutants {which} runs, seed {args.seed}")
+    return picked
+
+
 def changed_lines(path: Path, since: str) -> set[int]:
     """The lines (from 1) of a file that differ from a revision, by git's own diff."""
     diff = subprocess.run(
@@ -581,6 +629,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sample", type=int, help="at most so many of them, at random")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--since", help="only the lines changed since this revision")
+    ap.add_argument(
+        "--tests-sample",
+        type=int,
+        default=0,
+        help="with --since, so many for a change of the tests",
+    )
     ap.add_argument("--count", action="store_true", help="say how many there are and stop")
     ap.add_argument("--out", type=Path, help="every outcome, as JSON")
     ap.add_argument("--merged", type=Path, nargs="+", help="judge a campaign's shards as one")
@@ -596,15 +650,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.merged:
         return merged(mutator, args.merged, listed, file)
     chosen = choose(mutator, args)
+    os.environ["REGISTER_MEASURED"] = "1"  # the tests of this tool do not run in it
+    modules = changed_tests(tests, args.since) if args.since and args.tests_sample else set()
+    reach = reach_of(source, tests) if modules != set() else None
+    if reach is not None:
+        chosen += tests_sample(mutator, chosen, reach, modules, args)
     counts = collections.Counter(m.operator for m in chosen)
     print(f"{len(chosen)} of {len(mutator.mutants)} mutants: {dict(sorted(counts.items()))}")
     if args.count:
         return 0
     if not chosen:
         return judge([], listed, file, whole=not mutator.mutants)
-    os.environ["REGISTER_MEASURED"] = "1"  # the tests of this tool do not run in it
     begun = time.monotonic()
-    reach = reach_of(source, tests)
+    reach = reach or reach_of(source, tests)
     outcomes = campaign(source, mutator, chosen, reach, tests, args)
     found = [
         {**mutator.describe(o.mutant), "file": file, "result": o.result, "seconds": o.seconds}

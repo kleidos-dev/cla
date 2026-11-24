@@ -37,7 +37,7 @@ import sys
 import tempfile
 import tomllib
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,11 +47,15 @@ REASONS = ("unreachable", "equivalent", "boundary", "tool")
 KINDS = ("line", "branch", "function", "condition", "forced", "mutant")
 #: What there is of each kind in each file, as one report counts it.
 Counts = Counter[tuple[str, str]]
-SOURCES = (".ts", ".mjs", ".js", ".py")
+#: What a source file is: any of these, a declaration file aside.
+SOURCES = (".ts", ".mts", ".cts", ".mjs", ".cjs", ".js", ".py")
+DECLARATION = re.compile(r"\.d\.[cm]?ts$")
 #: Where a pragma may not be, and what one looks like. Spelled in two halves: this file is read too.
 PRAGMA_PLACES = ("registry", "worker/src", "worker/scripts", "worker/test", "scripts", "tests")
-#: The code the measures are for: every file of these is in the files of exactly one area.
-CODE = ("registry/cla.py", "worker/src/*.ts", "worker/scripts/*.mjs", "scripts/*.ts")
+#: The code the measures are for: every source file under these, at any depth, out of their test
+#: folders, is in the files of exactly one area.
+CODE = ("registry", "worker/src", "worker/scripts", "scripts")
+NOT_CODE = ("registry/tests/", "scripts/test/")
 PRAGMA = re.compile(
     "|".join(
         a + b
@@ -115,6 +119,12 @@ def relative(path: str) -> str:
     if p.is_absolute():
         return p.resolve().relative_to(ROOT).as_posix()
     return path if path.startswith(("worker/", "scripts/")) else f"worker/{path}"
+
+
+def from_root(path: str) -> str:
+    """A path of a test report from the root of the repository (the runners give absolute ones)."""
+    p = Path(path)
+    return p.resolve().relative_to(ROOT).as_posix() if p.is_absolute() else p.as_posix()
 
 
 def istanbul(report: Path) -> Iterator[Miss]:
@@ -206,7 +216,7 @@ def load(path: Path) -> dict[str, Any]:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
 
-def exclusions(path: Path) -> tuple[Counter[Miss], list[str]]:
+def exclusions(path: Path, kinds: tuple[str, ...] = KINDS) -> tuple[Counter[Miss], list[str]]:
     """The listed misses and what is wrong with the list itself."""
     entries: Counter[Miss] = Counter()
     problems = []
@@ -220,7 +230,7 @@ def exclusions(path: Path) -> tuple[Counter[Miss], list[str]]:
             e.get("operator", ""),
             squeeze(e.get("replacement", "")),
         )
-        if m.kind not in KINDS:
+        if m.kind not in kinds:
             problems.append(f"{path.name}: not a kind of miss: {m}")
         if e.get("reason") not in REASONS or not str(e.get("why", "")).strip():
             problems.append(f"{path.name}: no reason of {', '.join(REASONS)}, or no why: {m}")
@@ -317,6 +327,83 @@ def check(area: str, args: argparse.Namespace) -> list[str]:
     return problems + compare(found, entries, measured, files, floors["misses"])
 
 
+#: What a test of each status of vitest's JSON reporter counts as.
+VITEST = {
+    "passed": "tests",
+    "failed": "failed",
+    "skipped": "skipped",
+    "pending": "skipped",
+    "disabled": "skipped",
+    "todo": "todo",
+}
+
+
+def test_counts(report: Path) -> dict[str, Counter[str]]:
+    """How many tests of each file ran, were skipped, left to do or failed: vitest's JSON report,
+    or the report of tests/tools/node/count-reporter.mjs or tests/tools/py/count.py."""
+    data = json.loads(report.read_text())
+    out: dict[str, Counter[str]] = {}
+    if "testResults" in data:
+        for f in data["testResults"]:
+            c = out.setdefault(from_root(f["name"]), Counter(tests=0))
+            for t in f["assertionResults"]:
+                kind = VITEST.get(t["status"], "failed")
+                c[kind] += 1
+                c["tests"] += kind == "failed"
+            if f.get("status") == "failed" and not f["assertionResults"]:
+                c["failed"] += 1  # a file that did not load runs none
+        return out
+    for file, counts in data["files"].items():
+        out[from_root(file)] = Counter(counts)
+    return out
+
+
+def held_tests(floors: dict[str, Any], counts: dict[str, Counter[str]]) -> list[str]:
+    """Every file of the suite ran the tests [tests] says, no more and no fewer, and none was
+    skipped or left to do: a test that does not run checks nothing, and passes."""
+    held: dict[str, int] = floors.get("tests", {})
+    problems = [] if counts else ["no test ran: the report holds no test file"]
+    for file, c in sorted(counts.items()):
+        problems += [
+            f"{c[kind]} {kind} in {file}: a test runs, or it is deleted"
+            for kind in ("skipped", "todo")
+            if c[kind]
+        ]
+        if c["failed"]:
+            problems.append(f"{c['failed']} failed in {file}")
+        if file not in held:
+            problems.append(f"{c['tests']} tests ran in {file}, which [tests] does not name")
+        elif c["tests"] != held[file]:
+            problems.append(f"{c['tests']} tests ran in {file}, and [tests] says {held[file]}")
+    problems += [
+        f"no test ran in {f}, and [tests] says {n}" for f, n in held.items() if f not in counts
+    ]
+    return problems
+
+
+def suite(name: str, reports: list[str]) -> list[str]:
+    """The tests of a suite against its floors; and, for a suite that has a list and no files (its
+    misses are its own, not the ratchet's), the list against its floor."""
+    floors = load(ROOT / "tests" / "floors" / f"{name}.toml")
+    if not floors:
+        return [f"tests/floors/{name}.toml is missing"]
+    counts: dict[str, Counter[str]] = {}
+    for report in map(Path, reports):
+        for file, c in test_counts(report).items():
+            counts[file] = counts.get(file, Counter()) + c
+    problems = held_tests(floors, counts)
+    floor = floors.get("misses", {}).get("exclusions")
+    if not floors.get("files") and floor is not None:
+        kinds = tuple(floors.get("kinds", KINDS))
+        entries, wrong = exclusions(ROOT / "tests" / "exclusions" / f"{name}.toml", kinds)
+        problems += wrong
+        if entries.total() > floor:
+            problems.append(f"exclusions: {entries.total()} listed, {floor} at most")
+        elif entries.total() < floor:
+            problems.append(f"exclusions: {entries.total()} listed, below its floor of {floor}")
+    return problems
+
+
 def shares(floors: dict[str, Any], n: int) -> list[list[str]]:
     """The area's files in n shares of about as many mutants each; every file is in one."""
     out: list[list[str]] = [[] for _ in range(n)]
@@ -355,28 +442,53 @@ def lowered(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     problems = [
         f"{f} left the area with no line in [lowered]"
         for f in old.get("files", [])
-        if f not in new["files"] and not said(*lines, f)
+        if f not in new.get("files", []) and not said(*lines, f)
     ]
     for f, kinds in old.get("measured", {}).items():
         for k, n in kinds.items():
             now = new.get("measured", {}).get(f, {}).get(k, 0)
             if now < n and not said(*lines, f, f"{k} {f}"):
                 problems.append(f"{k} of {f} went from {n} to {now} with no line in [lowered]")
+    for f, n in old.get("tests", {}).items():
+        now = new.get("tests", {}).get(f, 0)
+        if now < n and not said(*lines, f"tests {f}"):
+            problems.append(f"the tests of {f} went from {n} to {now} with no line in [lowered]")
     return problems
 
 
-def areas(root: Path) -> list[str]:
-    """A source file in no area is measured by nothing, and one in two is counted twice."""
-    code = {
-        p.relative_to(root).as_posix()
-        for pattern in CODE
-        for p in root.glob(pattern)
-        if not p.name.endswith(".d.ts")
+def code_files(root: Path) -> set[str]:
+    """Every source file under the roots of CODE, at any depth, out of the test folders."""
+    found = set()
+    for base in CODE:
+        for p in (root / base).rglob("*"):
+            name = p.relative_to(root).as_posix()
+            skipped = {"node_modules", "__pycache__"} & set(p.parts) or name.startswith(NOT_CODE)
+            if p.is_file() and p.suffix in SOURCES and not DECLARATION.search(name) and not skipped:
+                found.add(name)
+    return found
+
+
+def area_files(root: Path) -> dict[str, list[str]]:
+    """The files each floors file names, by its name (a suite of tests alone names none)."""
+    return {
+        path.stem: load(path).get("files", [])
+        for path in sorted((root / "tests" / "floors").glob("*.toml"))
     }
+
+
+def areas(root: Path) -> list[str]:
+    """A source file in no area is measured by nothing, one in two is counted twice, and one that a
+    tool of its area cannot reach is measured by the others alone."""
+    return placed(root) + out_of_reach(root, area_files(root))
+
+
+def placed(root: Path) -> list[str]:
+    """Every source file in exactly one area, and every file of an area a source file."""
+    code = code_files(root)
     held: dict[str, list[str]] = {}
-    for path in sorted((root / "tests" / "floors").glob("*.toml")):
-        for file in load(path).get("files", []):
-            held.setdefault(file, []).append(path.stem)
+    for area, files in area_files(root).items():
+        for file in files:
+            held.setdefault(file, []).append(area)
     problems = []
     for file in sorted(code | set(held)):
         where = ", ".join(held.get(file, []))
@@ -386,6 +498,184 @@ def areas(root: Path) -> list[str]:
             problems.append(f"{file} is in no area: name it in tests/floors/<area>.toml")
         elif len(held[file]) > 1:
             problems.append(f"{file} is in {len(held[file])} areas: {where}")
+    return problems
+
+
+def glob_match(pattern: str, path: str) -> bool:
+    """A glob as coverage.py, Node and StrykerJS read one: ``**`` crosses folders, ``*`` and ``?``
+    stay inside one."""
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        else:
+            out += {"*": "[^/]*", "?": "[^/]"}.get(pattern[i], re.escape(pattern[i]))
+            i += 1
+    return re.fullmatch(out, path) is not None
+
+
+#: What one tool measures of a list of files.
+Reach = Callable[[list[str]], set[str]]
+
+
+def by_globs(includes: list[str], excludes: list[str] | None = None, base: str = "") -> Reach:
+    """The files under ``base`` that an include matches and no exclude does, from ``base``."""
+
+    def reach(files: list[str]) -> set[str]:
+        def matched(f: str, globs: list[str]) -> bool:
+            return any(glob_match(g, f.removeprefix(base)) for g in globs)
+
+        under = [f for f in files if f.startswith(base)]
+        return {f for f in under if matched(f, includes) and not matched(f, excludes or [])}
+
+    return reach
+
+
+def named(names: set[str]) -> Reach:
+    return lambda files: set(files) & names
+
+
+def under(roots: list[str]) -> Reach:
+    return lambda files: {f for f in files for r in roots if f == r or f.startswith(f"{r}/")}
+
+
+def strings(text: str) -> list[str]:
+    return re.findall(r'"([^"]+)"', text)
+
+
+def found(pattern: str, text: str) -> str:
+    """The first group of a pattern of a tool's configuration, or nothing: a tool configured in a
+    way this file cannot read reaches no file, and says so."""
+    m = re.search(pattern, text, re.DOTALL)
+    return m[1] if m else ""
+
+
+def worker_sources(root: Path) -> Reach:
+    """worker/test/tools/sources.mjs's own isSource, which mcdc.mjs and changed.mjs use."""
+    url = (root / "worker" / "test" / "tools" / "sources.mjs").as_uri()
+    code = (
+        f"const {{ isSource }} = await import({json.dumps(url)});"
+        "console.log(JSON.stringify(process.argv.slice(1).filter((f) => isSource(f))));"
+    )
+
+    def reach(files: list[str]) -> set[str]:
+        rel = [f.removeprefix("worker/") for f in files if f.startswith("worker/")]
+        ran = subprocess.run(
+            ["node", "--input-type=module", "-e", code, *rel],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return {f"worker/{f}" for f in json.loads(ran.stdout)} if ran.returncode == 0 else set()
+
+    return reach
+
+
+def tools(root: Path) -> dict[str, list[tuple[str, Reach]]]:
+    """Each tool of each kind of area, with what it is configured to reach (relative paths)."""
+
+    def text(name: str) -> str:
+        return (root / name).read_text() if (root / name).is_file() else ""
+
+    ci, weekly = text(".github/workflows/ci.yml"), text(".github/workflows/mutation.yml")
+    sonar = under(
+        found(r"(?m)^sonar\.sources=([^\n]*)$", text("sonar-project.properties")).split(",")
+    )
+    pyproject = tomllib.loads(text("pyproject.toml") or "")
+    stryker = json.loads(text("worker/stryker.config.json") or "{}").get("mutate", [])
+    vitest = found(r"coverage:\s*\{.*?include:\s*\[([^\]]*)\]", text("worker/vitest.config.ts"))
+    scripts = json.loads(text("worker/package.json") or "{}").get("scripts", {})
+
+    def node_coverage(command: str) -> Reach:
+        return by_globs(
+            re.findall(r"--test-coverage-include='([^']+)'", command),
+            re.findall(r"--test-coverage-exclude='([^']+)'", command),
+        )
+
+    def mutated(workflow: str) -> Reach:
+        return named(set(re.findall(r"mutate\.py\s+(\S+)\s+registry/tests", workflow)))
+
+    test_tools = text("registry/tests/test_tools.py")
+    return {
+        "register": [
+            (
+                "coverage.py (pyproject.toml)",
+                by_globs(
+                    pyproject.get("tool", {}).get("coverage", {}).get("run", {}).get("include", [])
+                ),
+            ),
+            (
+                "mcdc.py (test_tools.Measured)",
+                named(set(re.findall(r'"mcdc\.py"\),\s*"([^"]+)"', test_tools))),
+            ),
+            ("mutate.py (ci.yml)", mutated(ci)),
+            ("mutate.py (mutation.yml)", mutated(weekly)),
+            ("SonarCloud (sonar.sources)", sonar),
+        ],
+        "worker": [
+            ("Istanbul (vitest.config.ts)", by_globs(strings(vitest), base="worker/")),
+            (
+                "StrykerJS (stryker.config.json)",
+                by_globs(
+                    [g for g in stryker if not g.startswith("!")],
+                    [g[1:] for g in stryker if g.startswith("!")],
+                    base="worker/",
+                ),
+            ),
+            ("mcdc.mjs and changed.mjs (sources.mjs)", worker_sources(root)),
+            ("SonarCloud (sonar.sources)", sonar),
+        ],
+        "scripts": [
+            ("node --test (ci.yml)", node_coverage(ci)),
+            ("node --test (npm run test:scripts)", node_coverage(scripts.get("test:scripts", ""))),
+            (
+                "scripts-mcdc.mjs (MEASURED of mcdc-hook.mjs)",
+                named(
+                    set(
+                        strings(
+                            found(
+                                r"MEASURED = \[([^\]]*)\]", text("tests/tools/node/mcdc-hook.mjs")
+                            )
+                        )
+                    )
+                ),
+            ),
+            (
+                "scripts-mut.mjs (TESTS)",
+                named(
+                    set(
+                        re.findall(
+                            r'"([^"]+)":\s*\[',
+                            found(
+                                r"TESTS = \{(.*?)\n\};", text("tests/tools/node/scripts-mut.mjs")
+                            ),
+                        )
+                    )
+                ),
+            ),
+            ("SonarCloud (sonar.sources)", sonar),
+        ],
+    }
+
+
+def out_of_reach(root: Path, files_of: dict[str, list[str]]) -> list[str]:
+    """The files of an area that one of its tools does not reach, which that tool never measures."""
+    known = tools(root)
+    problems = []
+    for area, files in sorted(files_of.items()):
+        if not files:
+            continue
+        kind = "worker" if area.startswith("worker-") else area
+        if kind not in known:
+            problems.append(f"{area}: no tool is known to measure this area")
+            continue
+        for name, reach in known[kind]:
+            took = reach(files)
+            problems += [
+                f"{f} ({area}) is out of the reach of {name}" for f in files if f not in took
+            ]
     return problems
 
 
@@ -410,6 +700,59 @@ def git(*args: str) -> str:
     return ran.stdout
 
 
+#: The numeric thresholds that hold a measure at 100, in the files that set them: a pull request may
+#: not lower one, with or without a line, since it is the pull request's own text.
+THRESHOLDS = (
+    ("worker/vitest.config.ts", r"thresholds:\s*\{([^}]*)\}", r"(\w+):\s*(\d+)"),
+    (
+        "pyproject.toml",
+        r"(?m)^(\[tool\.coverage\.report\][^\[]*)",
+        r"(?m)^(fail_under)\s*=\s*(\d+)",
+    ),
+    (".github/workflows/ci.yml", r"(.*)", r"--test-coverage-(\w+)=(\d+)"),
+    ("worker/package.json", r"(.*)", r"--test-coverage-(\w+)=(\d+)"),
+)
+
+
+def thresholds(read: Callable[[str], str]) -> dict[str, int]:
+    """Every threshold, by file and name (``ci.yml lines``), at the lowest value the file gives it:
+    a second flag that says less is what a run would use."""
+    out: dict[str, int] = {}
+    for file, block, pair in THRESHOLDS:
+        for m in re.finditer(pair, found(block, read(file))):
+            key = f"{file} {m[1]}"
+            out[key] = min(out.get(key, int(m[2])), int(m[2]))
+    return out
+
+
+def thresholds_lowered(old: dict[str, int], new: dict[str, int]) -> list[str]:
+    return [
+        f"the threshold {k} went from {n} to {new[k]}" if k in new else f"the threshold {k} is gone"
+        for k, n in sorted(old.items())
+        if new.get(k, -1) < n
+    ]
+
+
+def at(base: str) -> Callable[[str], str]:
+    """A file as a revision has it, empty when it has none."""
+
+    def read(name: str) -> str:
+        ran = subprocess.run(
+            ["git", "show", f"{base}:{name}"], cwd=ROOT, capture_output=True, text=True, check=False
+        )
+        return ran.stdout if ran.returncode == 0 else ""
+
+    return read
+
+
+def in_tree(root: Path) -> Callable[[str], str]:
+    """A file as a working tree has it, empty when it has none."""
+    return lambda name: (root / name).read_text() if (root / name).is_file() else ""
+
+
+here = in_tree(ROOT)
+
+
 def against(base: str) -> list[str]:
     problems = []
     for name in git("ls-tree", "--name-only", base, "tests/floors/").splitlines():
@@ -419,6 +762,93 @@ def against(base: str) -> list[str]:
             continue
         old, new = tomllib.loads(git("show", f"{base}:{name}")), load(path)
         problems += [f"{path.name}: {p}" for p in raised(old, new) + lowered(old, new)]
+    if not thresholds(here):
+        problems.append("no threshold found: THRESHOLDS no longer reads the files that set them")
+    return problems + thresholds_lowered(thresholds(at(base)), thresholds(here))
+
+
+def bare(floors: dict[str, Any]) -> dict[str, Any]:
+    """A floors file without its lines: what moved, whatever a line says of it."""
+    return {k: v for k, v in floors.items() if k not in ("raised", "lowered")}
+
+
+def moved(read: Callable[[str], str], root: Path = ROOT) -> list[str]:
+    """Everything that moved the wrong way since a revision, with its line or without: a floor
+    raised, a number of what there is to measure or of tests lowered, a file out of an area, an
+    entry added to a list, a threshold lowered. ``base`` fails on what has no line; this names
+    what does, so that an accepted fall is a check a maintainer clears on purpose, never a quiet
+    green."""
+    out = []
+    for path in sorted((root / "tests" / "floors").glob("*.toml")):
+        name = path.relative_to(root).as_posix()
+        old, new = tomllib.loads(read(name) or ""), load(path)
+        out += [
+            f"{path.name}: {p}"
+            for p in raised(bare(old), bare(new)) + lowered(bare(old), bare(new))
+        ]
+        for table in ("raised", "lowered"):
+            for k, why in new.get(table, {}).items():
+                if k not in old.get(table, {}):
+                    out.append(f"{path.name}: a new line in [{table}]: {k} = {why!r}")
+    for path in sorted((root / "tests" / "exclusions").glob("*.toml")):
+        name = path.relative_to(root).as_posix()
+        was = tomllib.loads(read(name) or "").get("entry", [])
+        out += [
+            f"{path.name}: a new entry: {e.get('kind')} in {e.get('file')}, {e.get('function')}: "
+            f"{e.get('text')} ({e.get('reason')}: {squeeze(str(e.get('why', '')))})"
+            for e in load(path).get("entry", [])
+            if e not in was
+        ]
+    return out + thresholds_lowered(thresholds(read), thresholds(in_tree(root)))
+
+
+#: Where a test may not be skipped, left to do or expected to fail, and what that looks like in each
+#: language. Spelled in parts: this file is read too.
+SKIP_PLACES = ("registry/tests", "scripts/test", "worker/test", "tests/workflows", "tests/pages")
+SKIPS = {
+    ".py": re.compile(
+        r"\bunittest\.skip|\bskip(?:If|Unless)?\s*\(|\bSkip" + r"Test\b|\bexpected" + r"Failure\b"
+        r"|\.skip" + r"Test\s*\("
+    ),
+    ".js": re.compile(
+        r"\b(?:describe|it|test|suite|bench)\s*\.\s*(?:sk"
+        + r"ip|to"
+        + r"do|skipIf|runIf|only|fails)\b"
+        r"|\.\s*(?:sk" + r"ip|to" + r"do)\s*\(|[{,]\s*(?:sk" + r"ip|to" + r"do)\s*:"
+    ),
+}
+#: The one skip there is, and how many times: the tool tests of the register stand aside inside a
+#: mutation campaign, which runs the whole suite once more on each mutant and sets REGISTER_MEASURED
+#: (tests/tools/py/mutate.py); every other run has them, and a skipped test fails ``tests``.
+SKIP_ALLOWED = {
+    (
+        "registry/tests/test_tools.py",
+        "@unittest.skip" + 'If(MEASURED, "this is the measure itself")',
+    ): 4,
+}
+
+
+def skips(root: Path, allowed: dict[tuple[str, str], int]) -> list[str]:
+    """Every test that is skipped, left to do or expected to fail in the test trees, but the allowed
+    ones: such a test checks nothing, and its suite still passes."""
+    problems = []
+    seen: Counter[tuple[str, str]] = Counter()
+    for place in SKIP_PLACES:
+        for path in sorted((root / place).rglob("*")):
+            pattern = SKIPS[".py"] if path.suffix == ".py" else SKIPS[".js"]
+            if path.suffix not in SOURCES or "node_modules" in path.parts:
+                continue
+            name = path.relative_to(root).as_posix()
+            for n, line in enumerate(path.read_text().splitlines(), 1):
+                if not pattern.search(line):
+                    continue
+                if (name, line.strip()) in allowed:
+                    seen[name, line.strip()] += 1
+                else:
+                    problems.append(f"{name}:{n}: a test that does not run: {line.strip()}")
+    for (name, line), n in sorted(allowed.items()):
+        if seen[name, line] != n:
+            problems.append(f"{name}: the allowed skip is there {seen[name, line]} times, not {n}")
     return problems
 
 
@@ -558,8 +988,19 @@ def selftest_reports(tmp: Path) -> list[Case]:
 
 
 def selftest_areas(root: Path) -> list[Case]:
-    """Source files in no area, in two, and an area that names a file that is no source."""
-    for name in ("registry/cla.py", "worker/src/a.ts", "worker/src/b.ts", "worker/src/m.d.ts"):
+    """Source files in no area, in two, at any depth, and an area that names a file that is no
+    source; then the files of an area that one of its tools, as configured here, cannot reach."""
+    planted = [
+        "registry/rules.py",
+        "registry/extra/more.py",
+        "scripts/new-tool.mjs",
+        "scripts/lib/x.ts",
+        "worker/scripts/sub/y.mjs",
+        "worker/src/rules/z.ts",
+    ]
+    not_code = ["registry/tests/t.py", "scripts/test/t.ts", "worker/src/m.d.ts", "worker/src/a.css"]
+    every = ["registry/cla.py", "worker/src/a.ts", "worker/src/b.ts"]
+    for name in [*every, *planted, *not_code, "worker/src/node_modules/m/i.js"]:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("x\n")
     (root / "tests" / "floors").mkdir(parents=True)
@@ -570,18 +1011,247 @@ def selftest_areas(root: Path) -> list[Case]:
         for name, files in area.items():
             floor = root / "tests" / "floors" / f"{name}.toml"
             floor.write_text(f"files = {json.dumps(files)}\n")
-        return areas(root)
+        return placed(root)
 
-    every = ["registry/cla.py", "worker/src/a.ts", "worker/src/b.ts"]
+    def reach(area: str, *files: str) -> list[str]:
+        return out_of_reach(ROOT, {area: list(files)})
+
+    def tools_of(kind: str) -> list[str]:
+        return [name for name, _ in tools(ROOT)[kind]]
+
     return [
-        ("every source in one area", floors(one=every[:1], two=every[1:]), []),
-        ("a source in no area", floors(one=every[:2]), ["worker/src/b.ts is in no area"]),
-        ("a source in two", floors(one=every, two=every[1:2]), ["a.ts is in 2 areas: one, two"]),
+        ("every source in one area", floors(one=[*every[:1], *planted], two=every[1:]), []),
+        ("a source in no area", floors(one=[*every[:2], *planted]), ["worker/src/b.ts is in no"]),
+        *(
+            (
+                f"a source at {f} in no area",
+                floors(one=[p for p in [*every, *planted] if p != f]),
+                [f"{f} is in no area"],
+            )
+            for f in planted
+        ),
+        ("a source in two", floors(one=[*every, *planted], two=every[1:2]), ["a.ts is in 2 areas"]),
         (
             "an area of a file that is no source",
-            floors(one=[*every, "worker/src/m.d.ts"]),
+            floors(one=[*every, *planted, "worker/src/m.d.ts"]),
             ["m.d.ts is in one and is no source file"],
         ),
+        ("every file of every area here in reach", areas(ROOT), []),
+        ("a Worker file in a folder of src/", reach("worker-core", "worker/src/rules/z.ts"), []),
+        (
+            "a second module of the register",
+            reach("register", "registry/cla.py", "registry/rules.py"),
+            [
+                f"registry/rules.py (register) is out of the reach of {t}"
+                for t in tools_of("register")
+            ],
+        ),
+        (
+            "a script in a folder of scripts/",
+            reach("scripts", "scripts/lib/x.ts"),
+            [f"scripts/lib/x.ts (scripts) is out of the reach of {t}" for t in tools_of("scripts")],
+        ),
+        (
+            "a script that is no TypeScript",
+            reach("scripts", "scripts/new-tool.mjs"),
+            ["scripts/new-tool.mjs (scripts) is out of the reach of node --test (ci.yml)"],
+        ),
+        (
+            "a Worker file that is no TypeScript",
+            reach("worker-edge", "worker/src/x.mjs"),
+            [
+                f"worker/src/x.mjs (worker-edge) is out of the reach of {t}"
+                for t in tools_of("worker")[:3]
+            ],
+        ),
+        ("an area no tool measures", reach("other", "x.ts"), ["other: no tool is known"]),
+        (
+            "globs as the tools read them",
+            [
+                str(
+                    [
+                        glob_match(g, f)
+                        for g, f in (
+                            ("src/**/*.ts", "src/a.ts"),
+                            ("src/**/*.ts", "src/r/s/a.ts"),
+                            ("src/*.ts", "src/r/a.ts"),
+                            ("scripts/*.ts", "scripts/a.ts"),
+                            ("a?.py", "ab.py"),
+                            ("a?.py", "a/.py"),
+                        )
+                    ]
+                )
+            ],
+            [str([True, True, False, True, True, False])],
+        ),
+    ]
+
+
+def selftest_tests(tmp: Path) -> list[Case]:
+    """The tests a suite ran: fewer, more, skipped, left to do, a file gone, each runner's
+    report."""
+    a, b = "worker/test/a.test.ts", "worker/test/b.test.ts"
+    floors = {"tests": {a: 2, b: 1}}
+
+    def ran(**counts: Counter[str]) -> list[str]:
+        return held_tests(floors, {f"worker/test/{k}.test.ts": c for k, c in counts.items()})
+
+    vitest = tmp / "vitest.json"
+    vitest.write_text(
+        json.dumps(
+            {
+                "testResults": [
+                    {
+                        "name": str(ROOT / a),
+                        "status": "passed",
+                        "assertionResults": [
+                            {"status": s}
+                            for s in ("passed", "passed", "skipped", "todo", "pending")
+                        ],
+                    },
+                    {"name": str(ROOT / b), "status": "failed", "assertionResults": []},
+                ]
+            }
+        )
+    )
+    node = tmp / "node.json"
+    node.write_text(json.dumps({"files": {a: {"tests": 2, "skipped": 0, "todo": 0, "failed": 0}}}))
+    old = {"tests": {a: 2}}
+
+    def fewer(n: int, *lines: str) -> list[str]:
+        return lowered(old, {"tests": {a: n}, "lowered": dict.fromkeys(lines, "why")})
+
+    return [
+        ("every test ran", ran(a=Counter(tests=2), b=Counter(tests=1)), []),
+        ("a test fewer", ran(a=Counter(tests=1), b=Counter(tests=1)), ["1 tests ran in", "says 2"]),
+        ("a test more", ran(a=Counter(tests=3), b=Counter(tests=1)), ["3 tests ran in"]),
+        ("a file gone", ran(a=Counter(tests=2)), [f"no test ran in {b}"]),
+        (
+            "a file no floor names",
+            ran(a=Counter(tests=2), b=Counter(tests=1), c=Counter(tests=1)),
+            ["which [tests] does not name"],
+        ),
+        (
+            "a test skipped",
+            ran(a=Counter(tests=2, skipped=1), b=Counter(tests=1)),
+            ["1 skipped in"],
+        ),
+        ("a test left to do", ran(a=Counter(tests=2), b=Counter(tests=1, todo=1)), ["1 todo in"]),
+        ("a test failed", ran(a=Counter(tests=2, failed=1), b=Counter(tests=1)), ["1 failed in"]),
+        ("no test at all", held_tests({}, {}), ["no test ran"]),
+        (
+            "vitest's report",
+            [str(sorted((f, sorted(c.items())) for f, c in test_counts(vitest).items()))],
+            [
+                str(
+                    [
+                        (a, [("skipped", 2), ("tests", 2), ("todo", 1)]),
+                        (b, [("failed", 1), ("tests", 0)]),
+                    ]
+                )
+            ],
+        ),
+        ("the report of our runners", [str(test_counts(node)[a]["tests"])], ["2"]),
+        ("tests lowered", fewer(1), [f"the tests of {a} went from 2 to 1"]),
+        ("tests lowered and said so", fewer(1, f"tests {a} 2026-01-01"), []),
+        ("tests lowered, said of another kind", fewer(1, f"line {a} 2026-01-01"), ["went from"]),
+        ("a test file that left", lowered(old, {}), ["went from 2 to 0"]),
+        ("tests raised", fewer(3), []),
+    ]
+
+
+def selftest_skips(tmp: Path) -> list[Case]:
+    """Every way to keep a test from running that the hook knows, in both languages."""
+    (tmp / "registry" / "tests").mkdir(parents=True)
+    (tmp / "worker" / "test" / "node_modules").mkdir(parents=True)
+    allowed = ("registry/tests/test_a.py", "@unittest.skip" + "If(X, 'why')")
+    py = [
+        "@unittest.skip" + "('x')",
+        "@skip" + "If(True, 'x')",
+        "@unittest.skip" + "Unless(False, 'x')",
+        "raise unittest.Skip" + "Test('x')",
+        "@unittest.expected" + "Failure",
+        "self.skip" + "Test('x')",
+    ]
+    js = [
+        "describe.sk" + "ip('x', () => {});",
+        "it.to" + "do('x');",
+        "it.skip" + "If(true)('x', () => {});",
+        "test.run" + "If(false)('x', () => {});",
+        "it.on" + "ly('x', () => {});",
+        "it.fa" + "ils('x', () => {});",
+        "it('x', (t) => { t.sk" + "ip(); });",
+        "it('x', { sk" + "ip: true }, () => {});",
+        "it('x', { timeout: 1, to" + "do: 'later' }, () => {});",
+    ]
+    fine = ["self.fails('x')", "const skipped = 0;", "it('skips nothing', () => {});"]
+    (tmp / allowed[0]).write_text("\n".join([allowed[1], *py, *fine]) + "\n")
+    (tmp / "worker" / "test" / "a.test.ts").write_text("\n".join([*js, *fine]) + "\n")
+    (tmp / "worker" / "test" / "node_modules" / "x.js").write_text(js[0] + "\n")
+    found = skips(tmp, {allowed: 1})
+    return [
+        ("every planted skip", [str(len(found))], [str(len(py) + len(js))]),
+        *((f"planted: {line}", found, [line]) for line in [*py, *js]),
+        ("an allowed skip that is gone", skips(tmp, {allowed: 2}), ["there 1 times, not 2"]),
+        ("the skips here", skips(ROOT, SKIP_ALLOWED), []),
+    ]
+
+
+def selftest_moved(tmp: Path) -> list[Case]:
+    """What moved the wrong way: each kind, with its line and without, and what did not move."""
+    floors = "tests/floors/x.toml"
+    listed = "tests/exclusions/x.toml"
+    entry = '[[entry]]\nkind = "line"\nfile = "f"\nfunction = "g"\ntext = "t"\nreason = "tool"\n'
+    old = {
+        floors: 'files = ["f"]\n[misses]\nline = 1\n[measured]\nf = { line = 5 }\n'
+        '[tests]\n"t" = 4\n',
+        listed: entry,
+        "pyproject.toml": "[tool.coverage.report]\nfail_under = 100\n",
+    }
+
+    def tree(name: str = "", text: str = "") -> list[str]:
+        for n, t in (old | ({name: text} if name else {})).items():
+            (tmp / n).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / n).write_text(t)
+        return moved(lambda n: old.get(n, ""), tmp)
+
+    def floor(a: str, b: str, more: str = "") -> list[str]:
+        return tree(floors, old[floors].replace(a, b) + more)
+
+    said = '[raised]\n"line 2026-01-01" = "why"\n'
+    lower = "[tool.coverage.report]\nfail_under = 99\n"
+    return [
+        ("nothing moved", tree(), []),
+        ("a floor raised, no line", floor("line = 1", "line = 2"), ["line went from 1 to 2"]),
+        ("a floor raised, its line", floor("line = 1", "line = 2", said), ["1 to 2", "new line"]),
+        ("less to measure", floor("line = 5", "line = 4"), ["line of f went from 5 to 4"]),
+        ("fewer tests", floor('"t" = 4', '"t" = 3'), ["the tests of t went from 4 to 3"]),
+        ("more tests", floor('"t" = 4', '"t" = 5'), []),
+        ("a floor lowered", floor("line = 1", "line = 0"), []),
+        (
+            "a new entry",
+            tree(listed, entry + entry.replace('"t"', '"u"')),
+            ["entry: line in f, g: u"],
+        ),
+        ("an entry gone", tree(listed, ""), []),
+        ("a threshold lowered", tree("pyproject.toml", lower), ["fail_under went from 100 to 99"]),
+        ("a threshold gone", tree("pyproject.toml", "[tool.coverage.report]\n"), ["is gone"]),
+        (
+            "a second, lower flag",
+            [
+                str(
+                    thresholds(
+                        lambda n: (
+                            "--test-coverage-lines=100 --test-coverage-lines=90"
+                            if n.endswith("ci.yml")
+                            else ""
+                        )
+                    )
+                )
+            ],
+            [str({".github/workflows/ci.yml lines": 90})],
+        ),
+        ("the thresholds here", [str(len(thresholds(here)))], ["11"]),
     ]
 
 
@@ -701,6 +1371,9 @@ def selftest() -> list[str]:
             ("one more than listed", unlisted(survivors, Counter([first] * 2)), ["listed (1)"]),
         ]
         cases += selftest_areas(here_dir / "tree")
+        cases += selftest_tests(here_dir)
+        cases += selftest_skips(here_dir / "skips")
+        cases += selftest_moved(here_dir / "moved")
         page = here_dir / "summary.md"
         summarize(page, "check x", "ratchet check: ok", [])
         summarize(page, "check y", "ratchet check: 1 problems", ["a ``` b"])
@@ -742,11 +1415,19 @@ def main(argv: list[str]) -> int:
     f.add_argument("--share", default="1/1", help="one of N shares of about as many mutants: I/N")
     b = commands.add_parser("base", help="the floors against another revision's")
     b.add_argument("revision")
+    mv = commands.add_parser(
+        "moved", help="what moved the wrong way since a revision, lines or not"
+    )
+    mv.add_argument("revision")
     commands.add_parser("areas", help="every source file in exactly one area")
     li = commands.add_parser("listed", help="every survivor of a run of some lines is listed")
     li.add_argument("area")
     li.add_argument("--mutants", nargs="+", required=True)
+    t = commands.add_parser("tests", help="the tests a suite ran against its floors")
+    t.add_argument("suite")
+    t.add_argument("--report", nargs="+", required=True)
     commands.add_parser("pragmas", help="no inline pragma in the sources")
+    commands.add_parser("skips", help="no test skipped, left to do or expected to fail")
     commands.add_parser("selftest", help="plants each problem and requires its report")
     args = parser.parse_args(argv)
     if args.command == "files":
@@ -758,12 +1439,21 @@ def main(argv: list[str]) -> int:
         problems = check(args.area, args)
     elif args.command == "base":
         problems = against(args.revision)
+    elif args.command == "moved":
+        problems = moved(at(args.revision))
+        for p in problems:
+            # A warning on the run's page as well, where the summary below repeats them.
+            print(f"::warning title=Moved against {args.revision}::{p}")
     elif args.command == "areas":
         problems = areas(ROOT)
     elif args.command == "listed":
         problems = listed(args.area, args.mutants)
+    elif args.command == "tests":
+        problems = suite(args.suite, args.report)
     elif args.command == "pragmas":
         problems = pragmas([ROOT / p for p in PRAGMA_PLACES])
+    elif args.command == "skips":
+        problems = skips(ROOT, SKIP_ALLOWED)
     else:
         problems = selftest()
     for p in problems:

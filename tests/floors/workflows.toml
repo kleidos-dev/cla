@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The tests of record.yml and verify.yml (tests/workflows/), and how long
+# their list may be (tests/exclusions/workflows.toml, the run-block lines
+# whose deletion no case notices). The list only shrinks: a longer one needs
+# a dated line in [raised], such as "exclusions 2026-11-24" = "why", which a
+# maintainer reviews.
+
+# What an entry of the list excuses: a run-block line deleted.
+kinds = ["mutant"]
+
+[misses]
+exclusions = 3
+
+[raised]
+
+# The tests that ran in each file (tests/tools/ratchet.py tests): a run that
+# ran more or fewer, skipped one or left one to do fails. A number that falls,
+# or a file that leaves, needs a dated line in a table [lowered], such as
+# "tests tests/workflows/record.test.mts 2026-11-24" = "why".
+[tests]
+"tests/workflows/record.test.mts" = 26
+"tests/workflows/static.test.mts" = 12
+"tests/workflows/verify.test.mts" = 11

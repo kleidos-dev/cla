@@ -15,3 +15,20 @@ mutant = 1
 exclusions = 3
 
 [raised]
+
+# The tests that ran in each file (tests/tools/ratchet.py tests): a run that
+# ran more or fewer, skipped one or left one to do fails. A number that falls,
+# or a file that leaves, needs a dated line in a table [lowered], such as
+# "tests registry/tests/test_records.py 2026-11-24" = "why".
+[tests]
+"registry/tests/test_authors.py" = 39
+"registry/tests/test_command.py" = 33
+"registry/tests/test_github.py" = 37
+"registry/tests/test_history.py" = 75
+"registry/tests/test_properties.py" = 16
+"registry/tests/test_recording.py" = 64
+"registry/tests/test_records.py" = 18
+"registry/tests/test_support.py" = 7
+"registry/tests/test_text.py" = 34
+"registry/tests/test_timestamps.py" = 28
+"registry/tests/test_tools.py" = 29

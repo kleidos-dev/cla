@@ -140,9 +140,20 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
-      # A source file no area names would be measured by nothing.
+      # A test that is skipped, left to do or expected to fail checks
+      # nothing and its suite still passes (the one exception is named in
+      # tests/tools/ratchet.py, SKIP_ALLOWED).
+      - id: test-skips
+        name: no test is skipped, left to do or expected to fail
+        entry: python3 tests/tools/ratchet.py skips
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      # A source file no area names, or that a tool of its area cannot
+      # reach, would be measured by nothing or by less.
       - id: test-areas
-        name: every source file is in exactly one test area
+        name: every source file is in exactly one test area, in reach of its tools
         entry: python3 tests/tools/ratchet.py areas
         language: system
         pass_filenames: false

@@ -3,7 +3,7 @@
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "vitest": { "configFile": "vitest.stryker.config.mjs", "related": false },
-  "mutate": ["src/*.ts", "!src/*.d.ts"],
+  "mutate": ["src/**/*.ts", "!src/**/*.d.ts"],
   "coverageAnalysis": "perTest",
   "inPlace": true,
   "disableTypeChecks": false,
