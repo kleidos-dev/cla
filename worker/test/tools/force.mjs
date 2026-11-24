@@ -94,3 +94,5 @@ writeFileSync(out, JSON.stringify(result, null, 1));
 console.log(`forced conditions: ${result.killed} of ${result.total} killed`);
 for (const m of result.misses) console.log(`${m.file}:${m.line} ${m.text} := ${m.operator}: ${m.why}`);
 await vitest.close();
+// A forced condition is meant to fail tests, and vitest says so in the exit code: the run's own verdict is the report's, read by tests/tools/ratchet.py.
+process.exitCode = 0;
