@@ -305,6 +305,15 @@ describe("an acceptance that is refused", () => {
     expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });
   });
 
+  it("with the box not ticked and a digest that is not the current one shows the box's error first", async () => {
+    const w = await world();
+    const { b, form } = await atAcceptance(w);
+    const r = await b.post("/agree", { ...form, set_sha256: CONFIG.versions["2"].set_sha256 });
+    expect(r.status).toBe(400);
+    expect(await r.text()).toContain('<form class="accept is-error"');
+    expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });
+  });
+
   it("of a version or digest that is not the current one is refused as changed", async () => {
     const w = await world();
     const { b, form } = await atAcceptance(w);
@@ -321,8 +330,11 @@ describe("an acceptance that is refused", () => {
       const w = await world();
       const { b, form } = await atAcceptance(w);
       must(w.limiters[which]).allow = false;
+      const before = w.gh.requests.length;
       await expectMessage(await b.post("/agree", { ...form, accept: "yes" }, { "cf-connecting-ip": IP }), 429, "tooManyAgree");
       expect([w.limiters.RL_AGREE_IP?.keys, w.limiters.RL_AGREE_ACCOUNT?.keys], which).toEqual([[IP], which === "RL_AGREE_IP" ? [] : [String(alice.id)]]);
+      // Only the register's configuration is read before the budget: nothing of the pull request.
+      expect(w.gh.requests.slice(before).filter((q) => !q.url.startsWith("/repos/kleidos-dev/cla/contents/")), which).toEqual([]);
       expect(nothingDone(w)).toEqual({ comments: 0, dispatches: 0, queued: 0 });
     }
   });

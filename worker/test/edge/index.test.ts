@@ -216,6 +216,20 @@ describe("a Worker that is not configured", () => {
     expect(w.gh.requests).toEqual([]);
   });
 
+  it("answers a wrong method 405 before saying it is not configured", async () => {
+    const w = await world({ configure: false });
+    for (const [path, method, allow] of [
+      ["/webhook", "GET", "POST"],
+      ["/sign/kleidos-dev/cla/1", "POST", "GET"],
+      ["/agree", "GET", "POST"],
+      ["/auth/logout", "GET", "POST"],
+    ] as const) {
+      const r = await call(w, path, { method });
+      expect([r.status, r.headers.get("allow")], `${method} ${path}`).toEqual([405, allow]);
+    }
+    expect(w.gh.requests).toEqual([]);
+  });
+
   it("with an allowlist that names no account is not configured either", async () => {
     const w = await world();
     w.env.ALLOWED_ACCOUNT_IDS = " , x, 0";

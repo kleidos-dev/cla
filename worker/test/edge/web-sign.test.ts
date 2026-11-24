@@ -106,6 +106,16 @@ describe("the sign page, signed out", () => {
     expect(html).not.toContain(SECRET_REPO);
   });
 
+  it("of a private repository is not found even when its pull request is closed or locked, so neither tells it apart", async () => {
+    const w = await world({ config: { ...CONFIG, served_repositories: { ...CONFIG.served_repositories, [SECRET_REPO]: { auto_approve: false } } } });
+    w.gh.addRepo(SECRET_REPO, { private: true });
+    const closed = openPr(w, alice, { repo: SECRET_REPO });
+    closed.state = "closed";
+    const locked = openPr(w, alice, { repo: SECRET_REPO });
+    locked.locked = true;
+    for (const p of [closed, locked]) expect(await expectMessage(await get(w, signPath(p)), 404, "noTarget"), String(p.number)).not.toContain(SECRET_REPO);
+  });
+
   it("of a repository that is not served, or at an address that names none, is not found and asks GitHub nothing about it", async () => {
     const w = await world();
     await expectMessage(await get(w, "/sign/someone/else/1"), 404, "noTarget");
@@ -246,6 +256,30 @@ describe("the sign page, signed in", () => {
     locked.locked = true;
     await expectMessage(await get(w, signPath(locked), cookie), 409, "locked");
     await expectMessage(await get(w, signPath(openPr(w, alice, { repo: SECRET_REPO })), cookie), 404, "noTarget");
+  });
+
+  it("of a pull request that is both closed and locked says closed, and of a private one either way is not found", async () => {
+    const w = await world({ config: { ...CONFIG, served_repositories: { ...CONFIG.served_repositories, [SECRET_REPO]: { auto_approve: false } } } });
+    w.gh.addRepo(SECRET_REPO, { private: true });
+    const cookie = await sessionHeader(w, session(alice));
+    const both = openPr(w, alice);
+    both.state = "closed";
+    both.locked = true;
+    await expectMessage(await get(w, signPath(both), cookie), 409, "closed");
+    await expectMessage(await get(w, signPath(both)), 409, "closed");
+    for (const shut of [{ state: "closed" }, { locked: true }] as const) {
+      const p = Object.assign(openPr(w, alice, { repo: SECRET_REPO }), shut);
+      expect(await expectMessage(await get(w, signPath(p), cookie), 404, "noTarget"), JSON.stringify(shut)).not.toContain(SECRET_REPO);
+    }
+  });
+
+  it("of an account that is no person says so even when the register exempts its id", async () => {
+    const org: User = { id: 777, login: "some-org", type: "Organization" };
+    const w = await world({ config: { ...CONFIG, exempt: [...CONFIG.exempt, { id: org.id, login: org.login, why: "a test" }] } });
+    const p = openPr(w, alice, { commits: [commit(alice), commit(org)] });
+    const r = await get(w, signPath(p), await sessionHeader(w, session(org)));
+    expect(r.status).toBe(403);
+    expect(statusOf(await r.text()).h1).toBe(S.en.status.notUserTitle);
   });
 
   it("of an author who must sign, with a token for this pull request, is the acceptance", async () => {

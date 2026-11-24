@@ -221,6 +221,14 @@ describe("the check run's output", () => {
     );
   });
 
+  it("names the repository's setting first when it and a change under .github/ both hold the checks back", () => {
+    for (const github of ["touched", "unknown"] as const) {
+      expect(checkOutput(assessment({ signedBy: [alice] }), ctx({ autoApprove: false, github })).summary, github).toBe(
+        "- `alice` (id 11): accepted version 1 (SHA-256 `89c1d46b9b10`) at 2026-11-01T10:00:00Z\n\nIn this repository the checks of an outside pull request are started by a maintainer, not automatically.",
+      );
+    }
+  });
+
   it("is success with nothing to sign when no author needs to", () => {
     expect(checkOutput(assessment({ required: [] }), ctx())).toEqual({ conclusion: "success", title: "No signature needed", summary: "" });
   });
