@@ -30,7 +30,7 @@ function methodNotAllowed(allow: string): Response {
   return r;
 }
 
-/** The last current_version read in this isolate: what the public pages show while the register cannot be read. */
+/** The last current_version read in this isolate, by a page or /healthz: what both show while the register cannot be read. */
 let lastCurrent = FALLBACK_VERSION;
 
 /** The version the public pages show: the register's current one when it is bundled here. */
@@ -50,7 +50,9 @@ async function healthz(env: Env): Promise<Response> {
   let signing: { on: boolean; reason?: string; version: number; flow?: string } = { on: false, reason: "not configured", version: lastCurrent };
   if (isConfigured(env)) {
     try {
-      signing = await signingState(await makeBot(env).registry.config(), env);
+      const config = await makeBot(env).registry.config();
+      if (isBundled(config.current_version)) lastCurrent = config.current_version;
+      signing = await signingState(config, env);
     } catch {
       signing = { on: false, reason: "registry not read", version: lastCurrent };
     }

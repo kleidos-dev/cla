@@ -26,7 +26,7 @@
 "worker/test/edge/button.test.ts" = 13
 "worker/test/edge/html.test.ts" = 19
 "worker/test/edge/i18n.test.ts" = 19
-"worker/test/edge/index.test.ts" = 34
+"worker/test/edge/index.test.ts" = 38
 "worker/test/edge/markdown.test.ts" = 24
 "worker/test/edge/messages.test.ts" = 15
 "worker/test/edge/texts.test.ts" = 22
