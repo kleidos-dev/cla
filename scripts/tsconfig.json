@@ -17,10 +17,14 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true
   },
   "include": [
     "*.ts",
-    "test/*.ts"
+    "test/*.ts",
+    "../tests/tools/node/*.mts",
+    "../tests/workflows/*.mts",
+    "../tests/pages/*.mts"
   ]
 }
