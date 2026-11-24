@@ -4,6 +4,7 @@ import fc from "fast-check";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogValue } from "../../src/log";
 import { log } from "../../src/log";
+import { seed } from "../seed";
 
 const lines: string[] = [];
 beforeEach(() => {
@@ -106,7 +107,7 @@ describe("the fields", () => {
           if (typeof v === "string") expect(v).toMatch(/^[A-Za-z0-9_./:#,\- [\]]{0,120}$/);
         }
       }),
-      { seed: 5 },
+      { seed: seed(5) },
     );
   });
 });

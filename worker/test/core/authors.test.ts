@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { CommitNode, GitActor } from "../../src/authors";
 import { coAuthorEmails, commitAuthors, parseNoreply } from "../../src/authors";
 import { isLogin } from "../../src/util";
+import { seed } from "../seed";
 
 const NOREPLY = "@users.noreply.github.com";
 
@@ -70,7 +71,7 @@ describe("a GitHub no-reply address", () => {
         const a = parseNoreply(s);
         if (a) expect(Number.isSafeInteger(a.id) && a.id > 0 && isLogin(a.login)).toBe(true);
       }),
-      { seed: 11, numRuns: 1000 },
+      { seed: seed(11), numRuns: 1000 },
     );
   });
 });
@@ -150,7 +151,7 @@ describe("the Co-authored-by trailers of a message", () => {
       fc.property(fc.string({ unit: fc.constantFrom("Co-authored-by: ", "<", ">", "b@x.org", "B", " ", "\t", "\n", "\r", "\u2028", "\u0085") }), (m) => {
         for (const e of coAuthorEmails(m)) expect(e).toMatch(/^[^<>\n\r\u2028\u2029 \tA-Z]+$/);
       }),
-      { seed: 12, numRuns: 1000 },
+      { seed: seed(12), numRuns: 1000 },
     );
   });
 });

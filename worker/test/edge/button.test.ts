@@ -12,6 +12,7 @@ import type { ButtonState } from "../../src/button";
 import { BUTTON_VERSION, buttonAlt, buttonPath, buttonState, buttonSvg, parseButtonPath } from "../../src/button";
 import { sha256Hex } from "../../src/util";
 import { restoring } from "./support";
+import { seed } from "../seed";
 
 restoring();
 
@@ -58,7 +59,7 @@ describe("the address of a button", () => {
         const s = state === "none" ? 0 : signed;
         expect(parseButtonPath(buttonPath(state, signed, total))).toEqual({ state, signed: s, total: state === "none" ? 0 : total });
       }),
-      { seed: 404, numRuns: 1000 },
+      { seed: seed(404), numRuns: 1000 },
     );
   });
 
@@ -135,7 +136,7 @@ describe("the drawing of a button", () => {
         expect(svg).toContain(`<title id="t">${buttonAlt(state, signed, total)}.</title>`);
         expect(svg).not.toMatch(/<script|<style|<image|<foreignObject|href=|on[a-z]+=|url\((?!#c\))/i);
       }),
-      { seed: 2048, numRuns: 200 },
+      { seed: seed(2048), numRuns: 200 },
     );
   });
 

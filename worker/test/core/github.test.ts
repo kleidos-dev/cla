@@ -9,6 +9,7 @@ import { b64urlDecode, must, utf8 } from "../../src/util";
 import { APP_ID } from "../fakegh";
 import type { World } from "../helpers";
 import { SANDBOX, world } from "../helpers";
+import { seed } from "../seed";
 
 const NOW = Date.parse("2026-11-24T10:00:00Z");
 let w: World;
@@ -504,7 +505,7 @@ describe("the next page's link", () => {
         const url = nextLink(pieces.join(""));
         if (url !== null) expect(url.startsWith(`${API}/`)).toBe(true);
       }),
-      { seed: 31, numRuns: 2000 },
+      { seed: seed(31), numRuns: 2000 },
     );
   });
 });
