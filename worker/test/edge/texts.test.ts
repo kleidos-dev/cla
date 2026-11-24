@@ -117,7 +117,13 @@ describe("the comment", () => {
 
   it("with nobody required and no author known says only that it is needed", () => {
     const body = commentBody(assessment({ required: [], tooManyCommits: true }), ctx());
-    expect(body.split("\n").slice(1, 5)).toEqual(["**Contributor Agreement needed.** Sign it once and the checks of this pull request start; it covers every Kleidos repository.", "", "This pull request has too many commits to check automatically; a maintainer will look at it.", ""]);
+    expect(body.split("\n").slice(1, 6)).toEqual([
+      "**Contributor Agreement needed.** Sign it once and the checks of this pull request start; it covers every Kleidos repository.",
+      "",
+      "This pull request has too many commits to check automatically; a maintainer will look at it.",
+      "",
+      `[![Sign the Kleidos Contributor Agreement: 0 of 0 authors signed](${ORIGIN}/button/v2/needed-0-0.svg)](${SIGN})`,
+    ]);
   });
 
   it("names the automation accounts, by login only when it is one", () => {

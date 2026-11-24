@@ -46,15 +46,15 @@ describe("the address of a button", () => {
     expect(buttonPath("none", 4, 5)).toBe("/button/v2/none-0-0.svg");
     expect(buttonPath("partial", 1000, 1500)).toBe("/button/v2/partial-999-999.svg");
     expect(buttonPath("needed", 0, 999)).toBe("/button/v2/needed-0-999.svg");
+    expect(buttonPath(buttonState(0, 0, false), 0, 0)).toBe("/button/v2/needed-0-0.svg");
   });
 
-  it("is read back as the state and counts it was written from, for every state the bot can write", () => {
+  it("is read back as the state and counts it was written from, for every state the bot can write, needed with nobody counted included", () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 999 }), fc.integer({ min: 0, max: 999 }), fc.boolean(), (a, b, clear) => {
         const total = Math.max(a, b);
         const signed = clear ? total : Math.min(a, b);
         const state = buttonState(signed, total, clear);
-        if (state === "needed" && total === 0) return;
         const s = state === "none" ? 0 : signed;
         expect(parseButtonPath(buttonPath(state, signed, total))).toEqual({ state, signed: s, total: state === "none" ? 0 : total });
       }),

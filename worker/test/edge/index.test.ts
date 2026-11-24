@@ -34,7 +34,7 @@ function plainText(r: Response, cache = "no-store, no-transform"): void {
 describe("the route table", () => {
   it("serves every public route to GET and HEAD and answers 405 with its Allow to any other method", async () => {
     const w = await world();
-    for (const path of ["/", "/agreement", "/agreement/entity", "/agreement/es", "/privacy", "/privacy/es", "/healthz", "/robots.txt", "/.well-known/security.txt", "/setup", "/agreement/v1/individual.md", "/assets/mark.svg", "/button/v2/none-0-0.svg"]) {
+    for (const path of ["/", "/agreement", "/agreement/entity", "/agreement/es", "/privacy", "/privacy/es", "/healthz", "/robots.txt", "/.well-known/security.txt", "/setup", "/agreement/v1/individual.md", "/assets/mark.svg", "/button/v2/none-0-0.svg", "/button/v2/needed-0-0.svg"]) {
       for (const method of ["GET", "HEAD"]) expect((await call(w, path, { method })).status, `${method} ${path}`).toBeLessThan(400);
       for (const method of OTHER_METHODS) {
         const r = await call(w, path, { method });
