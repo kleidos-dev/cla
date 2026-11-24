@@ -7,17 +7,6 @@
 
 [[entry]]
 kind = "axe rule"
-file = "agreements/v2/individual.md"
-function = "/agreement"
-text = "link-name"
-reason = "boundary"
-why = """The individual template ends with an empty Markdown link, [](https://contributoragreements.org/...), which the
-page renders as a link with no text. The template is the chooser's binding text, hashed into SHA256SUMS and the
-acceptance sentence: it cannot change, and how the page renders it is the owner's call."""
-test = "scripts/test/check-agreement.test.ts: a changed byte of a binding text is refused with both digests"
-
-[[entry]]
-kind = "axe rule"
 file = "agreements/v2/entity.md"
 function = "/agreement/entity"
 text = "link-name"

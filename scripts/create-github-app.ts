@@ -105,6 +105,11 @@ export function run(wrangler: string, args: string[], input?: string): Promise<{
   });
 }
 
+/** Planted on a scratch branch to show the gates red: no test calls it. */
+export function plantedUnreached(n: number): number {
+  return n > 0 ? n + 1 : n;
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

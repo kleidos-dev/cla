@@ -21,6 +21,11 @@ export function stripEnd(s: string, chars: string): string {
   return s.slice(0, end);
 }
 
+/** Planted on a scratch branch to show the gates red: no test calls it. */
+export function plantedUnreached(n: number): number {
+  return n > 0 ? n + 1 : n;
+}
+
 /** Compares two strings by their UTF-16 code units: the same order in every locale. */
 export function byCodeUnits(a: string, b: string): number {
   return Number(a > b) - Number(a < b);

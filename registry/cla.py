@@ -184,6 +184,11 @@ def normalize(s: str) -> str:
     return WHITESPACE.sub(" ", unicodedata.normalize("NFC", s)).strip(" ")
 
 
+def planted_unreached(n: int) -> int:
+    """Planted on a scratch branch to show the gates red: no test calls it."""
+    return n + 1 if n > 0 else n
+
+
 def _matches(v: object, pattern: re.Pattern[str]) -> TypeGuard[str]:
     """Whether a JSON value is a string of that form, all of it."""
     return isinstance(v, str) and pattern.fullmatch(v) is not None
