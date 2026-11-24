@@ -5,8 +5,10 @@
 # measures what a test ran. Each job plants its share of them in the Worker's
 # core, inside the Workers runtime, and holds the survivors to
 # tests/floors/worker-core.toml and tests/exclusions/worker-core.toml, so a
-# survivor nobody listed, and a listed one that is now killed, are red.
-# Nothing is written anywhere: a red job and its log are the report.
+# survivor nobody listed, a listed one that is now killed, and a file with
+# fewer mutants than it has are red. The shares are made from the area's own
+# list of files: none can be left out. Nothing is written anywhere: a red job
+# and its log are the report.
 name: Mutation
 
 on:
@@ -24,20 +26,14 @@ concurrency:
 
 jobs:
   mutants:
-    name: "🧬 Mutants of the Worker's core (${{ matrix.shard }})"
+    name: "🧬 Mutants of the Worker's core (${{ matrix.share }})"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        include:
-          - shard: assess, authors, bot
-            files: src/assess.ts,src/authors.ts,src/bot.ts
-          - shard: registry, session, log
-            files: src/registry.ts,src/session.ts,src/log.ts
-          - shard: github, keys, util, env
-            files: src/github.ts,src/keys.ts,src/util.ts,src/env.ts
+        share: [1/3, 2/3, 3/3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,11 +48,17 @@ jobs:
       - name: Every mutant, five seconds over its own time at most
         working-directory: worker
         env:
-          FILES: ${{ matrix.files }}
-        run: npm run test:mutation -- --mutate "$FILES"
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-core --share "$SHARE")"
+          npm run test:mutation -- --mutate "$files"
       - name: No survivor that is not listed
         working-directory: worker
-        run: python3 ../tests/tools/ratchet.py check worker-core --mutants coverage/mutation.json
+        env:
+          SHARE: ${{ matrix.share }}
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-core --share "$SHARE")"
+          python3 ../tests/tools/ratchet.py check worker-core --mutants coverage/mutation.json --only "$files"
 
   forced:
     name: "🧬 Forced conditions of the Worker's core"
@@ -75,7 +77,9 @@ jobs:
         run: npm ci
       - name: Every condition held true, then false
         working-directory: worker
-        run: npm run test:forced -- src/assess.ts src/authors.ts src/bot.ts src/env.ts src/github.ts src/keys.ts src/log.ts src/registry.ts src/session.ts src/util.ts
+        run: |
+          files="$(python3 ../tests/tools/ratchet.py files worker-core)"
+          npm run test:forced -- "$files"
       - name: No survivor that is not listed
         working-directory: worker
         run: python3 ../tests/tools/ratchet.py check worker-core --forced coverage/force.json

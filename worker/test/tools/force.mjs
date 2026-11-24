@@ -5,7 +5,7 @@
  * true, then held false, and the tests that evaluate it run. MC/DC says that
  * a test made a condition decide; this says that a test noticed.
  *
- *   node test/tools/force.mjs [--out FILE] src/assess.ts src/bot.ts ...
+ *   node test/tools/force.mjs [--out FILE] src/assess.ts,src/bot.ts ...
  *
  * One build serves every mutant: the forcing is the MC/DC instrumentation's
  * own hook (mcdc.mjs), chosen at run time, inside the Workers runtime. The result
@@ -18,10 +18,11 @@ import { createVitest } from "vitest/node";
 import { decisionsOf, plugin } from "./mcdc.mjs";
 
 const root = join(import.meta.dirname, "..", "..");
-const args = process.argv.slice(2);
+const args = process.argv.slice(2).flatMap((a) => a.split(","));
 const at = args.indexOf("--out");
 const out = at < 0 ? join(root, "coverage", "force.json") : args.splice(at, 2)[1];
 const decisions = decisionsOf(root);
+if (args.length === 0) throw new Error("name the files whose conditions are held");
 for (const f of args) if (![...decisions.values()].some((d) => d.file === f)) throw new Error(`no decision in ${f}`);
 
 const vitest = await createVitest(
@@ -70,9 +71,9 @@ for (const m of base.testModules) {
 }
 
 const mutants = [...decisions]
-  .filter(([, d]) => args.length === 0 || args.includes(d.file))
+  .filter(([, d]) => args.includes(d.file))
   .flatMap(([key, d]) => d.atoms.flatMap((text, index) => [true, false].map((value) => ({ key, index, value, text, d }))));
-const result = { files: [...new Set(mutants.map((m) => `worker/${m.d.file}`))], total: mutants.length, killed: 0, misses: [] };
+const result = { totals: Object.fromEntries([...Map.groupBy(mutants, (m) => `worker/${m.d.file}`)].map(([file, of]) => [file, of.length])), total: mutants.length, killed: 0, misses: [] };
 for (const [n, { key, index, value, text, d }] of mutants.entries()) {
   const miss = (why) => result.misses.push({ kind: "forced", file: `worker/${d.file}`, function: d.function, text, on: d.text === text ? "" : d.text, operator: String(value), line: d.line, why });
   const r = reached.get(key);

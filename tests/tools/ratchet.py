@@ -2,22 +2,27 @@
 # SPDX-License-Identifier: MIT
 r"""The ratchet of the test measures: a count of misses only falls.
 
-Each area has its floors (tests/floors/<area>.toml: what is missed of each measure, per kind) and
-its exclusions (tests/exclusions/<area>.toml: every miss that stays, with its reason). ``check``
-reads the reports the test run wrote and fails on
+Each area has its floors (tests/floors/<area>.toml: what is missed of each measure, per kind, and
+what there is to miss, per file) and its exclusions (tests/exclusions/<area>.toml: every miss that
+stays, with its reason). ``check`` reads the reports the test run wrote and fails on
 
 - a miss that is not listed,
 - an entry of the list that is now covered or killed, or whose text is gone,
 - a count above its floor, and one below it: the same change lowers the floor,
-- a list longer than its floor.
+- a list longer than its floor,
+- a file of the area a report does not have, or has with nothing in it, and a number of lines,
+  branches, functions, conditions or mutants that is not the one the floors say: a measure that
+  looked at less finds less, and would pass.
 
-``base`` fails when a floor is higher than in another revision without a dated line in its table
-``raised``. ``pragmas`` fails on an inline pragma that hides a miss from a tool. ``selftest`` plants
-each of these and requires the report. Standard library only.
+``base`` fails when a floor is higher than in another revision, or a number of what there is to miss
+lower, without a dated line in its table ``raised`` or ``lowered``. ``files`` names the files of an
+area, or one of N even shares of them. ``pragmas`` fails on an inline pragma that hides a miss from
+a tool. ``selftest`` plants each of these and requires the report. Standard library only.
 
     python3 tests/tools/ratchet.py check worker-core \
         --istanbul worker/coverage/coverage-final.json --conditions worker/coverage/mcdc.json \
-        [--forced worker/coverage/force.json] [--mutants worker/coverage/mutation.json]
+        [--forced worker/coverage/force.json] [--mutants worker/coverage/mutation.json] \
+        [--only src/bot.ts,src/keys.ts]
 """
 
 import argparse
@@ -36,6 +41,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 REASONS = ("unreachable", "equivalent", "boundary", "tool")
 KINDS = ("line", "branch", "function", "condition", "forced", "mutant")
+#: What there is of each kind in each file, as one report counts it.
+Counts = Counter[tuple[str, str]]
 SOURCES = (".ts", ".mjs", ".js", ".py")
 #: Where a pragma may not be, and what one looks like. Spelled in two halves: this file is read too.
 PRAGMA_PLACES = ("worker/src", "worker/scripts", "worker/test", "scripts", "tests")
@@ -166,6 +173,29 @@ def stryker(report: Path) -> Iterator[Miss]:
             )
 
 
+def istanbul_counts(report: Any) -> Iterator[tuple[str, str, int]]:
+    for path, c in report.items():
+        file = relative(path)
+        yield "line", file, len({s["start"]["line"] for s in c["statementMap"].values()})
+        yield "branch", file, sum(len(hits) for hits in c["b"].values())
+        yield "function", file, len(c["f"])
+
+
+def condition_counts(report: Any) -> Iterator[tuple[str, str, int]]:
+    for path, t in report["totals"].items():
+        yield "condition", relative(path), t["conditions"]
+
+
+def forced_counts(report: Any) -> Iterator[tuple[str, str, int]]:
+    for path, n in report["totals"].items():
+        yield "forced", relative(path), n
+
+
+def stryker_counts(report: Any) -> Iterator[tuple[str, str, int]]:
+    for path, f in report["files"].items():
+        yield "mutant", relative(path), len(f["mutants"])
+
+
 def load(path: Path) -> dict[str, Any]:
     return tomllib.loads(path.read_text()) if path.is_file() else {}
 
@@ -233,57 +263,119 @@ def compare(
     return problems
 
 
-def files_of(report: Path) -> set[str] | None:
-    """The files a report is about, where it says so; a whole area otherwise."""
-    data = json.loads(report.read_text())
-    named = data.get("files")
-    return {relative(f) for f in named} if named is not None else None
+def whole(
+    counts: Counts, about: dict[str, set[str]], floors: dict[str, dict[str, int]]
+) -> list[str]:
+    """Where a report did not measure what there is: nothing missed of nothing is no pass."""
+    problems = []
+    for kind, files in sorted(about.items()):
+        for file in sorted(files):
+            n, floor = counts[kind, file], floors.get(file, {}).get(kind)
+            if n == 0:
+                problems.append(f"{kind}: nothing measured in {file}")
+            elif floor is None:
+                problems.append(f"{kind}: no number of {file} in [measured]: it is {n}")
+            elif n != floor:
+                problems.append(f"{kind}: {n} measured in {file}, and [measured] says {floor}")
+    return problems
+
+
+def only(files: set[str], asked: str | None) -> tuple[set[str], list[str]]:
+    """The files of the area a run was to measure, all of them when it does not say."""
+    if asked is None:
+        return files, []
+    named = {relative(f) for f in asked.split(",") if f}
+    problems = [f"not a file of this area: {f}" for f in sorted(named - files)]
+    return named & files, problems or ([] if named else ["--only names no file"])
 
 
 def check(area: str, args: argparse.Namespace) -> list[str]:
     floors = load(ROOT / "tests" / "floors" / f"{area}.toml")
     files = set(floors["files"])
+    run, problems = only(files, args.only)
     found: Counter[Miss] = Counter()
+    counts: Counts = Counter()
     measured: dict[str, set[str]] = {}
-    for reports, kinds, read in (
-        (args.istanbul, ("line", "branch", "function"), istanbul),
-        (args.conditions, ("condition",), listed_misses),
-        (args.forced, ("forced",), listed_misses),
-        (args.mutants, ("mutant",), stryker),
+    for reports, kinds, read, count in (
+        (args.istanbul, ("line", "branch", "function"), istanbul, istanbul_counts),
+        (args.conditions, ("condition",), listed_misses, condition_counts),
+        (args.forced, ("forced",), listed_misses, forced_counts),
+        (args.mutants, ("mutant",), stryker, stryker_counts),
     ):
         for report in map(Path, reports or []):
-            about = files if read is istanbul else files_of(report) or files
-            for kind in kinds:
-                measured.setdefault(kind, set()).update(about)
-            found.update(m for m in read(report) if m.file in files)
-    entries, problems = exclusions(ROOT / "tests" / "exclusions" / f"{area}.toml")
+            measured.update(dict.fromkeys(kinds, run))
+            found.update(m for m in read(report) if m.file in run)
+            for kind, file, n in count(json.loads(report.read_text())):
+                counts[kind, file] += n
+    if not measured:
+        problems.append("no report was given")
+    entries, wrong = exclusions(ROOT / "tests" / "exclusions" / f"{area}.toml")
+    problems += wrong + whole(counts, measured, floors.get("measured", {}))
     return problems + compare(found, entries, measured, files, floors["misses"])
 
 
+def shares(floors: dict[str, Any], n: int) -> list[list[str]]:
+    """The area's files in n shares of about as many mutants each; every file is in one."""
+    out: list[list[str]] = [[] for _ in range(n)]
+    sizes = [0] * n
+    mutants = {f: floors.get("measured", {}).get(f, {}).get("mutant", 0) for f in floors["files"]}
+    for f in sorted(mutants, key=lambda f: (-mutants[f], f)):
+        least = sizes.index(min(sizes))
+        out[least].append(f)
+        sizes[least] += mutants[f] or 1
+    return [sorted(s) for s in out]
+
+
+def said(new: dict[str, str], old: dict[str, str], *names: str) -> bool:
+    """Whether one of the names has a line of its own, dated and with a reason, that is new."""
+    return any(
+        re.fullmatch(rf"{re.escape(name)} \d{{4}}-\d{{2}}-\d{{2}}", k) and str(why).strip()
+        for k, why in new.items()
+        if k not in old
+        for name in names
+    )
+
+
 def raised(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
-    """The floors of one file that went up with no line of their own in ``raised``."""
-    said = {k for k in new.get("raised", {}) if k not in old.get("raised", {})}
+    """The floors of one area that went up with no line of their own in ``raised``."""
+    lines = new.get("raised", {}), old.get("raised", {})
     return [
         f"{k} went from {n} to {new['misses'].get(k)} with no line in [raised]"
         for k, n in old.get("misses", {}).items()
-        if new["misses"].get(k, 0) > n and not any(s.startswith(f"{k} ") for s in said)
+        if new["misses"].get(k, 0) > n and not said(*lines, k)
     ]
+
+
+def lowered(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """What there was to miss in one area and is no more, with no line in ``lowered``."""
+    lines = new.get("lowered", {}), old.get("lowered", {})
+    problems = [
+        f"{f} left the area with no line in [lowered]"
+        for f in old.get("files", [])
+        if f not in new["files"] and not said(*lines, f)
+    ]
+    for f, kinds in old.get("measured", {}).items():
+        for k, n in kinds.items():
+            now = new.get("measured", {}).get(f, {}).get(k, 0)
+            if now < n and not said(*lines, f, f"{k} {f}"):
+                problems.append(f"{k} of {f} went from {n} to {now} with no line in [lowered]")
+    return problems
+
+
+def git(*args: str) -> str:
+    ran = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True)
+    return ran.stdout
 
 
 def against(base: str) -> list[str]:
     problems = []
-    for path in sorted((ROOT / "tests" / "floors").glob("*.toml")):
-        shown = subprocess.run(
-            ["git", "show", f"{base}:tests/floors/{path.name}"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if shown.returncode == 0:
-            problems += [
-                f"{path.name}: {p}" for p in raised(tomllib.loads(shown.stdout), load(path))
-            ]
+    for name in git("ls-tree", "--name-only", base, "tests/floors/").splitlines():
+        path = ROOT / name
+        if not path.is_file():
+            problems.append(f"{name} is gone")
+            continue
+        old, new = tomllib.loads(git("show", f"{base}:{name}")), load(path)
+        problems += [f"{path.name}: {p}" for p in raised(old, new) + lowered(old, new)]
     return problems
 
 
@@ -299,6 +391,127 @@ def pragmas(places: list[Path]) -> list[str]:
                 if PRAGMA.search(line):
                     problems.append(f"{path}:{n}: {line.strip()}")
     return problems
+
+
+Case = tuple[str, list[str], list[str]]
+
+
+def selftest_whole(file: str) -> list[Case]:
+    """A measure that looked at less than there is."""
+    floors = {file: {"line": 2, "mutant": 3}}
+    lines, mutants = {"line": {file}}, {"mutant": {file}}
+    area = {"files": [file, "x", "y"], "measured": {file: {"mutant": 9}, "x": {"mutant": 5}}}
+    return [
+        ("all there is", whole(Counter({("line", file): 2}), lines, floors), []),
+        ("a report with nothing in it", whole(Counter(), mutants, floors), ["nothing measured"]),
+        (
+            "a file that is not in a report",
+            whole(Counter({("line", "x"): 2}), lines, floors),
+            [f"nothing measured in {file}"],
+        ),
+        (
+            "a floor of nothing to measure",
+            whole(Counter(), lines, {file: {"line": 0}}),
+            ["nothing measured"],
+        ),
+        ("a line less", whole(Counter({("line", file): 1}), lines, floors), ["1 measured in"]),
+        ("a line more", whole(Counter({("line", file): 3}), lines, floors), ["3 measured in"]),
+        (
+            "a file with no number",
+            whole(Counter({("line", file): 2}), lines, {}),
+            ["no number of"],
+        ),
+        ("a run of the whole area", [*only({file, "x"}, None)[0]], [file, "x"]),
+        ("a run of one file", [*only({file, "worker/x"}, "x,")[0]], ["worker/x"]),
+        ("a run of one file, all of it", only({file, "worker/x"}, "x")[1], []),
+        ("a run of no file", only({file}, "")[1], ["names no file"]),
+        ("a run of a file of another area", only({file}, "x")[1], ["not a file of this area"]),
+        ("two shares of three files", [f"{shares(area, 2)}"], [f"{[[file], ['x', 'y']]}"]),
+    ]
+
+
+def selftest_lowered(file: str) -> list[Case]:
+    """What there was to miss, and is no more."""
+    old = {"files": [file], "measured": {file: {"line": 2}}}
+
+    def new(n: int, *lines: str, why: str = "why") -> dict[str, Any]:
+        return old | {"measured": {file: {"line": n}}, "lowered": dict.fromkeys(lines, why)}
+
+    gone: dict[str, Any] = {"files": []}
+    return [
+        ("a line more to miss", lowered(old, new(3)), []),
+        ("a line less to miss", lowered(old, new(1)), ["went from 2 to 1"]),
+        ("a file that is not measured now", lowered(old, {"files": [file]}), ["from 2 to 0"]),
+        ("a line less, and said so", lowered(old, new(1, f"line {file} 2026-01-01")), []),
+        ("a line less, and said of the file", lowered(old, new(1, f"{file} 2026-01-01")), []),
+        ("a line less, with no date", lowered(old, new(1, f"line {file} x")), ["from 2"]),
+        ("of another kind", lowered(old, new(1, f"branch {file} 2026-01-01")), ["from 2"]),
+        ("with no reason", lowered(old, new(1, f"{file} 2026-01-01", why=" ")), ["from 2"]),
+        (
+            "an old line for a new fall",
+            lowered(new(2, f"{file} 2026-01-01"), new(1, f"{file} 2026-01-01")),
+            ["from 2"],
+        ),
+        ("a file that left the area", lowered(old, gone), ["left the area"]),
+        (
+            "a file that left the area, and said so",
+            lowered(old, gone | {"lowered": {f"{file} 2026-01-01": "why"}}),
+            [],
+        ),
+    ]
+
+
+def selftest_reports(tmp: Path) -> list[Case]:
+    """The reports of each tool, with nothing in them and with one file of nothing."""
+    empty = {
+        "istanbul": ({}, {"worker/src/env.ts": {"statementMap": {}, "s": {}, "b": {}, "f": {}}}),
+        "conditions": (
+            {"totals": {}, "misses": []},
+            {"totals": {"src/env.ts": {"conditions": 0, "covered": 0}}, "misses": []},
+        ),
+        "forced": (
+            {"totals": {}, "misses": []},
+            {"totals": {"src/env.ts": 0}, "misses": []},
+        ),
+        "mutants": (
+            {"files": {}},
+            {"files": {"src/env.ts": {"source": "", "mutants": []}}},
+        ),
+    }
+    cases: list[Case] = []
+    for name, reports in empty.items():
+        for i, report in enumerate(reports):
+            path = tmp / f"{name}-{i}.json"
+            path.write_text(json.dumps(report))
+            none: dict[str, Any] = dict.fromkeys(empty)
+            args = argparse.Namespace(**(none | {name: [str(path)], "only": "src/env.ts"}))
+            kinds = {"conditions": ["condition"], "forced": ["forced"], "mutants": ["mutant"]}
+            wanted = [
+                f"{k}: nothing measured in worker/src/env.ts"
+                for k in kinds.get(name, ["line", "branch", "function"])
+            ]
+            found = [p for p in check("worker-core", args) if "nothing measured" in p]
+            cases.append((f"{name} of nothing ({i})", found, wanted))
+    args = argparse.Namespace(**(dict.fromkeys(empty) | {"only": None}))
+    start = [{"start": {"line": n}} for n in (4, 4, 9)]
+    counted = istanbul_counts(
+        {
+            "src/env.ts": {
+                "statementMap": dict(enumerate(start)),
+                "b": {"0": [1, 0], "1": [0]},
+                "f": {"0": 1, "1": 0, "2": 0, "3": 0},
+            }
+        }
+    )
+    cases.append(
+        (
+            "lines, branches and functions",
+            [f"{[n for _, _, n in counted]}"],
+            ["[2, 3, 4]"],
+        )
+    )
+    cases.append(("no report at all", check("worker-core", args), ["no report was given"]))
+    return cases
 
 
 def selftest() -> list[str]:
@@ -362,9 +575,19 @@ def selftest() -> list[str]:
             ),
             ["went from"],
         ),
+        (
+            "a floor raised under a line with no reason",
+            raised(
+                {"misses": {"line": 0}}, {"misses": {"line": 1}, "raised": {"line 2026-01-01": ""}}
+            ),
+            ["went from"],
+        ),
+        *selftest_whole(file),
+        *selftest_lowered(file),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         here_dir = Path(tmp)
+        cases += selftest_reports(here_dir)
         planted_pragmas = ("istanbul" + " ignore next", "pragma:" + " no cover", "NO" + "SONAR")
         for i, text in enumerate(planted_pragmas):
             (here_dir / f"{i}.ts").write_text(f"x // {text}\n")
@@ -420,11 +643,20 @@ def main(argv: list[str]) -> int:
     c.add_argument("area")
     for report in ("istanbul", "conditions", "forced", "mutants"):
         c.add_argument(f"--{report}", nargs="+")
+    c.add_argument("--only", help="the files of the run, with a comma between; all of them if not")
+    f = commands.add_parser("files", help="the files of an area, with a comma between")
+    f.add_argument("area")
+    f.add_argument("--share", default="1/1", help="one of N shares of about as many mutants: I/N")
     b = commands.add_parser("base", help="the floors against another revision's")
     b.add_argument("revision")
     commands.add_parser("pragmas", help="no inline pragma in the sources")
     commands.add_parser("selftest", help="plants each problem and requires its report")
     args = parser.parse_args(argv)
+    if args.command == "files":
+        i, n = map(int, args.share.split("/"))
+        area = load(ROOT / "tests" / "floors" / f"{args.area}.toml")
+        print(",".join(f.removeprefix("worker/") for f in shares(area, n)[i - 1]))
+        return 0
     if args.command == "check":
         problems = check(args.area, args)
     elif args.command == "base":

@@ -25,3 +25,18 @@ condition = 0
 forced = 0
 mutant = 1
 exclusions = 1
+
+# What there is of each in each file: what a run must have measured, no more
+# and no less. A number that falls needs a dated line in a table [lowered],
+# such as "line worker/src/bot.ts 2026-11-24" = "why", or of the file alone.
+[measured]
+"worker/src/assess.ts" = { line = 84, branch = 57, function = 12, condition = 33, forced = 66, mutant = 189 }
+"worker/src/authors.ts" = { line = 36, branch = 27, function = 6, condition = 14, forced = 28, mutant = 90 }
+"worker/src/bot.ts" = { line = 176, branch = 158, function = 30, condition = 79, forced = 158, mutant = 521 }
+"worker/src/env.ts" = { line = 11, branch = 15, function = 8, condition = 12, forced = 24, mutant = 51 }
+"worker/src/github.ts" = { line = 116, branch = 100, function = 21, condition = 53, forced = 106, mutant = 326 }
+"worker/src/keys.ts" = { line = 29, branch = 16, function = 8, condition = 8, forced = 16, mutant = 82 }
+"worker/src/log.ts" = { line = 9, branch = 16, function = 2, condition = 7, forced = 14, mutant = 53 }
+"worker/src/registry.ts" = { line = 111, branch = 148, function = 30, condition = 105, forced = 210, mutant = 572 }
+"worker/src/session.ts" = { line = 28, branch = 39, function = 8, condition = 26, forced = 52, mutant = 122 }
+"worker/src/util.ts" = { line = 53, branch = 28, function = 19, condition = 16, forced = 32, mutant = 137 }
