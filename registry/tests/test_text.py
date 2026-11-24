@@ -108,10 +108,10 @@ class Texts(unittest.TestCase):
 
     def test_white_space_is_what_either_language_takes_for_it(self) -> None:
         blanks = {chr(c) for c in range(0x10000) if chr(c).isspace()} | {"\ufeff"}
-        for c in range(0x10000):
-            with self.subTest(f"U+{c:04X}"):
-                collapsed = cla.normalize(f"a{chr(c)}{chr(c)}b") == "a b"
-                self.assertEqual(collapsed, chr(c) in blanks)
+        collapsed = {
+            chr(c) for c in range(0x10000) if cla.normalize(f"a{chr(c)}{chr(c)}b") == "a b"
+        }
+        self.assertEqual(collapsed, blanks)
 
     def test_the_ends_are_trimmed(self) -> None:
         self.assertEqual(cla.normalize("\n XaX \t"), "XaX")

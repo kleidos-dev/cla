@@ -7,6 +7,8 @@ campaign of minutes, so only its planted mutants run here."""
 
 from __future__ import annotations
 
+import argparse
+import ast
 import importlib
 import json
 import os
@@ -306,14 +308,29 @@ class Mutate(Planted):
         self.assertEqual((code, found), (1, []))
 
     def test_parts_of_a_campaign(self) -> None:
-        shards = [
-            {json.dumps({k: f[k] for k in mutate.KEYS}) for f in self.results("--shard", s)[1]}
-            for s in ("1/2", "2/2")
-        ]
-        whole = {json.dumps({k: f[k] for k in mutate.KEYS}) for f in self.results()[1]}
-        self.assertEqual(shards[0] | shards[1], whole)
-        self.assertEqual(len(self.results("--sample", "3", "--seed", "5")[1]), 3)
-        self.assertEqual({f["line"] for f in self.results("--lines", "9-9")[1]}, {"9"})
+        mutator = mutate.Mutator(pysource.Source(self.root / "src" / "planted.py"))
+
+        def chosen(**over: Any) -> list[int]:
+            nothing = {"functions": None, "operators": None, "lines": None, "shard": None}
+            args = argparse.Namespace(**{**nothing, "sample": None, "seed": 0, **over})
+            order = {id(m): i for i, m in enumerate(mutator.mutants)}
+            return [order[id(m)] for m in mutate.choose(mutator, args)]
+
+        whole = chosen()
+        self.assertEqual(whole, list(range(len(mutator.mutants))))
+        self.assertEqual(chosen(shard="1/2"), whole[::2])
+        self.assertEqual(chosen(shard="2/2"), whole[1::2])
+        self.assertEqual(len(chosen(sample=3, seed=5)), 3)
+        self.assertEqual(chosen(sample=3, seed=5), chosen(sample=3, seed=5))
+        self.assertNotEqual(chosen(sample=3, seed=5), chosen(sample=3, seed=6))
+        self.assertEqual(chosen(sample=10_000), whole)
+        for over, key, value in (
+            ({"lines": "9-9"}, "line", {"9"}),
+            ({"functions": "unused"}, "function", {"unused"}),
+            ({"operators": "return,not"}, "operator", {"return"}),
+        ):
+            found = {mutator.describe(mutator.mutants[i])[key] for i in chosen(**over)}
+            self.assertEqual(found, value)
         done = self.run_tool("mutate.py", "--count")
         self.assertEqual((done.returncode, len(done.stdout.splitlines())), (0, 1))
 
@@ -339,6 +356,7 @@ class Mutate(Planted):
         self.assertEqual(mutate.regex_mutants("[^a]"), ["[a]"])
 
 
+@unittest.skipIf(MEASURED, "this is the measure itself")
 class Lists(unittest.TestCase):
     """The register's own lists: short, whole, and as long as their floors say."""
 
@@ -369,8 +387,15 @@ class Lists(unittest.TestCase):
 
     def test_every_listed_mutant_exists(self) -> None:
         mutator = mutate.Mutator(pysource.Source(Path(cla.__file__)))
-        made = {tuple(mutator.describe(m)[k] for k in mutate.KEYS) for m in mutator.mutants}
         listed = pysource.entries(LIST, "mutant", "registry/cla.py")
+        texts = {(e["operator"], e["text"]) for e in listed}
+        near = [
+            m
+            for m in mutator.mutants
+            if m.operator in {o for o, _ in texts}
+            and (m.operator, ast.unparse(mutator.nodes[m.number])) in texts
+        ]
+        made = {tuple(mutator.describe(m)[k] for k in mutate.KEYS) for m in near}
         self.assertEqual(len({tuple(e[k] for k in mutate.KEYS) for e in listed}), len(listed))
         for e in listed:
             self.assertIn(tuple(e[k] for k in mutate.KEYS), made)
