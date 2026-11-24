@@ -435,3 +435,42 @@ describe("the pull request", () => {
     expect((a.pr satisfies PullRequest).base.repo.full_name).toBe(SANDBOX);
   });
 });
+
+describe("a list of commits that does not add up", () => {
+  /** GitHub answering for ever what `page` says; a loop with no bound fails on the tenth question. */
+  function endless(pr: FakePr, page: { nodes: FakePr["commits"]; total: number; next: string | null }) {
+    let n = 0;
+    w.gh.answer(/^POST \/graphql$/, () => {
+      if (++n > 9) throw new Error("asked without end");
+      return json({ data: { repository: { pullRequest: { headRefOid: pr.head.sha, commits: { totalCount: page.total, pageInfo: { hasNextPage: true, endCursor: page.next }, nodes: page.nodes.map((c) => ({ commit: c })) } } } } });
+    });
+  }
+
+  it("that always has another page and nothing on it is cut: nobody can say who wrote the rest", async () => {
+    const pr = openPr(w, alice);
+    endless(pr, { nodes: [], total: 2, next: "x" });
+    expect((await assessed(pr)).tooManyCommits).toBe(true);
+    expect(queries()).toHaveLength(1);
+  });
+
+  it("that has another page and does not say where is cut, and is not read again from the start", async () => {
+    const pr = openPr(w, alice);
+    endless(pr, { nodes: Array.from({ length: 100 }, () => commit(alice)), total: 150, next: null });
+    expect((await assessed(pr)).tooManyCommits).toBe(true);
+    expect(queries()).toHaveLength(1);
+  });
+
+  it("that gives everything it counts and then an empty page is whole", async () => {
+    const pr = openPr(w, alice);
+    pages(pr, { nodes: [commit(alice)], total: 1, more: true, next: "1" }, { nodes: [], total: 1, more: true, next: "1" });
+    expect((await assessed(pr)).tooManyCommits).toBe(false);
+    expect(queries()).toHaveLength(2);
+  });
+
+  it("that never ends is read up to 250", async () => {
+    const pr = openPr(w, alice);
+    endless(pr, { nodes: Array.from({ length: 125 }, () => commit(alice)), total: 250, next: "x" });
+    expect((await assessed(pr)).tooManyCommits).toBe(false);
+    expect(queries()).toHaveLength(2);
+  });
+});

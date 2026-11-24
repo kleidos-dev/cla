@@ -144,12 +144,13 @@ export async function assess(gh: GitHub, registry: Registry, config: Config, rep
       if (ca.unidentified > 0 || ca.tooMany) unknownCommits.push(commit.oid.slice(0, 7));
       for (const a of ca.accounts) add(a, ca.date);
     }
-    if (!commits.pageInfo.hasNextPage || seen >= MAX_COMMITS) {
+    cursor = commits.pageInfo.hasNextPage ? commits.pageInfo.endCursor : null;
+    // A page that is empty, or that does not say where the next one starts, ends the list whatever it promises.
+    if (cursor === null || commits.nodes.length === 0 || seen >= MAX_COMMITS) {
       // Fewer commits seen than GitHub counts: the list was cut, so not every author is known.
       if (seen < commits.totalCount) tooManyCommits = true;
       break;
     }
-    cursor = commits.pageInfo.endCursor;
   }
 
   if (pr.state === "open") {
