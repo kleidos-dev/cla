@@ -6,9 +6,11 @@
 #
 #   🧹 Lint ───────┬─ 🔎 Types (mypy)
 #   ⚖️ Licensing ──┼─ 🔎 ESLint and tsc
-#                  ├─ 🐍 Register tests ─┬─ 📦 Coverage reports ── 📊 SonarCloud
-#                  ├─ 🧪 Worker tests ───┘
-#                  ├─ 🔑 App setup script test
+#                  ├─ 🐍 Register tests ──────────────┬─ 📦 Coverage reports ── 📊 SonarCloud
+#                  ├─ 🧪 Worker tests ────────────────┤
+#                  ├─ 🔑 Setup scripts and workflows ─┘
+#                  ├─ 🧬 Mutants of the changed scripts (pull requests)
+#                  ├─ 🌐 Pages
 #                  ├─ 🛡️ Dependency vulnerabilities (OSV)
 #                  └─ 🔐 Secrets and MAC scan (gitleaks)
 #
@@ -16,7 +18,8 @@
 # docs/quality.md), called at the kit commit .github/quality/SOURCE.json
 # records; the kit's sync.py keeps those references. The lint job runs
 # every pre-commit hook, the agreement digests among them. The Worker's
-# vitest run and the setup script's test are this repository's own.
+# vitest run, the setup scripts', workflows' and pages' tests are this
+# repository's own.
 #
 # No job here holds a secret or writes to the repository: pull requests from
 # forks run with the read-only token like everyone else's, and the SonarCloud
@@ -132,9 +135,55 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  script:
-    name: "🔑 App setup script test"
+  # The setup scripts and the agreement gate at 100 % of their lines,
+  # branches and functions, their conditions held to tests/floors/scripts.toml,
+  # and the real text of record.yml and verify.yml run and evaluated.
+  scripts:
+    name: "🔑 Setup scripts and workflows"
     needs: [lint, reuse]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: The scripts' tests, every line, branch and function
+        run: >-
+          node --test --experimental-test-coverage
+          --test-coverage-include='scripts/*.ts' --test-coverage-include='worker/scripts/*.mjs'
+          --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=lcov --test-reporter-destination=scripts-lcov.info
+          scripts/test/*.test.ts
+      - name: The scripts' conditions (MC/DC) against their floors
+        run: |
+          node tests/tools/node/selftest.mjs
+          node tests/tools/node/scripts-mcdc.mjs coverage/scripts-mcdc.json scripts/test/*.test.ts
+          python3 tests/tools/ratchet.py check scripts --conditions coverage/scripts-mcdc.json
+      - name: The workflows' run blocks and expressions
+        run: node --test tests/workflows/*.test.mts
+      - name: Hand the coverage report to the SonarCloud job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-scripts
+          path: scripts-lcov.info
+          if-no-files-found: error
+          retention-days: 1
+
+  # The mutants of the lines a pull request changes in the setup scripts and
+  # the agreement gate (all of them run every Monday, mutation.yml): a
+  # survivor that tests/exclusions/scripts.toml does not list fails.
+  scripts-mutants:
+    name: "🧬 Mutants of the changed scripts"
+    needs: [lint, reuse]
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -144,13 +193,43 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
-      - name: create-github-app.ts end to end, against a mocked GitHub and a fake wrangler
-        run: node --test scripts/test/
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Every mutant of the changed lines, at most 60, two at a time
+        run: |
+          git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
+          node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 60 --workers 2 --timeout 60
+          node tests/tools/node/scripts-mut.mjs --listed coverage/scripts-mutation.json
+
+  # The sign pages in chromium, behind a network fence (tests/pages/).
+  pages:
+    name: "🌐 Pages"
+    needs: [lint, reuse]
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - working-directory: worker
+        run: npm ci
+      - name: Chromium, the build playwright-core pins
+        working-directory: worker
+        run: npx --no-install playwright-core install --with-deps chromium
+      - name: Every page in every variant, and the sign-in round trip
+        run: node --test tests/pages/pages.test.mts
 
   # The two reports in the one artifact the SonarCloud job reads.
   coverage:
     name: "📦 Coverage reports"
-    needs: [register, worker]
+    needs: [register, worker, scripts]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
