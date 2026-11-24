@@ -8,12 +8,13 @@
  * or when it went wrong. GitHub's failures each have their own page.
  */
 import { describe, expect, it, vi } from "vitest";
+import { localize } from "../../src/html";
 import { MESSAGES, S } from "../../src/i18n";
 import { Registry } from "../../src/registry";
 import { must } from "../../src/util";
 import type { FakePr, User } from "../fakegh";
 import { commit, sha } from "../fakegh";
-import { CONFIG, CONFIG_V2, SANDBOX, alice, bob, call, carol, expectMessage, lines, openPr, restoring, sessionHeader, sessionSet, world } from "./support";
+import { CONFIG, CONFIG_V2, ORIGIN, SANDBOX, alice, bob, call, carol, expectMessage, lines, openPr, restoring, sessionHeader, sessionSet, world } from "./support";
 import type { World } from "./support";
 
 restoring();
@@ -279,6 +280,81 @@ describe("the sign page, signed in", () => {
   });
 });
 
+describe("the parts of the sign page", () => {
+  const bars = (html: string) => /<span class="bars" aria-hidden="true">(.*?)<\/span><\/div>/.exec(html)?.[1];
+
+  it("signed out is step 1, with nothing between the place and the lede, the links to read, and no one signed in", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const html = await (await get(w, signPath(p))).text();
+    expect(bars(html)).toBe('<span class="current"></span><span class=""></span>');
+    expect(html).toContain(`<p class="where">${S.en.start.where}</p>\n\n<p class="lede">`);
+    expect(html).toContain(`<p class="note">${S.en.start.note}</p>\n\n<ul class="links"><li><a href="/agreement?lang=en">Read the agreement</a></li><li><a href="/privacy?lang=en">Privacy notice</a></li></ul>`);
+  });
+
+  it("at the acceptance is step 2, with the box unticked and no error, and the full text in its fold", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const r = await get(w, signPath(p), await sessionHeader(w, session(alice, { sid: "s1", token: "ghu_test", app: "bot", for: `${SANDBOX}#${p.number}` })));
+    const html = await r.text();
+    expect(r.status).toBe(200);
+    expect(bars(html)).toBe('<span class="done"></span><span class="current"></span>');
+    expect(html).toContain('<form class="accept" id="accept" method="post" action="/agree#accept" novalidate>');
+    expect(html).toContain('<input type="checkbox" id="accept-box" name="accept" value="yes" aria-describedby="post-note">');
+    expect(html).not.toContain('id="accept-error"');
+    expect(html).toContain(`<input type="hidden" name="lang" value="en">\n\n<div class="check">`);
+    expect(html).toContain(`</p>\n\n</form>`);
+    expect(html).toContain('<div class="fold-body">\n\n<p class="meta">');
+    expect(html).toContain('download>individual.md</a>');
+    expect(html).toMatch(/<section class="prose" lang="en" aria-label="Contributor Agreement"><h2 id="f-ca-/);
+    expect(html).toContain(localize(`<ul>${S.en.accept.before.map((x) => `<li>${x}</li>`).join("")}</ul><p class="note">${S.en.accept.data}</p>`, "en"));
+  });
+
+  it("at the acceptance in Spanish shows the translation of the sentence and says the English binds", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const html = await (await get(w, `${signPath(p)}?lang=es`, await sessionHeader(w, session(alice, { token: "ghu_test", app: "bot", for: `${SANDBOX}#${p.number}` })))).text();
+    const t = must(S.es.accept.translation);
+    expect(html).toContain(`<details class="translation"><summary>${t.summary}</summary><p lang="es">${t.body(SET_1.slice(0, 12), 1)}</p></details>`);
+    expect(html).toContain(`<p class="banner">${S.es.accept.binding ?? ""}</p>`);
+  });
+
+  it("of a sign-in version says what happens before signing in its own words", async () => {
+    const w = await world({ config: CONFIG_V2, signinSecrets: true });
+    const p = openPr(w, alice);
+    const html = await (await get(w, signPath(p), await sessionHeader(w, session(alice, { token: "ghu_test", app: "signin", for: `${SANDBOX}#${p.number}` })))).text();
+    expect(html).toContain(localize(`<ul>${S.en.accept.beforeSignin.map((x) => `<li>${x}</li>`).join("")}</ul><p class="note">${S.en.accept.dataSignin}</p>`, "en"));
+  });
+
+  it("signed in names the account, offers to switch it, and signs it out with a form the sign-out takes", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const cookie = await sessionHeader(w, session(alice, { sid: "s1", token: "ghu_x", app: "bot", for: "other#1" }));
+    const html = await (await get(w, signPath(p), cookie)).text();
+    expect(html).toContain(`<a href="/auth/login?return=${encodeURIComponent(signPath(p))}&amp;switch=1&amp;lang=en">${S.en.accept.switch}</a>`);
+    const csrf = must(/<form method="post" action="\/auth\/logout"><input type="hidden" name="csrf" value="([^"]+)">/.exec(html)?.[1]);
+    const out = await call(w, "/auth/logout", { method: "POST", headers: { origin: ORIGIN, "content-type": "application/x-www-form-urlencoded", cookie }, body: `csrf=${encodeURIComponent(csrf)}` });
+    expect(out.status).toBe(303);
+    expect(w.gh.seen(/^DELETE \/applications\//)).toHaveLength(1);
+  });
+
+  it("of an author who must sign is not exempt, nor covered, because another author is", async () => {
+    const w = await world({ config: { ...CONFIG, exempt: [...CONFIG.exempt, { id: carol.id, login: carol.login, why: "a test" }] } });
+    w.gh.setFile("main", "registry/entities.json", JSON.stringify({ schema: 1, entities: [{ slug: "acme", name: "Acme", version: 1, set_sha256: SET_1, signed_at: "2026-01-01", covered: [{ github_id: bob.id, from: "2026-01-01" }] }] }));
+    const p = openPr(w, alice, { commits: [commit(alice), commit(bob, { date: "2026-11-01T10:00:00Z" }), commit(carol)] });
+    const html = await (await get(w, signPath(p), await sessionHeader(w, session(alice)))).text();
+    expect(html).toContain(">Sign in with GitHub again to sign</a>");
+    expect(html).not.toContain(S.en.status.nothingTitle);
+  });
+
+  it("of an exempt author is a plain card, neither done nor an alert", async () => {
+    const w = await world({ config: { ...CONFIG, exempt: [...CONFIG.exempt, { id: carol.id, login: carol.login, why: "a test" }] } });
+    const p = openPr(w, alice, { commits: [commit(alice), commit(carol)] });
+    const html = await (await get(w, signPath(p), await sessionHeader(w, session(carol)))).text();
+    expect(html).toContain(`<div class="card" role="status"><p>${S.en.status.exempt("carol")}</p></div>`);
+  });
+});
+
 /** An acceptance comment of the account on the pull request, as GitHub keeps it. */
 function postComment(w: World, p: FakePr, by: User, o: { body?: string; edited?: boolean } = {}): { id: number; url: string } {
   const id = w.gh.next();
@@ -304,6 +380,15 @@ describe("the sign page after a posted acceptance", () => {
     expect(html).toContain("<dd>2026-11-02T10:00:00Z</dd>");
     expect(html).toContain(`${S.en.done.entryRecording} <a href="${signPath(p)}?lang=en">${S.en.done.checkNow}</a>`);
     expect(r.headers.getSetCookie()).toEqual([]);
+    expect(/<span class="bars" aria-hidden="true">(.*?)<\/span><\/div>/.exec(html)?.[1]).toBe('<span class="done"></span><span class="done"></span>');
+  });
+
+  it("whose comment's author GitHub no longer knows does not stand", async () => {
+    const w = await world();
+    const p = openPr(w, alice);
+    const c = postComment(w, p, alice);
+    w.gh.answer(new RegExp(`^GET /repos/kleidos-dev/cla-sandbox/issues/comments/${c.id}$`), () => json({ body: CONFIG.versions["1"].sentence, created_at: "a", updated_at: "a", user: null }));
+    expect(await (await get(w, signPath(p), await pending(w, p, c))).text()).toContain(`<div class="card is-pending" role="alert"><p>${S.en.status.edited}</p></div>`);
   });
 
   it("once recorded links the record at the commit that added it, or on the branch when that commit cannot be read", async () => {

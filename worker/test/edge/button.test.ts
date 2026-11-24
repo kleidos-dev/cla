@@ -62,12 +62,19 @@ describe("the address of a button", () => {
     );
   });
 
+  it("of each state at its smallest count is read back", () => {
+    expect(parseButtonPath("/button/v2/needed-0-1.svg")).toEqual({ state: "needed", signed: 0, total: 1 });
+    expect(parseButtonPath("/button/v2/partial-1-2.svg")).toEqual({ state: "partial", signed: 1, total: 2 });
+    expect(parseButtonPath("/button/v2/signed-1-1.svg")).toEqual({ state: "signed", signed: 1, total: 1 });
+    expect(parseButtonPath("/button/v2/none-0-0.svg")).toEqual({ state: "none", signed: 0, total: 0 });
+  });
+
   it("of the older comments, v1, is still answered", () => {
     expect(parseButtonPath("/button/v1/partial-1-2.svg")).toEqual({ state: "partial", signed: 1, total: 2 });
   });
 
   it("is refused for a combination the bot never writes", () => {
-    for (const path of ["/button/v2/needed-1-2.svg", "/button/v2/partial-0-2.svg", "/button/v2/partial-3-2.svg", "/button/v2/signed-2-3.svg", "/button/v2/signed-0-0.svg", "/button/v2/none-1-1.svg", "/button/v2/none-0-1.svg"]) {
+    for (const path of ["/button/v2/needed-1-2.svg", "/button/v2/partial-0-2.svg", "/button/v2/partial-3-2.svg", "/button/v2/signed-2-3.svg", "/button/v2/signed-0-0.svg", "/button/v2/none-1-1.svg", "/button/v2/none-0-1.svg", "/button/v2/none-1-0.svg"]) {
       expect(parseButtonPath(path), path).toBeNull();
     }
   });

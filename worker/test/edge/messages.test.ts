@@ -74,7 +74,7 @@ describe("a queue message that is not one", () => {
 
   it("is refused when its head commit is not forty lowercase hex digits", () => {
     for (const kind of ["release", "held"] as const) {
-      for (const sha of [undefined, 7, null, "", SHA.slice(1), `${SHA}0`, SHA.toUpperCase(), `${SHA.slice(1)}g`, `${SHA}\n`]) expect(parseMessage({ ...FULL[kind], sha }), `${kind} ${String(sha)}`).toBeNull();
+      for (const sha of [undefined, 7, null, [SHA], "", SHA.slice(1), `${SHA}0`, SHA.toUpperCase(), `${SHA.slice(1)}g`, `${SHA}\n`]) expect(parseMessage({ ...FULL[kind], sha }), `${kind} ${String(sha)}`).toBeNull();
     }
   });
 

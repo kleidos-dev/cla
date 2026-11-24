@@ -10,7 +10,8 @@
  * without its words.
  */
 import { describe, expect, it, vi } from "vitest";
-import { AGREEMENTS } from "../../src/agreement";
+import { AGREEMENTS, NOTICES, filesOf } from "../../src/agreement";
+import { renderMarkdown } from "../../src/markdown";
 import { S } from "../../src/i18n";
 import { csrfToken } from "../../src/keys";
 import { NotAllowedError } from "../../src/github";
@@ -96,21 +97,72 @@ describe("the agreement page", () => {
   });
 });
 
-describe("the other public pages", () => {
-  it("the privacy notice is the notice in the reader's language, its links to the other language rewritten", async () => {
+describe("the agreement page's parts", () => {
+  /** The parts of a page as renderMarkdown makes them, with the ids the page gives them. */
+  const part = (src: string, prefix: string) => renderMarkdown(src.replace(/^<!--[\s\S]*?-->\s*/, ""), { headingShift: 1, idPrefix: prefix });
+
+  it("lists in its contents the Agreement's clauses and the Addendum's sections, each linked to its heading", async () => {
     const w = await world();
-    const en = await (await call(w, "/privacy")).text();
-    expect(en).toContain(`<title>${S.en.privacy.title}</title>`);
-    expect(en).toContain('<div class="prose privacy">');
-    expect(en).not.toContain('href="PRIVACY.es.md"');
-    const es = await (await call(w, "/privacy?lang=es")).text();
-    expect(es).toContain(`<title>${S.es.privacy.title}</title>`);
-    expect(es).toContain(`<p class="eyebrow">${S.es.privacy.eyebrow}</p>`);
+    const html = await (await call(w, "/agreement")).text();
+    const ca = part(must(filesOf(1)["individual.md"]), "ca");
+    const ad = part(must(filesOf(1)["addendum.md"]), "ad");
+    const li = (h: { id: string; html: string }) => `<li><a href="#${h.id}">${h.html}</a></li>`;
+    const clauses = ca.headings.filter((h) => h.level === 4);
+    const sections = ad.headings.filter((h) => h.level === 3);
+    expect(clauses.length).toBeGreaterThan(3);
+    expect(sections.length).toBeGreaterThan(3);
+    expect(html).toContain(
+      `<details class="toc" open><summary class="eyebrow">Contents</summary><ol>\n<li><a href="#${must(ca.headings[0]).id}">${S.en.agreement.partA}</a><ol>${clauses.map(li).join("")}</ol></li>\n<li><a href="#${must(ad.headings[0]).id}">${S.en.agreement.partB}</a><ol>${sections.map(li).join("")}</ol></li>\n</ol></details>`,
+    );
+    expect(html).toContain(`<section class="prose" lang="en" aria-label="Contributor Agreement">${ca.html}</section>\n<section class="prose" lang="en" aria-label="Addendum">${ad.html}</section>`);
+  });
+
+  it("says what the agreement says, item by item, and nothing in English where only Spanish adds a part", async () => {
+    const w = await world();
+    const html = await (await call(w, "/agreement")).text();
+    const items = S.en.accept.summary.map(([k, v]) => `<li><strong>${k}</strong> ${v}</li>`).join("");
+    expect(html).toContain(`<h1 class="h-page">${S.en.agreement.h1}</h1>\n\n<p class="lede">${S.en.agreement.lede}</p>\n<ul class="summary" aria-label="${S.en.accept.summaryLabel}">${items}</ul>\n\n<p class="meta">`);
+  });
+
+  it("in Spanish shows the translation without its licence comment, and the summary with ids of its own", async () => {
+    const w = await world();
+    const html = await (await call(w, "/agreement?lang=es")).text();
+    const ca = part(must(filesOf(1)["individual.es.md"]), "ca");
+    expect(html).toContain(`<section class="prose" lang="es" aria-label="Acuerdo">${ca.html}</section>`);
+    expect(html).not.toContain("SPDX");
+    expect(html).toContain(`<div class="prose">${part(must(filesOf(1)["summary.es.md"]), "re").html}</div>`);
+  });
+
+  it("of the entity version in Spanish shows the entity text in English, not the individual translation", async () => {
+    const w = await world();
+    const html = await (await call(w, "/agreement/entity?lang=es")).text();
+    expect(html).toContain(`<section class="prose" lang="en" aria-label="Acuerdo">${part(must(filesOf(1)["entity.md"]), "ca").html}</section>`);
+    expect(html).not.toContain("Acuerdo de Contribución (traducción informativa)</h2>");
+  });
+});
+
+describe("the other public pages", () => {
+  it("the privacy notice is the notice in the reader's language, a document, its links to the other language rewritten", async () => {
+    const w = await world();
+    const links = { "PRIVACY.es.md": "/privacy?lang=es", "PRIVACY.md": "/privacy?lang=en" };
+    for (const [lang, src] of [
+      ["en", NOTICES.privacy],
+      ["es", NOTICES.privacyEs],
+    ] as const) {
+      const r = await call(w, `/privacy?lang=${lang}`);
+      const html = await r.text();
+      const notice = renderMarkdown(src, { idPrefix: "p", links }).html;
+      expect(html).toContain(`<main id="main" class="doc">\n<div class="progress"><p class="eyebrow">${S[lang].privacy.eyebrow}</p></div>\n<div class="prose privacy">${notice}</div>`);
+      expect(notice).toContain(lang === "en" ? 'href="/privacy?lang=es"' : 'href="/privacy?lang=en"');
+      expect(html).toContain(`<title>${S[lang].privacy.title}</title>`);
+      expect(r.headers.get("cache-control")).toBe("public, max-age=300, no-transform");
+    }
   });
 
   it("the page after the installation says what the app serves, in either language", async () => {
     const w = await world();
     expect(await (await call(w, "/setup")).text()).toContain('<h1 class="h-task">kleidos-cla installed</h1>\n<p>The app is installed. It serves only the Kleidos repositories; an installation on any other account is removed automatically.</p>');
+    expect(await (await call(w, "/setup")).text()).toContain('<link rel="alternate" hreflang="es" href="/setup?lang=es">');
     expect(await (await call(w, "/setup?lang=es")).text()).toContain('<h1 class="h-task">kleidos-cla instalada</h1>\n<p>La aplicación está instalada. Solo atiende los repositorios de Kleidos; una instalación en cualquier otra cuenta se retira automáticamente.</p>');
   });
 });
@@ -143,6 +195,7 @@ describe("the last edges of the flows", () => {
     const csrf = await csrfToken((await keysOf(w)).csrf, ["s1", "logout"]);
     expect((await call(w, "/auth/logout", { method: "POST", headers: { ...FORM, cookie }, body: `csrf=${encodeURIComponent(csrf)}` })).status).toBe(303);
     expect(w.gh.requests).toEqual([]);
+    expect(lines(w)).toEqual([]);
   });
 
   it("a revocation whose credentials cannot even be sent is logged with no status, and the sign-out goes on", async () => {

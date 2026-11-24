@@ -95,6 +95,11 @@ describe("the comment", () => {
     );
   });
 
+  it("when one of two signed names who needs none, then the button", () => {
+    const body = commentBody(assessment({ required: [alice, bob], signedBy: [bob], exempt: [{ account: { id: 5, login: "dependabot[bot]", type: "Bot" }, why: "automation" }] }), ctx());
+    expect(body.split("\n").slice(1, 6)).toEqual(["**Contributor Agreement: 1 of 2 signed.** [bob](https://github.com/bob) has signed; still to sign: @alice.", "", "No signature needed: `dependabot[bot]` (automation).", "", `[![Sign the Kleidos Contributor Agreement: 1 of 2 authors signed](${ORIGIN}/button/v2/partial-1-2.svg)](${SIGN})`]);
+  });
+
   it("when two of three signed says they have", () => {
     const body = commentBody(assessment({ required: [alice, bob, carol], signedBy: [alice, bob] }), ctx());
     expect(body.split("\n")[1]).toBe("**Contributor Agreement: 2 of 3 signed.** @alice, [bob](https://github.com/bob) have signed; still to sign: [carol](https://github.com/carol).");
@@ -135,7 +140,7 @@ describe("the comment", () => {
   });
 
   it("when everyone signed links each register entry at the commit that added it, and says the checks run", () => {
-    const body = commentBody(assessment({ required: [alice, bob, { id: 44, login: "x y", type: "User" }], signedBy: [alice, bob, { id: 44, login: "x y", type: "User" }] }), ctx({ recordCommits: new Map([[alice.id, COMMIT], [bob.id, "not-a-commit"]]) }));
+    const body = commentBody(assessment({ required: [alice, bob, { id: 44, login: "x y", type: "User" }], signedBy: [alice, bob, { id: 44, login: "x y", type: "User" }] }), ctx({ recordCommits: new Map([[alice.id, COMMIT], [bob.id, `${COMMIT}0`], [44, `x${COMMIT}`]]) }));
     expect(body).toBe(
       [
         MARKER,

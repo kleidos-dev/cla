@@ -7,7 +7,7 @@
  * identifiers only. mapEvent is the whole table from an event to the
  * messages it asks for.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CHECK_NAME } from "../../src/assess";
 import type { MapOptions } from "../../src/webhook";
 import { MAX_WEBHOOK_BYTES, mapEvent, verifySignature } from "../../src/webhook";
@@ -50,7 +50,7 @@ describe("an unsigned delivery", () => {
     const body = "{}";
     const good = await sign(WEBHOOK_SECRET, body);
     const hex = good.slice("sha256=".length);
-    for (const signature of [null, "", "sha256=", `sha1=${hex}`, `SHA256=${hex}`, `sha256=${hex.toUpperCase()}`, `sha256=${hex.slice(1)}`, `sha256=${hex}0`, `sha256=${hex.slice(0, 63)}g`, `sha256=${hex.slice(0, 62)}${hex.slice(63)}${hex.slice(62, 63)}`, await sign("another-secret", body)]) {
+    for (const signature of [null, "", "sha256=", `sha1=${hex}`, `SHA256=${hex}`, `sha256=${hex.toUpperCase()}`, `sha256=${hex.slice(1)}`, `sha256=${hex}0`, `sha256=${hex.slice(0, 63)}g`, `sha256=${hex.slice(0, 62)}${hex.slice(63)}${hex.slice(62, 63)}`, `x${good}`, await sign("another-secret", body)]) {
       const r = await deliver(w, body, { "x-hub-signature-256": signature });
       expect(r.status, String(signature)).toBe(401);
     }
@@ -158,8 +158,9 @@ describe("a signed delivery", () => {
     expect(lines(w)).toEqual([{ msg: "webhook", event: "pull_request", action: "opened", delivery: DELIVERY, count: 1 }]);
   });
 
-  it("with no action, or one that is not text, is logged without one", async () => {
+  it("with no action, or one that is not text, is logged without one, and queues nothing at all", async () => {
     const w = await world();
+    const batches = vi.spyOn(w.queue, "sendBatch");
     await webhook(w, "ping", { zen: "x" }, { delivery: DELIVERY });
     await webhook(w, "ping", { action: 7 }, { delivery: DELIVERY });
     expect(lines(w)).toEqual([
@@ -167,6 +168,7 @@ describe("a signed delivery", () => {
       { msg: "webhook", event: "ping", delivery: DELIVERY, count: 0 },
     ]);
     expect(w.queue.sent).toEqual([]);
+    expect(batches).not.toHaveBeenCalled();
   });
 
   it("delivered twice is queued twice: a repeated delivery only makes the state be computed again", async () => {
@@ -234,6 +236,7 @@ describe("mapEvent, the table from an event to its messages", () => {
     expect(pr("edited", { changes: { title: { from: "x" } } })).toEqual([]);
     expect(pr("edited", { changes: { base: null } })).toEqual([]);
     expect(pr("edited")).toEqual([]);
+    expect(pr("labeled", { changes: { base: { ref: { from: "dev" } } } })).toEqual([]);
   });
 
   it("ignores every other pull request action, and an action that is not text", () => {
@@ -242,7 +245,7 @@ describe("mapEvent, the table from an event to its messages", () => {
   });
 
   it("ignores a pull request event whose repository or number is not valid", () => {
-    for (const r of [{ ...repository, full_name: "not a repo" }, { ...repository, full_name: 7 }, { owner }]) expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 }, repository: r }, OPTS)).toEqual([]);
+    for (const r of [{ ...repository, full_name: "not a repo" }, { ...repository, full_name: 7 }, { ...repository, full_name: [SANDBOX] }, { owner }]) expect(mapEvent("pull_request", { action: "opened", pull_request: { number: 7 }, repository: r }, OPTS)).toEqual([]);
     for (const number of [0, -7, 1.5, "7", null]) expect(mapEvent("pull_request", { action: "opened", pull_request: { number }, repository }, OPTS)).toEqual([]);
     expect(mapEvent("pull_request", { action: "opened", repository }, OPTS)).toEqual([]);
   });
@@ -266,6 +269,8 @@ describe("mapEvent, the table from an event to its messages", () => {
       expect(rerun({ ...run, name: "CLA" })).toEqual([]);
       expect(rerun({ ...run, external_id: "78#7" })).toEqual([]);
       expect(rerun({ ...run, external_id: 77 })).toEqual([]);
+      expect(rerun({ ...run, external_id: ["77#7"] })).toEqual([]);
+      expect(rerun({ ...run, external_id: "0#7" }, { repository: { ...repository, id: 0 } })).toEqual([]);
       for (const external_id of ["77", "77#", "#7", "77#7#7", "x77#7", "77#7 ", "1234567890123#7", "77#12345678901"]) expect(rerun({ ...run, external_id }), external_id).toEqual([]);
       expect(rerun(null)).toEqual([]);
       expect(rerun(run, { repository: { ...repository, full_name: "x" } })).toEqual([]);
@@ -294,7 +299,7 @@ describe("mapEvent, the table from an event to its messages", () => {
     });
 
     it("is ignored when its head is not a commit, or it ran for another event", () => {
-      for (const head_sha of [undefined, 7, SHA.toUpperCase(), SHA.slice(1), `${SHA}\n`]) expect(flow("requested", { event: "pull_request", head_sha }), String(head_sha)).toEqual([]);
+      for (const head_sha of [undefined, 7, [SHA], `z${SHA}`, SHA.toUpperCase(), SHA.slice(1), `${SHA}\n`]) expect(flow("requested", { event: "pull_request", head_sha }), String(head_sha)).toEqual([]);
       for (const event of ["push", "workflow_dispatch", "pull_request_target"]) expect(flow("requested", { event, head_sha: SHA }), event).toEqual([]);
       expect(flow("requested", null)).toEqual([]);
       expect(mapEvent("workflow_run", { action: "requested", workflow_run: { event: "pull_request", head_sha: SHA }, repository: { owner } }, OPTS)).toEqual([]);
@@ -319,7 +324,7 @@ describe("mapEvent, the table from an event to its messages", () => {
     });
 
     it("is ignored when its title is not one the recorder writes", () => {
-      for (const display_title of [7, `Record coverage ${SANDBOX}#7 4242`, `Record sign ${SANDBOX}#0 4242`, `Record sign ${SANDBOX}#7 0`, `Record sign ${SANDBOX}#7`, `Record sign ${SANDBOX}#12345678901 1`, `Record sign ${SANDBOX}#7 4242 `, ` Record sign ${SANDBOX}#7 4242`]) {
+      for (const display_title of [7, [`Record sign ${SANDBOX}#7 4242`], `Record coverage ${SANDBOX}#7 4242`, `Record sign ${SANDBOX}#0 4242`, `Record sign ${SANDBOX}#7 0`, `Record sign ${SANDBOX}#7`, `Record sign ${SANDBOX}#12345678901 1`, `Record sign ${SANDBOX}#7 4242 `, ` Record sign ${SANDBOX}#7 4242`]) {
         expect(done({ ...record, display_title }), String(display_title)).toEqual([]);
       }
     });

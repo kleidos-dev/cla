@@ -80,7 +80,7 @@ describe("the route table", () => {
 
   it("answers 404 to a path under a public prefix that names nothing", async () => {
     const w = await world();
-    for (const path of ["/agreement/v", "/agreement/v1", "/agreement/v1/", "/agreement/v3/individual.md", "/agreement/v1/other.md", "/agreement/v1/__proto__", "/agreement/v1/constructor", "/agreement/v1/individual.md/", "/agreement/v1/../SHA256SUMS", "/assets/", "/assets/cla.css", "/assets/cla.000000000000.css", "/assets/fonts/other.woff2", "/button/", "/button/v3/none-0-0.svg", "/button/v2/needed-1-1.svg"]) {
+    for (const path of ["/agreement/v", "/agreement/v1", "/agreement/v1/", "/agreement/v3/individual.md", "/agreement/v1/other.md", "/agreement/v1/__proto__", "/agreement/v1/constructor", "/agreement/v1/individual.md/", "/agreement/v1/../SHA256SUMS", "/assets/x/agreement/v1/individual.md", "/button/x/agreement/v1/SHA256SUMS", "/assets/", "/assets/cla.css", "/assets/cla.000000000000.css", "/assets/fonts/other.woff2", "/button/", "/button/v3/none-0-0.svg", "/button/v2/needed-1-1.svg"]) {
       const r = await call(w, path);
       expect(r.status, path).toBe(404);
       expect(await r.text()).toBe("not found\n");
@@ -148,7 +148,12 @@ describe("the public files", () => {
       const body = new Uint8Array(await r.arrayBuffer());
       expect(body).toEqual(typeof asset.body === "string" ? new TextEncoder().encode(asset.body) : new Uint8Array(asset.body));
     }
-    expect(Object.keys(ASSETS).sort()).toEqual(["/assets/fonts/kleidos-mono.woff2", "/assets/fonts/kleidos-sans-display.woff2", "/assets/fonts/kleidos-sans-text.woff2", "/assets/mark.svg"]);
+    expect(Object.fromEntries(Object.entries(ASSETS).map(([path, a]) => [path, a.type]))).toEqual({
+      "/assets/fonts/kleidos-sans-text.woff2": "font/woff2",
+      "/assets/fonts/kleidos-sans-display.woff2": "font/woff2",
+      "/assets/fonts/kleidos-mono.woff2": "font/woff2",
+      "/assets/mark.svg": "image/svg+xml",
+    });
   });
 
   it("serves a button as an SVG that never changes", async () => {

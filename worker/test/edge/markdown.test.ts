@@ -31,6 +31,7 @@ describe("an inline rule", () => {
 
   it("code is a run of backticks closed by one, or text when it is not closed", () => {
     expect(renderInline("`a <b>` c")).toBe("<code>a &lt;b&gt;</code> c");
+    expect(renderInline("``x`")).toBe("`<code>x</code>");
     expect(renderInline("a ` b")).toBe("a ` b");
     expect(renderInline("``")).toBe("``");
   });
@@ -39,6 +40,7 @@ describe("an inline rule", () => {
     expect(renderInline("**a *b* c**")).toBe("<strong>a <em>b</em> c</strong>");
     expect(renderInline("**a")).toBe("**a");
     expect(renderInline("****")).toBe("****");
+    expect(renderInline("*ab**")).toBe("<em>ab</em>*");
   });
 
   it("emphasis is a star that opens on a word and closes after one", () => {
@@ -47,6 +49,8 @@ describe("an inline rule", () => {
     expect(renderInline("*a *")).toBe("*a *");
     expect(renderInline("*a\\*")).toBe("*a*");
     expect(renderInline("*a")).toBe("*a");
+    expect(renderInline("** x")).toBe("** x");
+    expect(renderInline("a** x")).toBe("a** x");
     expect(renderInline("2 * 3 = 6")).toBe("2 * 3 = 6");
   });
 
@@ -56,6 +60,11 @@ describe("an inline rule", () => {
     expect(renderInline("[](https://x.example/)")).toBe("");
     expect(renderInline("[a](b c)")).toBe("[a](b c)");
     expect(renderInline("[a]")).toBe("[a]");
+    expect(renderInline("[x] [a](/b)")).toBe('[x] <a href="/b">a</a>');
+  });
+
+  it("a link keeps only a target that is an address of a kept kind from its first character to its last", () => {
+    for (const target of ["xhttps://a.example/", "xhttp://a.example/", "xmailto:a@b.example", 'http://a.example/"x', "http://a.example/'x", "http://a.example/<x", 'mailto:a@b.example"x']) expect(renderInline(`[x](${target})`), target).toBe("x");
   });
 
   it("a bare address is a link when a space or a bracket comes before it, without the punctuation after it", () => {
@@ -69,6 +78,16 @@ describe("an inline rule", () => {
 });
 
 describe("a heading", () => {
+  it("of levels 2 to 5 after the shift has an id, and of 1 or 6 none", () => {
+    const r = renderMarkdown("# a\n## b\n#### c\n##### d", { headingShift: 1, idPrefix: "p" });
+    expect(r.headings.map((h) => [h.level, h.id])).toEqual([
+      [2, "p-a"],
+      [3, "p-b"],
+      [5, "p-c"],
+    ]);
+    expect(r.html).toContain("<h6>d</h6>");
+  });
+
   it("is shifted down by the page's level, never past h6", () => {
     expect(renderMarkdown("# a\n###### b", { headingShift: 1 }).html).toBe("<h2>a</h2>\n<h6>b</h6>");
     expect(renderMarkdown("#### a", { headingShift: 3 }).html).toBe("<h6>a</h6>");
@@ -99,6 +118,15 @@ describe("a list", () => {
 
   it("ends at a heading, and goes on after a blank line", () => {
     expect(html("- a\n\n- b\n# h")).toBe(["<ul>", "<li>", "a", "</li>", "<li>", "b", "</li>", "</ul>", "<h1>h</h1>"].join("\n"));
+  });
+
+  it("ends a paragraph at a blank line, or a line of white space only", () => {
+    expect(html("a\n\nb")).toBe("<p>a</p>\n<p>b</p>");
+    expect(html("a\n  \t \nb")).toBe("<p>a</p>\n<p>b</p>");
+  });
+
+  it("keeps only an indented line in an item: a line that starts with text ends the list", () => {
+    expect(html("- a\nb c")).toBe(["<ul>", "<li>", "a", "</li>", "</ul>", "<p>b c</p>"].join("\n"));
   });
 
   it("reads carriage returns as line ends", () => {

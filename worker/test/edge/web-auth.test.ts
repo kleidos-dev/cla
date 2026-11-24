@@ -127,7 +127,15 @@ describe("the callback", () => {
     const w = await world();
     const p = openPr(w, alice);
     const s = await started(w, p, alice, { lang: "es" });
+    const sentHeaders: Record<string, string>[] = [];
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init);
+      if (req.url === "https://github.com/login/oauth/access_token") sentHeaders.push(Object.fromEntries(req.headers));
+      return real(input, init);
+    });
     const r = await get(w, `/auth/callback?code=${s.code}&state=${s.state}`, s.cookie);
+    expect(sentHeaders).toEqual([{ accept: "application/json", "content-type": "application/json", "user-agent": "kleidos-cla" }]);
     expect(r.status).toBe(303);
     expect(r.headers.get("location")).toBe(`${signPath(p)}?lang=es`);
     expect(r.headers.getSetCookie()[0]).toBe(CLEAR_OAUTH);
@@ -283,6 +291,7 @@ describe("the callback", () => {
     const r = await get(w, "/auth/callback?lang=es");
     await expectMessage(r, 429, "tooManyAuth", "es");
     expect(r.headers.getSetCookie()).toEqual([]);
+    expect(w.limiters.RL_AUTH?.keys).toEqual([IP]);
   });
 
   // F8, a question for the owner: these two answer a bare 500, with the transaction kept and no page in the visitor's language.
@@ -329,6 +338,7 @@ describe("the sign-out", () => {
     const r = await post(w, { ...form, cookie }, `csrf=${encodeURIComponent(await csrfOf(w, "sid1"))}`);
     expect([r.status, r.headers.get("location")]).toEqual([303, "/agreement?lang=en"]);
     expect(w.gh.requests).toEqual([]);
+    expect(lines(w)).toEqual([]);
   });
 
   it("of a session with no token only clears it", async () => {
@@ -359,6 +369,14 @@ describe("the sign-out", () => {
       expect(r.headers.getSetCookie()).toEqual([]);
     }
     expect(w.gh.requests).toEqual([]);
+  });
+
+  it("with a form whose type names its character set is read", async () => {
+    const w = await world();
+    const cookie = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", sid: "sid1", token: "ghu_x" });
+    const r = await post(w, { ...form, "content-type": "Application/X-WWW-Form-Urlencoded; charset=UTF-8", cookie }, `csrf=${encodeURIComponent(await csrfOf(w, "sid1"))}`);
+    expect(r.status).toBe(303);
+    expect(w.gh.seen(/^DELETE \/applications\//)).toHaveLength(1);
   });
 
   it("from this site with no Sec-Fetch-Site is taken", async () => {

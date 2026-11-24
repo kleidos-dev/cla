@@ -113,9 +113,11 @@ describe("an acceptance through kleidos-cla", () => {
       w.gh.comments.push({ id: 4242, repo: SANDBOX, pr: p.number, body: SENTENCE_1, user: alice, created_at: "2026-11-02T10:00:00Z", updated_at: "2026-11-02T10:00:00Z", via_app: true });
       return new Response(JSON.stringify({ message: "revoked" }), { status: 401, headers: { "content-type": "application/json" } });
     }, 1);
+    const queued = w.queue.sent.length;
     const r = await b.post("/agree", { ...form, accept: "yes" });
     expect(r.status).toBe(303);
     expect((await sessionSet(w, r))?.pending).toMatchObject({ comment_id: 4242 });
+    expect(w.queue.sent.length).toBe(queued);
   });
 
   it("that GitHub fails to take for another reason is GitHub's failure, with nothing posted", async () => {
@@ -236,6 +238,23 @@ describe("an acceptance that is refused", () => {
       await expectMessage(await agree(w, fields, { cookie }), 401, "signInAgain");
     }
     expect(w.gh.requests.filter((r) => !r.url.includes("registry/") && !r.url.endsWith("/installation") && !r.url.endsWith("/access_tokens"))).toEqual([]);
+  });
+
+  it("with no token is refused as such before the register is read, even while signing is paused", async () => {
+    const w = await world({ config: CONFIG_V2 });
+    const keys = await keysOf(w);
+    const fields = { owner: "kleidos-dev", repo: "cla-sandbox", pr: "7", version: "2", set_sha256: CONFIG.versions["2"].set_sha256, accept: "yes", csrf: await csrfToken(keys.csrf, ["s1", "agree", `${SANDBOX}#7`, "2"]) };
+    const cookie = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", sid: "s1" });
+    await expectMessage(await agree(w, fields, { cookie }), 401, "signInAgain");
+    expect(w.gh.requests).toEqual([]);
+  });
+
+  it("with a form whose type names its character set is read", async () => {
+    const w = await world();
+    const { b, form } = await atAcceptance(w);
+    const r = await b.post("/agree", { ...form, accept: "yes" }, { "content-type": "application/x-www-form-urlencoded;charset=utf-8" });
+    expect(r.status).toBe(303);
+    expect(posted(w)).toHaveLength(1);
   });
 
   it("for a repository no longer served is refused", async () => {

@@ -98,6 +98,15 @@ describe("a SHA256SUMS that is not as written", () => {
     }
   });
 
+  it("with a line that has anything before its digest or after its name is never ok", async () => {
+    for (const edit of [(t: string) => t.replace("2f891b84", "x2f891b84"), (t: string) => t.replace("individual.md", "individual.md x")]) {
+      await editing({ [`${V2}SHA256SUMS`]: edit });
+      const { agreement } = await fresh();
+      expect((await agreement.checkIntegrity(2)).ok).toBe(false);
+      for (const path of edited.splice(0)) vi.doUnmock(path);
+    }
+  });
+
   it("with blank lines, or none at the end, is read as the lines it has", async () => {
     await editing({ [`${V2}SHA256SUMS`]: (t) => `\n\n${t.trimEnd().replaceAll("\n", "\n  \n")}` });
     const { agreement } = await fresh();
@@ -150,6 +159,16 @@ describe("a button drawing that is not understood", () => {
     const b = await import("../../src/button");
     expect(() => b.buttonSvg("needed", 0, 1)).toThrow("button words not understood");
     expect(() => b.buttonSvg("none", 0, 0)).toThrow("button words not understood");
+    expect(() => b.buttonSvg("signed", 1, 1)).toThrow("button words not understood");
+  });
+
+  it("whose words are several outlines, or whose outline opens it, is read as it is", async () => {
+    await editing({
+      [`${BUTTON}none.svg`]: (s) => s.replace(/(rx="9\.5"\/>)(<path[^>]*\/>)/, "$1$2$2"),
+      [`${BUTTON}signed.svg`]: (s) => `rx="9.5"/>${s}`,
+    });
+    const b = await import("../../src/button");
+    expect(b.buttonSvg("none", 0, 0).match(/<path fill="#[0-9a-f]{6}" d="M/g)?.length).toBeGreaterThan(1);
     expect(() => b.buttonSvg("signed", 1, 1)).toThrow("button words not understood");
   });
 

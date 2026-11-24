@@ -6,8 +6,9 @@
  * around a body (its language, its links in that language, its title
  * escaped).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CSP, localize, messagePage, page, redirect, securityHeaders, stylesheetPath, text, withEncoding } from "../../src/html";
+import { sha256Hex } from "../../src/util";
 import { restoring } from "./support";
 
 restoring();
@@ -78,6 +79,7 @@ describe("the encoding of a response", () => {
       ["br;q=0.0, gzip;q=0", null],
       ["br;q=abc", "br"],
       ["br;level=1", "br"],
+      ["br;level=1;q=0, gzip;q=0", null],
       ["identity", null],
       ["deflate", null],
       ["", null],
@@ -166,7 +168,22 @@ describe("a page", () => {
     const f = await frame(await page("", { title: "t", lang: "en" }));
     expect(f.alternates).toEqual([]);
     expect(f.nav).toEqual([]);
-    expect(f.html).not.toContain('<nav class="lang"');
+    expect(f.html).toContain(`.css">\n</head>`);
+    expect(f.html).toContain("</span></span></a>\n\n</div></header>");
+  });
+
+  it("ends with the site's links in the reader's language", async () => {
+    const f = await frame(await page("", { title: "t", lang: "es" }));
+    expect(f.html).toContain('<footer class="foot"><ul class="links"><li><a href="/agreement?lang=es">El acuerdo</a></li><li><a href="/privacy?lang=es">Aviso de privacidad</a></li><li><a href="https://github.com/kleidos-dev/cla">Registro y código fuente</a></li><li><a href="mailto:mail@kleidos.dev">mail@kleidos.dev</a></li></ul></footer>');
+  });
+
+  it("names its stylesheet by the first twelve hex digits of its hash, computed once", async () => {
+    vi.resetModules();
+    const fresh = await import("../../src/html");
+    const first = fresh.stylesheetPath();
+    expect(await first).toBe(`/assets/cla.${(await sha256Hex(fresh.STYLESHEET)).slice(0, 12)}.css`);
+    expect(fresh.stylesheetPath()).toBe(first);
+    vi.resetModules();
   });
 
   it("that is a document is laid out as one, with its status, cache, headers and cookies", async () => {
