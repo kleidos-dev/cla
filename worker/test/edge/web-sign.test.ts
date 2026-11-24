@@ -257,6 +257,7 @@ describe("the sign page, signed in", () => {
       const html = await (await get(w, signPath(p), await sessionHeader(w, session(alice, extra)))).text();
       expect(html, JSON.stringify(extra)).toContain(">Sign in with GitHub again to sign</a>");
       expect(html).toContain('<div class="who"><span>Signed in as <strong>@alice</strong></span>');
+      expect(html).toContain(`<p class="where">${S.en.start.where}</p>\n\n<p class="lede">`);
       expect(html).not.toContain('action="/agree');
     }
   });

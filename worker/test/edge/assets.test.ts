@@ -153,13 +153,25 @@ describe("a button drawing that is not understood", () => {
   it("is refused when its words are anything but filled outlines", async () => {
     await editing({
       [`${BUTTON}needed.svg`]: (s) => s.replace('rx="9.5"/>', 'rx="9.5"/><text>Sign</text>'),
-      [`${BUTTON}none.svg`]: (s) => s.replace(/rx="9\.5"\/>[\s\S]*<\/svg>$/, 'rx="9.5"/></svg>'),
+      [`${BUTTON}none.svg`]: (s) => s.replace(/<\/svg>$/, "<text>x</text></svg>"),
       [`${BUTTON}signed.svg`]: (s) => s.replace(/<path fill="#[0-9a-f]{6}" d="M68/, '<path fill="red" d="M68'),
     });
     const b = await import("../../src/button");
     expect(() => b.buttonSvg("needed", 0, 1)).toThrow("button words not understood");
     expect(() => b.buttonSvg("none", 0, 0)).toThrow("button words not understood");
     expect(() => b.buttonSvg("signed", 1, 1)).toThrow("button words not understood");
+  });
+
+  it("as bundled, read afresh, draws every state to the bytes first served", async () => {
+    vi.resetModules();
+    const b = await import("../../src/button");
+    for (const [state, signed, total, hash] of [
+      ["needed", 0, 2, "711e953705f0071ca3320809276c7f4df1e836ec91033ff8767f9e7a0726f629"],
+      ["signed", 2, 2, "8f65b90bf711d4ad524d0dd702ede93ea7de7768a722a3771f776d883d5b1ed4"],
+      ["none", 0, 0, "12069278e8b7209b81b0e11e75ba5dd92239cb42dc175b139a14297a6d1a3689"],
+    ] as const) {
+      expect(await sha256Hex(b.buttonSvg(state, signed, total)), state).toBe(hash);
+    }
   });
 
   it("whose words are several outlines, or whose outline opens it, is read as it is", async () => {

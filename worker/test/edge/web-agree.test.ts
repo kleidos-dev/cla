@@ -246,6 +246,8 @@ describe("an acceptance that is refused", () => {
     const fields = { owner: "kleidos-dev", repo: "cla-sandbox", pr: "7", version: "2", set_sha256: CONFIG.versions["2"].set_sha256, accept: "yes", csrf: await csrfToken(keys.csrf, ["s1", "agree", `${SANDBOX}#7`, "2"]) };
     const cookie = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", sid: "s1" });
     await expectMessage(await agree(w, fields, { cookie }), 401, "signInAgain");
+    const elsewhere = await sessionHeader(w, { id: alice.id, login: "alice", type: "User", sid: "s1", token: "ghu_x", app: "signin", for: `${SANDBOX}#8` });
+    await expectMessage(await agree(w, fields, { cookie: elsewhere }), 401, "signInAgain");
     expect(w.gh.requests).toEqual([]);
   });
 
