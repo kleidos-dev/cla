@@ -17,6 +17,12 @@ on:
     # Monday 05:00 Europe/Madrid in winter.
     - cron: "0 4 * * 1"
   workflow_dispatch:
+    inputs:
+      area:
+        description: "the area whose mutants to plant: all, worker-core or scripts"
+        type: choice
+        options: [all, worker-core, scripts]
+        default: all
 
 permissions:
   contents: read
@@ -28,6 +34,7 @@ concurrency:
 jobs:
   mutants:
     name: "🧬 Mutants of the Worker's core (${{ matrix.share }})"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-core'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -63,6 +70,7 @@ jobs:
 
   forced:
     name: "🧬 Forced conditions of the Worker's core"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'worker-core'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -87,6 +95,7 @@ jobs:
 
   scripts:
     name: "🧬 Mutants of the setup scripts and the agreement gate"
+    if: github.event_name == 'schedule' || inputs.area == 'all' || inputs.area == 'scripts'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -102,5 +111,15 @@ jobs:
         run: npm ci
       - name: Every mutant, sixty seconds each at most, two at a time
         run: node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --workers 2 --timeout 60
+      - name: Those killed by timeout, once more alone with three times the limits
+        run: node tests/tools/node/scripts-mut.mjs --recheck coverage/scripts-mutation.json --timeout 60
+      - name: Keep the report a week
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scripts-mutation
+          path: coverage/scripts-mutation.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: No survivor that is not listed
         run: python3 tests/tools/ratchet.py check scripts --mutants coverage/scripts-mutation.json

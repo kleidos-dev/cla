@@ -178,8 +178,9 @@ jobs:
           retention-days: 1
 
   # The mutants of the lines a pull request changes in the setup scripts and
-  # the agreement gate (all of them run every Monday, mutation.yml): a
-  # survivor that tests/exclusions/scripts.toml does not list fails.
+  # the agreement gate, 120 at most, a seeded sample past that (all of them
+  # run every Monday, mutation.yml): a survivor that
+  # tests/exclusions/scripts.toml does not list fails.
   scripts-mutants:
     name: "🧬 Mutants of the changed scripts"
     needs: [lint, reuse]
@@ -197,10 +198,10 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - working-directory: worker
         run: npm ci
-      - name: Every mutant of the changed lines, at most 60, two at a time
+      - name: Every mutant of the changed lines, at most 120, two at a time
         run: |
           git fetch --quiet --depth=1 origin "$GITHUB_BASE_REF"
-          node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 60 --workers 2 --timeout 60
+          node tests/tools/node/scripts-mut.mjs --out coverage/scripts-mutation.json --since FETCH_HEAD --max 120 --workers 2 --timeout 60
           node tests/tools/node/scripts-mut.mjs --listed coverage/scripts-mutation.json
 
   # The sign pages in chromium, behind a network fence (tests/pages/).
