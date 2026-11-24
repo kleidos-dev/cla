@@ -13,7 +13,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { WORKER_SECRETS, ensureEnvironment, escapeHtml, exchange, main, manifest, printable, run, sameText, settings } from "../create-signin-app.ts";
 import type { Settings } from "../create-signin-app.ts";
-import { CODE, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, rawGet, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
+import { CODE, FAKE_GH, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
 import type { GitHub, Output } from "./support.ts";
 
 const SCRIPT = join(here, "..", "create-signin-app.ts");
@@ -315,7 +315,12 @@ describe("main, before anything is shown", () => {
 
   it("gh that cannot administer the register, is missing or dies: exit 2, nothing created", async (t) => {
     const text = "gh cannot administer kleidos-dev/cla: sign in with `gh auth login` as an owner of kleidos-dev, then run this script again. Nothing was created.";
+    // A gh that says "true" and still fails is not believed.
+    const liar = join(logs, "liar-gh");
+    writeFileSync(liar, "#!/bin/sh\ncat >/dev/null\necho true\nexit 1\n");
+    chmodSync(liar, 0o755);
     for (const [s, fake] of [
+      [{ ...base(), gh: liar }, {}],
       [base(), { FAKE_GH_ADMIN: "false" }],
       [base(), { FAKE_GH_ADMIN: "" }],
       [base(), { FAKE_GH_ADMIN: "true true" }],
@@ -344,6 +349,17 @@ describe("main, before anything is shown", () => {
 });
 
 describe("main, the local page", () => {
+  it("listens on the loopback address alone, not on every interface", async (t) => {
+    const r = await start(t);
+    const port = Number(new URL(r.base!).port);
+    const answered: string[] = [];
+    for (const address of otherAddresses()) if (await reaches(address, port)) answered.push(address);
+    // The run ends before the assert, so that a server open to every interface fails the test instead of hanging it.
+    await roundTrip(r.base!);
+    assert.equal(await r.done, 0);
+    assert.deepEqual(answered, []);
+  });
+
   it("shows one form that posts the exact manifest, with the state, under strict headers", async (t) => {
     const r = await start(t);
     const port = Number(new URL(r.base!).port);
@@ -464,6 +480,8 @@ describe("main, after GitHub's redirect", () => {
       [{ events: ["push"] }, '[{},["push"]]'],
       [{ permissions: { a: "b" }, events: ["c"] }, '[{"a":"b"},["c"]]'],
       [{ permissions: null, events: null }, null],
+      [{ permissions: { a: "b" }, events: undefined }, '[{"a":"b"},[]]'],
+      [{ permissions: undefined, events: ["c"] }, '[{},["c"]]'],
     ] as const) {
       gh.answer = answer;
       const r = await complete(t);
@@ -538,6 +556,7 @@ describe("main, after GitHub's redirect", () => {
     assert.equal(await r.done, 1);
     assert.ok(r.out.lines.some((l) => l.text === "Stored: nothing."));
     assert.ok(page.html.includes("<p>Stored: nothing.</p><p>Not stored: SIGNIN_CLIENT_ID (Worker), SIGNIN_CLIENT_SECRET (Worker), SIGNIN_CLIENT_SECRET (environment signin of kleidos-dev/cla). See the terminal.</p>"));
+    assert.ok(r.out.lines.some((l) => l.stream === "err" && l.text.startsWith("NOT stored: SIGNIN_CLIENT_ID (Worker), SIGNIN_CLIENT_SECRET (Worker), SIGNIN_CLIENT_SECRET (environment signin of kleidos-dev/cla). The secret is gone: ")));
   });
 
   it("nothing of GitHub's answer makes a line of its own on the terminal, and long text is cut", async (t) => {

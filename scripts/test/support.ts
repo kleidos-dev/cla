@@ -6,6 +6,8 @@
 // the calls the fake wrangler and gh logged. Nothing here reaches a network:
 // every server listens on 127.0.0.1.
 import { spawn } from "node:child_process";
+import { connect } from "node:net";
+import { networkInterfaces } from "node:os";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingHttpHeaders, IncomingMessage, Server } from "node:http";
@@ -170,6 +172,27 @@ export function rawGet(url: string, host: string): Promise<{ status: number; bod
     });
     req.on("error", reject);
     req.end();
+  });
+}
+
+/**
+ * The addresses of this machine other than 127.0.0.1 a server bound to every interface would answer on:
+ * the IPv6 loopback and every other address of an interface that is up.
+ */
+export function otherAddresses(): string[] {
+  const all = Object.values(networkInterfaces()).flatMap((list) => list ?? []);
+  return ["::1", ...all.map((i) => i.address).filter((a) => a !== "127.0.0.1" && a !== "::1" && !a.startsWith("fe80:"))];
+}
+
+/** Whether a TCP connection to the address and port is accepted. */
+export function reaches(address: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: address, port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
   });
 }
 

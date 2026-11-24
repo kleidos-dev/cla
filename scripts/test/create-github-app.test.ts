@@ -12,7 +12,7 @@ import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { SECRET_NAMES, escapeHtml, exchange, main, manifest, printable, run, sameText, settings } from "../create-github-app.ts";
 import type { Settings } from "../create-github-app.ts";
-import { CODE, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, rawGet, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
+import { CODE, FAKE_WRANGLER, FORGED, ORG_ID, WORKER_DIR, assertPlain, capture, cleanup, filesUnder, here, localPage, mockGitHub, otherAddresses, rawGet, reaches, readLog, roundTrip, runChild, scratch, setEnv } from "./support.ts";
 import type { GitHub, Output } from "./support.ts";
 
 const SCRIPT = join(here, "..", "create-github-app.ts");
@@ -305,6 +305,17 @@ describe("main, the local page", () => {
     assert.equal(await r.done, 0);
   });
 
+  it("listens on the loopback address alone, not on every interface", async (t) => {
+    const r = await start(t);
+    const port = Number(new URL(r.base!).port);
+    const answered: string[] = [];
+    for (const address of otherAddresses()) if (await reaches(address, port)) answered.push(address);
+    // The run ends before the assert, so that a server open to every interface fails the test instead of hanging it.
+    await roundTrip(r.base!);
+    assert.equal(await r.done, 0);
+    assert.deepEqual(answered, []);
+  });
+
   it("any other path or method is 404", async (t) => {
     const r = await start(t);
     for (const [method, path] of [["POST", ""], ["GET", "favicon.ico"], ["POST", "callback"], ["GET", "callback/"]] as const) {
@@ -511,6 +522,7 @@ describe("main, after GitHub's redirect", () => {
     assert.equal(await r.done, 1);
     assert.match(page.html, /<p>Stored: nothing\.<\/p><p>Not stored: APP_ID, APP_PRIVATE_KEY, CLIENT_ID, CLIENT_SECRET, WEBHOOK_SECRET, SESSION_KEY\. See the terminal\.<\/p>/);
     assert.ok(r.out.lines.some((l) => l.text === "Stored in the Worker kleidos-cla: nothing."));
+    assert.ok(r.out.lines.some((l) => l.stream === "err" && l.text.startsWith("NOT stored: APP_ID, APP_PRIVATE_KEY, CLIENT_ID, CLIENT_SECRET, WEBHOOK_SECRET, SESSION_KEY. The values are gone: ")));
   });
 
   it("nothing of GitHub's answer makes a line of its own on the terminal", async (t) => {
