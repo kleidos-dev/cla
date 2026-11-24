@@ -21,14 +21,25 @@
     "@cloudflare/vitest-plugin": "1.9.0",
     "@cloudflare/workers-types": "5.20261123.1",
     "@eslint/js": "10.0.1",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/vitest-runner": "10.1.1",
     "@types/node": "26.6.6",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-istanbul": "5.1.1",
     "eslint": "10.15.0",
+    "fast-check": "4.11.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.73.0",
     "vitest": "5.1.1",
     "wrangler": "4.166.0"
+  },
+  "overrides": {
+    "@stryker-mutator/core": {
+      "minimatch": "11.0.9"
+    },
+    "typed-rest-client": {
+      "qs": "6.17.1"
+    }
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
