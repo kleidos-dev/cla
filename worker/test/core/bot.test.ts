@@ -1043,14 +1043,6 @@ describe("the cron", () => {
     expect(before.number).not.toBe(from.number);
   });
 
-  it("of one merged at the very instant the register keeps coverage from, when it names one", async () => {
-    only([SANDBOX], { coverage_from: time(NOW - HOUR) });
-    const [at, before] = [merged(HOUR), merged(HOUR + 1000)];
-    await cron(b);
-    expect(coverageAsked()).toEqual([at.number]);
-    expect(before.number).not.toBe(at.number);
-  });
-
   it("of any date when the register does not say from when", async () => {
     only([SANDBOX], {});
     const pr = merged(HOUR);

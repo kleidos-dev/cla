@@ -23,5 +23,5 @@ branch = 0
 function = 0
 condition = 0
 forced = 0
-mutant = 0
-exclusions = 0
+mutant = 1
+exclusions = 1

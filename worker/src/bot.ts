@@ -327,7 +327,7 @@ export async function cron(bot: Bot): Promise<void> {
         // One closed without merging has no date, so no age: every comparison with it is false.
         const at = String(p.merged_at);
         const age = now - Date.parse(at);
-        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at >= coverageFrom;
+        return age < COVERAGE_WINDOW_MS && age > COVERAGE_SETTLE_MS && at.slice(0, 10) >= coverageFrom;
       });
       if (merged.length) {
         const have = await bot.registry.coverageNumbers(
