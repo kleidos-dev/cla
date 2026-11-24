@@ -26,14 +26,3 @@ operator = "line deleted"
 reason = "equivalent"
 why = """Every check exits by itself, the recorder is the last command so its exit code is the step's, no variable
 can be unset (GitHub sets each env: entry) and there is no pipe: -e, -u and pipefail change nothing."""
-
-[[entry]]
-kind = "mutant"
-file = ".github/workflows/verify.yml"
-function = "verify/Verify"
-text = "set -euo pipefail"
-operator = "line deleted"
-reason = "equivalent"
-why = """The runner starts a run block with `bash -e` already (a step with no shell:), so -e holds without the line:
-a failing date or verifier still ends the step before the marker moves. No variable is read before it is set and
-there is no pipe, so -u and pipefail change nothing either."""

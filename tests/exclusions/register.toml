@@ -11,7 +11,7 @@
 kind = "line"
 file = "registry/cla.py"
 function = ""
-text = "sys.exit(main())"
+text = "sys.exit(main(None))"
 reason = "boundary"
 why = "It runs only when the file is started, and the measure imports it."
 test = "test_command.Child"
