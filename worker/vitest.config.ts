@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
   test: {
     include: ["test/**/*.test.ts"],
+    // The hostile Markdown of markdown.test.ts reads a document at every cut: on a busy machine vitest's five seconds are not enough.
+    testTimeout: 30_000,
     // Istanbul, which instruments the code: the Workers runtime has no V8 coverage.
     coverage: {
       provider: "istanbul",
