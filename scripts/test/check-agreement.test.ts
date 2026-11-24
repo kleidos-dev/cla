@@ -127,13 +127,52 @@ describe("check-agreement.mjs", () => {
   });
 
   it("a binding text that is listed and missing is refused by name, and the other versions still checked", () => {
-    const root = tree((t) => rmSync(t.file("1", "addendum.md")));
-    assert.deepEqual(verdict(root), { ok: false, log: [], error: ["check-agreement: v1: addendum.md is listed in SHA256SUMS and cannot be read"] });
+    const root = tree((t) => {
+      rmSync(t.file("1", "addendum.md"));
+      writeFileSync(t.file("2", "entity.md"), "changed\n");
+    });
+    assert.deepEqual(verdict(root), {
+      ok: false,
+      log: [],
+      error: ["check-agreement: v1: addendum.md is listed in SHA256SUMS and cannot be read", `check-agreement: v2: entity.md hashes to ${sha("changed\n")}, SHA256SUMS says ${live.versions["2"]!.files["entity.md"]!}`],
+    });
   });
 
   it("a version with no SHA256SUMS is refused by name", () => {
     const root = tree((t) => rmSync(t.file("2", "SHA256SUMS")));
     assert.deepEqual(verdict(root), { ok: false, log: [okLine("1")], error: ["check-agreement: v2: agreements/v2/SHA256SUMS cannot be read"] });
+  });
+
+  it("a version with no SHA256SUMS does not stop the check of the next", () => {
+    const root = tree((t) => {
+      rmSync(t.file("1", "SHA256SUMS"));
+      writeFileSync(t.file("2", "entity.md"), "changed\n");
+    });
+    assert.deepEqual(verdict(root), {
+      ok: false,
+      log: [],
+      error: ["check-agreement: v1: agreements/v1/SHA256SUMS cannot be read", `check-agreement: v2: entity.md hashes to ${sha("changed\n")}, SHA256SUMS says ${live.versions["2"]!.files["entity.md"]!}`],
+    });
+  });
+
+  it("a well-formed line for a file that exists and the configuration does not name is refused", () => {
+    let digest = "";
+    const root = tree((t) => {
+      digest = sha(readFileSync(t.file("1", "individual.es.md")));
+      resum(t, "1", (old) => [...old, `${digest}  individual.es.md`]);
+    });
+    assert.deepEqual(verdict(root), { ok: false, log: [], error: [`check-agreement: v1: config.json names undefined for individual.es.md, SHA256SUMS ${digest}`] });
+  });
+
+  it("a file listed twice is checked against its last line", () => {
+    const right = live.versions["1"]!.files["individual.md"]!;
+    const wrong = "0".repeat(64);
+    const root = tree((t) => resum(t, "1", (old) => [...old, `${wrong}  individual.md`]));
+    assert.deepEqual(verdict(root), {
+      ok: false,
+      log: [],
+      error: [`check-agreement: v1: individual.md hashes to ${right}, SHA256SUMS says ${wrong}`, `check-agreement: v1: config.json names ${right} for individual.md, SHA256SUMS ${wrong}`],
+    });
   });
 
   it("an empty line of SHA256SUMS is no line, though it changes the set digest", () => {
