@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What the tests of the register miss, every one of them listed with its
+# reason in tests/exclusions/register.toml. A number only falls; one that goes
+# up needs a dated line in [raised], such as "mutant 2026-11-24" = "why",
+# which a maintainer reviews.
+files = ["registry/cla.py"]
+
+[misses]
+line = 1
+branch = 0
+condition = 1
+mutant = 1
+exclusions = 3
+
+[raised]

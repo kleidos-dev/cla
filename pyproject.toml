@@ -17,6 +17,11 @@ relative_files = true
 branch = true
 include = ["registry/cla.py"]
 
+[tool.coverage.report]
+# Every line and every branch, and nothing excluded (tests/tools/py/ measures
+# the conditions and the mutants).
+fail_under = 100
+
 [tool.mypy]
 # >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
 strict = true

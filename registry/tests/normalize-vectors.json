@@ -1,5 +1,5 @@
 {
-  "comment": "Shared by registry/tests/test_cla.py and worker/test/texts.test.ts: both normalizations must give these outputs.",
+  "comment": "Shared by registry/tests/test_text.py and worker/test/texts.test.ts: both normalizations must give these outputs.",
   "vectors": [
     {
       "in": "  a \n\t b  ",
@@ -36,6 +36,34 @@
     {
       "in": "\u0430",
       "out": "\u0430"
+    },
+    {
+      "in": "\u212b",
+      "out": "\u00c5"
+    },
+    {
+      "in": "\uff29",
+      "out": "\uff29"
+    },
+    {
+      "in": "\ufb01",
+      "out": "\ufb01"
+    },
+    {
+      "in": "\u2460",
+      "out": "\u2460"
+    },
+    {
+      "in": "\u00b2",
+      "out": "\u00b2"
+    },
+    {
+      "in": "\u017f",
+      "out": "\u017f"
+    },
+    {
+      "in": "\u2160",
+      "out": "\u2160"
     }
   ]
 }

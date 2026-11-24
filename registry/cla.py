@@ -46,10 +46,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import email.utils
 import hashlib
+import http.client
 import json
+import math
 import os
 import re
 import secrets
@@ -60,39 +63,55 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, Protocol, TypeGuard
 
 ROOT = Path(__file__).resolve().parent.parent
 BRANCH = "signatures"
 OWNER_ID = 28966312
-OWNER_LOGIN = "jmrplens"
-ACTIONS_BOT = "github-actions[bot]"
 ACTIONS_BOT_ID = 41898282
-REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$")
+# Every pattern is matched whole (fullmatch) and means ASCII only, as the Worker's do: no line end
+# after it and no digit or letter of another script.
+REPO_RE = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
+#: GitHub's rule for a login; an app's has the suffix [bot] after it.
+LOGIN_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
+BOT_SUFFIX = "[bot]"
 NOREPLY_RE = re.compile(
-    r"^(\d{1,12})\+([A-Za-z0-9-]{1,39}(?:\[bot\])?)@users\.noreply\.github\.com$", re.I
+    r"([1-9][0-9]{0,11})\+([^@]+)@users\.noreply\.github\.com", re.ASCII | re.IGNORECASE
 )
 TRAILER_KEY = "co-authored-by:"
-TRAILER_EMAIL_RE = re.compile(r"[^<>\s]+")
-RECORD_PATH_RE = re.compile(
-    r"^(signatures/individual/[1-9]\d*\.(?:json|tsr)|coverage/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/[1-9]\d*\.json)$"
+#: The line ends of JavaScript, which the Worker's reading of a message has too.
+LINE_END_RE = re.compile("[\n\r\u2028\u2029]")
+#: No bracket and none of the characters both languages count as white space: an address with one
+#: that only one of them counts is an address to both.
+TRAILER_EMAIL_RE = re.compile(
+    "[^<>\t\n\v\f\r \xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+"
 )
-SIGNATURE_PATH_RE = re.compile(r"^signatures/individual/([1-9]\d*)\.(json|tsr)$")
+RECORD_PATH_RE = re.compile(
+    r"signatures/individual/[1-9][0-9]{0,15}\.(?:json|tsr)"
+    r"|coverage/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}/[1-9][0-9]{0,9}\.json"
+)
+SIGNATURE_NAME_RE = re.compile(r"[1-9][0-9]{0,15}\.json")
+SIGNATURE_PATH_RE = re.compile(r"signatures/individual/([1-9][0-9]{0,15})\.(?:json|tsr)")
 # GitHub lists at most 250 commits of a pull request; with more, not every author can be known.
 MAX_COMMITS = 250
-TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+#: GitHub's largest page, and how many of a list are read before it is too long to be what it is.
+PAGE_SIZE = 100
+MAX_PAGES = 50
+#: GitHub lists at most 1000 files of a directory, and does not say that it left some out.
+SIGNATURE_LIST_LIMIT = 1000
+#: The largest integer JavaScript reads exactly, which is the largest the Worker takes.
+MAX_INT = 2**53 - 1
+HEX64_RE = re.compile(r"[0-9a-f]{64}")
 PR_URL_RE = re.compile(
-    r"^https://github\.com/([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]{0,9})$"
+    r"https://github\.com/([A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]{0,9})"
 )
 RECORD_WORKFLOW_PATH = ".github/workflows/record.yml"
 GITHUB_COMMITTER_EMAIL = "noreply@github.com"
-HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9.]{16,40}$")
+HEX40_RE = re.compile(r"[0-9a-f]{40}")
+CLIENT_ID_RE = re.compile(r"[A-Za-z0-9.]{16,40}")
 LANGS = ("en", "es")
 #: How long before the recorder's check a sign-in may have been authorized:
 #: the Worker's session lasts one hour, so anything older was not this signing.
@@ -101,6 +120,9 @@ SIGNIN_MAX_AGE = dt.timedelta(hours=2)
 QTST_STATEMENT_DER = bytes.fromhex("0607040081975e0101")
 #: ETSI EN 319 421 best-practices-ts-policy.
 QUALIFIED_POLICY = "0.4.0.2023.1.1"
+#: How a service that cannot be reached, or goes away before its answer ends, shows: a refused or
+#: cut connection, a time-out, a name that does not resolve, half an answer.
+UNREACHABLE = (OSError, http.client.HTTPException)
 #: Sectigo asks scripts to wait 15 s or more between time-stamp requests.
 TSA_SPACING_S = 15
 
@@ -109,12 +131,16 @@ class Refused(Exception):
     """The input is not something the register records; nothing is written."""
 
 
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
 def now() -> str:
-    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return iso(utcnow())
 
 
 def iso(d: dt.datetime) -> str:
-    return d.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"{d.astimezone(dt.UTC).replace(tzinfo=None).isoformat(timespec='seconds')}Z"
 
 
 def parse_time(s: Any) -> dt.datetime | None:
@@ -122,21 +148,27 @@ def parse_time(s: Any) -> dt.datetime | None:
     if not isinstance(s, str):
         return None
     try:
-        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
+        d = dt.datetime.fromisoformat(s)
+        return d.astimezone(dt.UTC) if d.tzinfo else None
+    except ValueError, OverflowError:
         return None
-    return d.astimezone(dt.UTC) if d.tzinfo else None
 
 
-def parse_http_date(s: str | None) -> dt.datetime | None:
-    """An HTTP ``Date`` header (RFC 9110 IMF-fixdate), as UTC."""
-    if not s:
+def parse_http_date(s: Any) -> dt.datetime | None:
+    """An HTTP ``Date`` header (RFC 9110 IMF-fixdate), as UTC; None for what is none, or missing."""
+    if not isinstance(s, str):
         return None
     try:
         d = email.utils.parsedate_to_datetime(s)
-    except TypeError, ValueError:
+        return d.astimezone(dt.UTC) if d.tzinfo else None
+    except ValueError, OverflowError:
         return None
-    return d.astimezone(dt.UTC) if d.tzinfo else None
+
+
+def record_time(v: object) -> dt.datetime | None:
+    """A time as a record holds it, YYYY-MM-DDTHH:MM:SSZ and a day that exists."""
+    d = parse_time(v)
+    return d if d is not None and iso(d) == v else None
 
 
 # The characters either JavaScript's or Python's \s counts as white space,
@@ -150,6 +182,33 @@ WHITESPACE = re.compile(
 def normalize(s: str) -> str:
     """NFC, every run of white space collapsed to one space, trimmed."""
     return WHITESPACE.sub(" ", unicodedata.normalize("NFC", s)).strip(" ")
+
+
+def _matches(v: object, pattern: re.Pattern[str]) -> TypeGuard[str]:
+    """Whether a JSON value is a string of that form, all of it."""
+    return isinstance(v, str) and pattern.fullmatch(v) is not None
+
+
+def is_login(v: object) -> TypeGuard[str]:
+    """Whether a JSON value is a login a person may have on GitHub (an app's ends in [bot])."""
+    return _matches(v, LOGIN_RE)
+
+
+def parse_json(data: bytes) -> Any:
+    """What a JSON document in UTF-8 says; None for anything else, as for null."""
+    try:
+        return json.loads(data.decode("utf-8"))
+    except ValueError, RecursionError:
+        return None
+
+
+def dig(data: Any, *keys: str) -> Any:
+    """What a JSON value holds at these keys, one object inside the other; None for nothing."""
+    for key in keys:
+        if not isinstance(data, dict):
+            return None
+        data = data.get(key)
+    return data
 
 
 def sha256(data: str | bytes) -> str:
@@ -198,10 +257,8 @@ def accepted_sentences(config: dict[str, Any]) -> dict[str, int]:
     return out
 
 
-def record_valid(config: dict[str, Any], rec: dict[str, Any] | None) -> bool:
+def record_valid(config: dict[str, Any], rec: dict[str, Any]) -> bool:
     """Whether a record counts now: a version still accepted, with that version's digest."""
-    if not rec:
-        return False
     return rec.get("version") in config["accepted_versions"] and record_published(config, rec)
 
 
@@ -220,10 +277,10 @@ def record_published(config: dict[str, Any], rec: dict[str, Any]) -> bool:
 # --- GitHub -----------------------------------------------------------------
 
 
-#: A transport answers (status, body) or (status, body, headers); header names in lower case.
-Transport = Callable[
+#: A transport answers the status, the body and the headers, their names in lower case.
+type Transport = Callable[
     [str, str, dict[str, str], bytes | None],
-    "tuple[int, bytes] | tuple[int, bytes, dict[str, str]]",
+    tuple[int, bytes, dict[str, str]],
 ]
 
 
@@ -253,11 +310,7 @@ def _open(
         with urllib.request.urlopen(req, timeout=30) as res:  # noqa: S310  scheme checked above
             return res.status, res.read(), {k.lower(): v for k, v in res.headers.items()}
     except urllib.error.HTTPError as e:
-        return e.code, e.read(), {k.lower(): v for k, v in (e.headers or {}).items()}
-
-
-def _answer(res: tuple[Any, ...]) -> tuple[int, bytes, dict[str, str]]:
-    return res[0], res[1], (res[2] if len(res) > 2 else {})
+        return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
 
 
 @dataclass
@@ -290,20 +343,14 @@ class GitHub:
         if body is not None:
             headers["content-type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
-        return _answer(self.transport(method, f"{self.api}{path}", headers, data))
+        return self.transport(method, f"{self.api}{path}", headers, data)
 
-    def call(self, method: str, path: str, body: Any = None, raw: bool = False) -> tuple[int, Any]:
-        status, payload, _ = self.exchange(
-            method,
-            path,
-            body,
-            "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
-        )
-        if raw:
-            return status, payload.decode("utf-8") if status == 200 else None
-        return status, json.loads(payload) if payload else None
+    def call(self, method: str, path: str, body: Any = None) -> tuple[int, Any]:
+        """The status and the JSON of an answer; None when it is not JSON (a proxy's error page)."""
+        status, payload, _ = self.exchange(method, path, body)
+        return status, parse_json(payload)
 
-    def file_bytes(self, repo: str, path: str, ref: str) -> bytes | None:
+    def file(self, repo: str, path: str, ref: str) -> bytes | None:
         """A file's exact bytes (a time-stamp token is binary), None when there is none."""
         status, payload, _ = self.exchange(
             "GET",
@@ -316,28 +363,40 @@ class GitHub:
             raise RuntimeError(f"reading {path} answered {status}")
         return payload
 
-    def get(self, path: str) -> Any:
+    def _get(self, path: str) -> Any:
         status, data = self.call("GET", path)
         if status != 200:
             raise RuntimeError(f"GET {path.split('?')[0]} answered {status}")
         return data
 
-    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        status, data = self.call("POST", "/graphql", {"query": query, "variables": variables})
-        if status != 200 or data.get("errors"):
-            types = [e.get("type") for e in (data or {}).get("errors", [])]
-            raise RuntimeError(f"GraphQL answered {status}: {types}")
-        return data["data"]
+    def get(self, path: str) -> dict[str, Any]:
+        data = self._get(path)
+        if not isinstance(data, dict):
+            raise RuntimeError(f"GET {path.split('?')[0]} answered no object")
+        return data
 
-    def file(self, repo: str, path: str, ref: str) -> str | None:
-        status, text = self.call("GET", f"/repos/{repo}/contents/{path}?ref={ref}", raw=True)
-        if status == 404:
-            return None
-        if status != 200:
-            raise RuntimeError(f"reading {path} answered {status}")
-        if not isinstance(text, str):
-            raise RuntimeError(f"reading {path} answered no text")
-        return text
+    def get_list(self, path: str) -> list[dict[str, Any]]:
+        data = self._get(path)
+        if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
+            raise RuntimeError(f"GET {path.split('?')[0]} answered no list of objects")
+        return data
+
+    def pages(self, path: str) -> Iterator[dict[str, Any]]:
+        """Every object of a list GitHub gives in pages, each page asked for when it is needed."""
+        for page in range(1, MAX_PAGES + 1):
+            found = self.get_list(f"{path}&per_page={PAGE_SIZE}&page={page}")
+            yield from found
+            if len(found) < PAGE_SIZE:
+                return
+        raise RuntimeError(f"GET {path.split('?')[0]} has more than {MAX_PAGES} pages")
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        status, answer = self.call("POST", "/graphql", {"query": query, "variables": variables})
+        data, errors = dig(answer, "data"), dig(answer, "errors")
+        if status != 200 or errors or not isinstance(data, dict):
+            types = [dig(e, "type") for e in errors] if isinstance(errors, list) else errors
+            raise RuntimeError(f"GraphQL answered {status}: {types}")
+        return data
 
 
 # GraphQL documents; a line break is white space to GraphQL, so where they
@@ -359,13 +418,6 @@ nodes{commit{oid message authoredDate parents{totalCount}
 authors(first:20){totalCount nodes{email user{databaseId login}}}}}}}}}"""
 
 
-def commit_file(
-    gh: GitHub, registry: str, path: str, content: str, headline: str, attempts: int = 5
-) -> str:
-    """Adds or changes one file on the signatures branch, as a commit GitHub signs."""
-    return commit_files(gh, registry, {path: content.encode("utf-8")}, [], headline, attempts)
-
-
 def commit_files(
     gh: GitHub,
     registry: str,
@@ -376,9 +428,49 @@ def commit_files(
 ) -> str:
     """Adds, changes or deletes the files of one record in one commit GitHub signs.
 
-    The files are a record's JSON and its time-stamp token."""
+    The files are a record's JSON and its time-stamp token. Tried again when the branch moved
+    between the read and the write, and when GitHub's answer says nothing: a commit whose answer was
+    lost is on the branch by then, so it is found there and not made a second time."""
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            head = _head(gh, registry)
+            if attempt and _holds(gh, registry, head, additions, deletions):
+                return head
+            return _commit(gh, registry, head, additions, deletions, headline)
+        except (RuntimeError, *UNREACHABLE) as e:
+            last = e
+    raise RuntimeError(f"could not commit {', '.join(additions)}: {last}")
+
+
+def _head(gh: GitHub, registry: str) -> str:
     owner, name = registry.split("/")
-    last = ""
+    head = dig(
+        gh.graphql(HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"}),
+        *("repository", "ref", "target", "oid"),
+    )
+    if not isinstance(head, str):
+        raise RuntimeError(f"the branch {BRANCH} does not exist")
+    return head
+
+
+def _holds(
+    gh: GitHub, registry: str, head: str, additions: dict[str, bytes], deletions: list[str]
+) -> bool:
+    """Whether that commit has the files already: their bytes are this run's and no other's."""
+    return all(gh.file(registry, p, head) == c for p, c in additions.items()) and all(
+        gh.file(registry, p, head) is None for p in deletions
+    )
+
+
+def _commit(
+    gh: GitHub,
+    registry: str,
+    head: str,
+    additions: dict[str, bytes],
+    deletions: list[str],
+    headline: str,
+) -> str:
     changes: dict[str, Any] = {
         "additions": [
             {"path": p, "contents": base64.b64encode(c).decode("ascii")}
@@ -387,29 +479,21 @@ def commit_files(
     }
     if deletions:
         changes["deletions"] = [{"path": p} for p in deletions]
-    for _ in range(attempts):
-        head = gh.graphql(
-            HEAD_QUERY, {"owner": owner, "name": name, "ref": f"refs/heads/{BRANCH}"}
-        )["repository"]["ref"]["target"]["oid"]
-        try:
-            out = gh.graphql(
-                COMMIT_MUTATION,
-                {
-                    "input": {
-                        "branch": {"repositoryNameWithOwner": registry, "branchName": BRANCH},
-                        "expectedHeadOid": head,
-                        "message": {"headline": headline},
-                        "fileChanges": changes,
-                    }
-                },
-            )
-            oid = out["createCommitOnBranch"]["commit"]["oid"]
-            if not isinstance(oid, str):
-                raise RuntimeError("createCommitOnBranch answered no commit id")
-            return oid
-        except RuntimeError as e:  # the branch moved between the read and the write
-            last = str(e)
-    raise RuntimeError(f"could not commit {', '.join(additions)}: {last}")
+    out = gh.graphql(
+        COMMIT_MUTATION,
+        {
+            "input": {
+                "branch": {"repositoryNameWithOwner": registry, "branchName": BRANCH},
+                "expectedHeadOid": head,
+                "message": {"headline": headline},
+                "fileChanges": changes,
+            }
+        },
+    )
+    oid = dig(out, "createCommitOnBranch", "commit", "oid")
+    if not isinstance(oid, str):
+        raise RuntimeError("createCommitOnBranch answered no commit id")
+    return oid
 
 
 # --- time-stamping (RFC 3161) -----------------------------------------------------
@@ -438,28 +522,27 @@ def _openssl(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def tsr_text(tsr: bytes) -> str | None:
     """`openssl ts -reply -text` of a response, None when it does not parse."""
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "r.tsr"
-        path.write_bytes(tsr)
-        out = _openssl(["ts", "-reply", "-in", str(path), "-text"])
+    with tempfile.NamedTemporaryFile() as f:
+        f.write(tsr)
+        f.flush()
+        out = _openssl(["ts", "-reply", "-in", f.name, "-text"])
     return out.stdout if out.returncode == 0 else None
 
 
+TSR_TIME_RE = re.compile(
+    r"^Time stamp: ([A-Z][a-z]{2} [ 0-9][0-9] [0-9:]{8})(?:\.[0-9]+)? ([0-9]{4}) GMT$", re.M
+)
+
+
 def tsr_time(text: str) -> dt.datetime | None:
-    m = re.search(r"^Time stamp: (.+?) GMT$", text, re.M)
-    if not m:
+    """The second a token states, whatever fraction of it an authority adds."""
+    m = TSR_TIME_RE.search(text)
+    if m is None:
         return None
     try:
-        return dt.datetime.strptime(" ".join(m.group(1).split()), "%b %d %H:%M:%S %Y").replace(
-            tzinfo=dt.UTC
-        )
+        return dt.datetime.strptime(f"{m[1]} {m[2]} +0000", "%b %d %H:%M:%S %Y %z")
     except ValueError:
-        try:
-            return dt.datetime.strptime(
-                " ".join(m.group(1).split()).split(".")[0], "%b %d %H:%M:%S %Y"
-            ).replace(tzinfo=dt.UTC)
-        except ValueError:
-            return None
+        return None
 
 
 def verify_tsr(
@@ -484,18 +567,18 @@ def verify_tsr(
     if when is None:
         return "the time-stamp token has no time"
     if qualified and (
-        not re.search(rf"^Policy OID: {re.escape(QUALIFIED_POLICY)}\b", text, re.M)
+        not re.search(rf"^Policy OID: {re.escape(QUALIFIED_POLICY)}$", text, re.M)
         or QTST_STATEMENT_DER not in tsr
     ):
         return "the time-stamp token is not a qualified one"
-    with tempfile.TemporaryDirectory() as d:
-        resp = Path(d) / "r.tsr"
-        resp.write_bytes(tsr)
-        args = ["ts", "-verify", "-in", str(resp), "-attime", str(int(when.timestamp()))]
+    with tempfile.NamedTemporaryFile() as response, tempfile.NamedTemporaryFile() as request:
+        response.write(tsr)
+        response.flush()
+        args = ["ts", "-verify", "-in", response.name, "-attime", str(int(when.timestamp()))]
         if query is not None:
-            q = Path(d) / "q.tsq"
-            q.write_bytes(query)
-            args += ["-queryfile", str(q)]
+            request.write(query)
+            request.flush()
+            args += ["-queryfile", request.name]
         else:
             args += ["-digest", digest_hex]
         for root in roots:
@@ -505,15 +588,15 @@ def verify_tsr(
     return "the time-stamp token does not verify"
 
 
-class Stamper:
+class Stamper(Protocol):
     """Asks a time-stamping authority for a token over a digest; tests give their own."""
 
-    def stamp(self, digest_hex: str) -> bytes | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def stamp(self, digest_hex: str) -> bytes | None:
+        """The token over a SHA-256 digest, None when the authority gave none that verifies."""
 
 
 @dataclass
-class TSAStamper(Stamper):
+class TSAStamper:
     """RFC 3161 over HTTP. Two tries, ``TSA_SPACING_S`` apart; None without a verified token."""
 
     url: str
@@ -521,7 +604,8 @@ class TSAStamper(Stamper):
     qualified: bool
     transport: Transport = tsa_transport
     sleep: Callable[[float], None] = time.sleep
-    last: float = 0.0
+    #: When the authority was last asked (time.monotonic); never, before the first time.
+    last: float = -math.inf
 
     @classmethod
     def from_config(cls, config: dict[str, Any], **kw: Any) -> TSAStamper | None:
@@ -533,12 +617,12 @@ class TSAStamper(Stamper):
     def stamp(self, digest_hex: str) -> bytes | None:
         for attempt in range(2):
             wait = TSA_SPACING_S - (time.monotonic() - self.last)
-            if self.last and wait > 0:
+            if wait > 0:
                 self.sleep(wait)
             query = timestamp_query(digest_hex, secrets.randbits(63) | 1)
             self.last = time.monotonic()
-            status, body, _ = _answer(
-                self.transport(
+            try:
+                status, body, _ = self.transport(
                     "POST",
                     self.url,
                     {
@@ -547,7 +631,13 @@ class TSAStamper(Stamper):
                     },
                     query,
                 )
-            )
+            except UNREACHABLE as e:
+                print(
+                    f"time-stamp attempt {attempt + 1}: the authority cannot be reached "
+                    f"({type(e).__name__})",
+                    file=sys.stderr,
+                )
+                continue
             if status == 200 and body:
                 problem = verify_tsr(body, digest_hex, self.roots, self.qualified, query)
                 if problem is None:
@@ -575,15 +665,31 @@ class Context:
 
 
 def served(ctx: Context, repo: str) -> None:
-    if not REPO_RE.match(repo) or repo not in ctx.config["served_repositories"]:
+    if not REPO_RE.fullmatch(repo) or repo not in ctx.config["served_repositories"]:
         raise Refused(f"{repo} is not a served repository")
-    if ctx.gh.get(f"/repos/{repo}").get("private"):
+    if ctx.gh.get(f"/repos/{repo}").get("private") is not False:
         raise Refused(f"{repo} is not public")
 
 
 def existing_record(ctx: Context, gid: int) -> dict[str, Any] | None:
-    text = ctx.gh.file(ctx.registry, f"signatures/individual/{gid}.json", BRANCH)
-    return json.loads(text) if text else None
+    content = ctx.gh.file(ctx.registry, f"signatures/individual/{gid}.json", BRANCH)
+    if content is None:
+        return None
+    record = parse_json(content)
+    if not isinstance(record, dict):
+        raise RuntimeError(f"the record of account {gid} is not a JSON object")
+    return record
+
+
+def record_bytes(ctx: Context, path: str, record: dict[str, Any]) -> bytes:
+    """The file of a record, once the verifier's own check has passed over it.
+
+    The register only grows, so nothing that check refuses is ever written to it."""
+    content = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    problem = check_record(ctx.config, path, content)
+    if problem is not None:
+        raise RuntimeError(f"not written, the verifier would refuse it: {problem}")
+    return content
 
 
 def write_signature(
@@ -597,36 +703,34 @@ def write_signature(
     commit when no new one came back."""
     path = f"signatures/individual/{gid}.json"
     tsr_path = f"signatures/individual/{gid}.tsr"
-    content = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    content = record_bytes(ctx, path, record)
     token = ctx.stamper.stamp(sha256(content)) if ctx.stamper else None
     additions = {path: content}
     deletions: list[str] = []
     if token:
         additions[tsr_path] = token
-    elif replacing and ctx.gh.file_bytes(ctx.registry, tsr_path, BRANCH) is not None:
+    elif replacing and ctx.gh.file(ctx.registry, tsr_path, BRANCH) is not None:
         deletions.append(tsr_path)
     oid = commit_files(ctx.gh, ctx.registry, additions, deletions, headline)
     return f"recorded in {oid}" + ("" if token else " (no time-stamp token yet)")
 
 
-def redacted_after(ctx: Context, gid: int, accepted_at: str) -> None:
+def redacted_after(ctx: Context, gid: int, accepted: dt.datetime) -> None:
     """Refuses a comment older than the owner's removal of that account's entry.
 
     The removal was asked for after that comment was written, so the comment
     cannot bring the entry back: only a new acceptance can. Without this the
     Worker's cron, which re-dispatches the acceptance comments of open pull
-    requests, would write the entry again (registry/README.md, "Removal")."""
-    accepted = parse_time(accepted_at)
+    requests, would write the entry again (registry/README.md, "Removal"). A
+    removal whose time GitHub does not say counts as later than any comment."""
     path = f"signatures/individual/{gid}.json"
-    history = ctx.gh.get(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=100")
-    for c in history if isinstance(history, list) else []:
-        commit = c.get("commit") or {}
-        if (
-            (c.get("author") or {}).get("id") == OWNER_ID
-            and str(commit.get("message", "")).startswith("redact:")
-            and (removed := parse_time((commit.get("committer") or {}).get("date")))
-            and (accepted is None or accepted <= removed)
-        ):
+    for c in ctx.gh.pages(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}"):
+        if dig(c, "author", "id") != OWNER_ID:
+            continue
+        if not str(dig(c, "commit", "message")).startswith("redact:"):
+            continue
+        removed = parse_time(dig(c, "commit", "committer", "date"))
+        if removed is None or accepted <= removed:
             raise Refused("this account's entry was removed at its request after that comment")
 
 
@@ -634,33 +738,30 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
     """Records one genuine, unedited acceptance by the account that wrote it."""
     served(ctx, repo)
     rest = ctx.gh.get(f"/repos/{repo}/issues/comments/{comment_id}")
-    node = ctx.gh.graphql(COMMENT_QUERY, {"id": rest["node_id"]})["node"]
+    node = ctx.gh.graphql(COMMENT_QUERY, {"id": rest.get("node_id")}).get("node")
     if not node:
         raise Refused("comment not found")
     if node.get("lastEditedAt") or node.get("editor"):
         raise Refused("the comment was edited")
-    pull = node.get("pullRequest") or {}
-    if pull.get("number") != pr or (pull.get("repository") or {}).get("nameWithOwner") != repo:
-        raise Refused("the comment is not on that pull request")
-    author = node.get("author") or {}
-    gid = author.get("databaseId")
-    login = author.get("login", "")
     if (
-        not isinstance(gid, int)
-        or gid <= 0
-        or (rest.get("user") or {}).get("type") != "User"
-        or not LOGIN_RE.match(login)
-        or login.endswith("[bot]")
+        dig(node, "pullRequest", "number") != pr
+        or dig(node, "pullRequest", "repository", "nameWithOwner") != repo
     ):
+        raise Refused("the comment is not on that pull request")
+    gid, login = dig(node, "author", "databaseId"), dig(node, "author", "login")
+    if not _pos_int(gid) or dig(rest, "user", "type") != "User" or not is_login(login):
         raise Refused("the author is not a personal account")
-    version = accepted_sentences(ctx.config).get(normalize(node["body"]))
+    body, created = node.get("body"), record_time(node.get("createdAt"))
+    if not isinstance(body, str) or created is None:
+        raise RuntimeError("GitHub's answer has no usable body or createdAt")
+    version = accepted_sentences(ctx.config).get(normalize(body))
     if version is None:
         raise Refused("the comment is not the acceptance sentence of an accepted version")
     previous = existing_record(ctx, gid)
     if previous and record_valid(ctx.config, previous) and previous["version"] >= version:
         return "already recorded"
-    via = rest.get("performed_via_github_app") or {}
-    web = isinstance(ctx.config.get("app_id"), int) and via.get("id") == ctx.config["app_id"]
+    app_id = ctx.config.get("app_id")
+    web = app_id is not None and dig(rest, "performed_via_github_app", "id") == app_id
     # The sign page never posts the sentence of a version signed by signing in: one posted
     # through the bot's app is somebody acting in the signer's name, which that version says
     # does not happen. Typed by hand it is the version's own fallback.
@@ -669,7 +770,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
             f"version {version} is not posted through the app, it is signed by signing in"
         )
     if previous is None:
-        redacted_after(ctx, gid, node["createdAt"])
+        redacted_after(ctx, gid, created)
     record = {
         "schema": 1,
         "kind": "individual",
@@ -678,7 +779,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
         "agreement": ctx.config["agreement"],
         "version": version,
         "set_sha256": ctx.config["versions"][str(version)]["set_sha256"],
-        "accepted_at": node["createdAt"],
+        "accepted_at": iso(created),
         # Posted through the app (the sign page) or typed by hand; told by the app's numeric id,
         # never its slug.
         "method": "web" if web else "comment",
@@ -686,7 +787,7 @@ def record_sign(ctx: Context, repo: str, pr: int, comment_id: int) -> str:
             "pr_url": f"https://github.com/{repo}/pull/{pr}",
             "comment_url": f"https://github.com/{repo}/pull/{pr}#issuecomment-{comment_id}",
             "comment_id": comment_id,
-            "comment_body_sha256": sha256(node["body"]),
+            "comment_body_sha256": sha256(body),
         },
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
@@ -709,13 +810,22 @@ class SigninApp:
 def revoke_signin(gh: GitHub, app: SigninApp, token: str) -> None:
     """Deletes the signer's authorization of the sign-in app.
 
-    Every token of it dies, and GitHub asks again next time."""
-    status, _, _ = gh.exchange(
-        "DELETE",
-        f"/applications/{app.client_id}/grant",
-        {"access_token": token},
-        basic=(app.client_id, app.client_secret),
-    )
+    Every token of it dies, and GitHub asks again next time. A grant that
+    cannot be deleted is said and nothing else: what was recorded or refused
+    stands."""
+    try:
+        status, _, _ = gh.exchange(
+            "DELETE",
+            f"/applications/{app.client_id}/grant",
+            {"access_token": token},
+            basic=(app.client_id, app.client_secret),
+        )
+    except UNREACHABLE as e:
+        print(
+            f"sign-in grant not deleted: GitHub cannot be reached ({type(e).__name__})",
+            file=sys.stderr,
+        )
+        return
     print(
         f"sign-in grant deleted ({status})"
         if status == 204
@@ -729,10 +839,10 @@ def record_signin(
     app: SigninApp,
     repo: str,
     pr: int,
-    gid: int,
-    version: int,
-    lang: str,
-    site_commit: str,
+    gid: int | None,
+    version: int | None,
+    lang: str | None,
+    site_commit: str | None,
     token: str,
 ) -> str:
     """Records the acceptance the Worker reports for ``gid``, once GitHub vouches for the token.
@@ -749,10 +859,10 @@ def record_signin(
     answered before the token is checked: a re-run of a run that recorded
     it carries the same token, revoked by then, and must stay green."""
     try:
-        if gid <= 0:
+        if not _pos_int(gid):
             raise Refused("no account id")
         served(ctx, repo)
-        if not HEX40_RE.match(site_commit):
+        if not _matches(site_commit, HEX40_RE):
             raise Refused("the site commit is not a commit id")
         if lang not in LANGS:
             raise Refused("unknown interface language")
@@ -765,11 +875,7 @@ def record_signin(
         if info.get("flow") != "signin":
             raise Refused(f"version {version} is not accepted by signing in")
         configured = ctx.config.get("signin_client_id")
-        if (
-            not isinstance(configured, str)
-            or configured != app.client_id
-            or not CLIENT_ID_RE.match(configured)
-        ):
+        if configured != app.client_id or not _matches(configured, CLIENT_ID_RE):
             raise Refused("the sign-in app is not the one registry/config.json names")
         pull = ctx.gh.get(f"/repos/{repo}/pulls/{pr}")
         if pull.get("number") != pr:
@@ -787,23 +893,17 @@ def record_signin(
             raise Refused("GitHub does not know this sign-in token (expired, revoked or not ours)")
         if status != 200:
             raise RuntimeError(f"checking the sign-in token answered {status}")
-        answer = json.loads(body)
+        answer = parse_json(body)
         accepted = parse_http_date(headers.get("date"))
-        authorized = parse_time(answer.get("created_at"))
+        authorized = parse_time(dig(answer, "created_at"))
         if accepted is None or authorized is None:
             raise RuntimeError("GitHub's answer has no usable Date or created_at")
-        if (answer.get("app") or {}).get("client_id") != app.client_id:
+        if dig(answer, "app", "client_id") != app.client_id:
             raise Refused("the token belongs to another app")
-        user = answer.get("user") or {}
-        login = user.get("login", "")
-        if (
-            user.get("type") != "User"
-            or not isinstance(login, str)
-            or not LOGIN_RE.match(login)
-            or login.endswith("[bot]")
-        ):
+        login = dig(answer, "user", "login")
+        if dig(answer, "user", "type") != "User" or not is_login(login):
             raise Refused("the token is not a personal account's")
-        if user.get("id") != gid:
+        if not _int(dig(answer, "user", "id"), gid):
             raise Refused("the token belongs to another account than the one reported")
         if not (accepted - SIGNIN_MAX_AGE <= authorized <= accepted + dt.timedelta(minutes=1)):
             raise Refused("the sign-in is not recent")
@@ -825,11 +925,11 @@ def record_signin(
                 "site_commit": site_commit,
                 "lang": lang,
             },
-            "recorded_at": iso(max(dt.datetime.now(dt.UTC), accepted)),
+            "recorded_at": iso(max(utcnow(), accepted)),
             "recorder_run_id": ctx.run_id,
             "recorder_commit": ctx.commit,
         }
-        if not HEX40_RE.match(ctx.commit):
+        if not HEX40_RE.fullmatch(ctx.commit):
             raise RuntimeError("the recorder's own commit (GITHUB_SHA) is unknown")
         return write_signature(
             ctx,
@@ -840,9 +940,6 @@ def record_signin(
         )
     finally:
         revoke_signin(ctx.gh, app, token)
-
-
-SIGNATURE_LIST_LIMIT = 1000
 
 
 def record_stamps(ctx: Context, limit: int = 10) -> str:
@@ -858,25 +955,26 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
         return "no signature yet"
     if status != 200 or not isinstance(listing, list):
         raise RuntimeError(f"listing the signatures answered {status}")
-    names = {e.get("name") for e in listing if e.get("type") == "file"}
+    if len(listing) >= SIGNATURE_LIST_LIMIT:
+        raise Refused(f"GitHub lists {SIGNATURE_LIST_LIMIT} files at most, so some may be missing")
+    names = {dig(e, "name") for e in listing if dig(e, "type") == "file"}
     todo = sorted(
         int(n[:-5])
         for n in names
-        if isinstance(n, str) and re.match(r"^[1-9]\d*\.json$", n) and f"{n[:-5]}.tsr" not in names
+        if _matches(n, SIGNATURE_NAME_RE) and f"{n[:-5]}.tsr" not in names
     )
     done = 0
     for gid in todo[:limit]:
         path = f"signatures/individual/{gid}.json"
-        content = ctx.gh.file_bytes(ctx.registry, path, BRANCH)
-        if content is None or check_record(ctx.config, path, content.decode("utf-8")) is not None:
+        content = ctx.gh.file(ctx.registry, path, BRANCH)
+        if content is None or check_record(ctx.config, path, content) is not None:
             continue
-        last = ctx.gh.get(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=1")
-        c = last[0] if isinstance(last, list) and last else {}
-        verified = ((c.get("commit") or {}).get("verification") or {}).get("verified") is True
+        last = ctx.gh.get_list(f"/repos/{ctx.registry}/commits?sha={BRANCH}&path={path}&per_page=1")
+        c = next(iter(last), None)
         if (
-            (c.get("author") or {}).get("id") != ACTIONS_BOT_ID
-            or (c.get("committer") or {}).get("login") != "web-flow"
-            or not verified
+            dig(c, "author", "id") != ACTIONS_BOT_ID
+            or dig(c, "committer", "login") != "web-flow"
+            or dig(c, "commit", "verification", "verified") is not True
         ):
             continue  # not the recorder's file: nothing to vouch for
         token = ctx.stamper.stamp(sha256(content))
@@ -889,19 +987,29 @@ def record_stamps(ctx: Context, limit: int = 10) -> str:
     return f"stamped {done} of {len(todo)}"
 
 
-def parse_noreply(email: str | None) -> tuple[int, str] | None:
-    m = NOREPLY_RE.match((email or "").strip())
-    return (int(m.group(1)), m.group(2)) if m else None
+def parse_noreply(email: object) -> tuple[int, str] | None:
+    """The account ``<id>+<login>@users.noreply.github.com``, GitHub's own address, names.
+
+    None for anything GitHub could not have written: no such id, no such login, a blank more."""
+    m = NOREPLY_RE.fullmatch(email) if isinstance(email, str) else None
+    if m is None or not is_login(m[2].removesuffix(BOT_SUFFIX)):
+        return None
+    return int(m[1]), m[2]
 
 
 def trailer_emails(message: str) -> list[str]:
     """The emails of the ``Co-authored-by:`` trailers of a commit message, lower-cased.
 
-    Anybody writes a commit message, so each line is read once, with no
-    backtracking. worker/src/authors.ts coAuthorEmails does the same, and also ends a line at a
-    carriage return and at the two Unicode separators."""
+    Anybody writes a commit message, so each line is read once, with no backtracking. Git ends a
+    line at a line feed alone and JavaScript at three more characters: a trailer that either reading
+    has counts. worker/src/authors.ts coAuthorEmails does the same (tests/vectors/authors.json)."""
+    emails = _trailers(LINE_END_RE.split(message))
+    return emails + [e for e in _trailers(message.split("\n")) if e not in emails]
+
+
+def _trailers(lines: list[str]) -> list[str]:
     emails = []
-    for line in message.split("\n"):
+    for line in lines:
         if line[: len(TRAILER_KEY)].lower() != TRAILER_KEY:
             continue
         _name, bracket, address = line[len(TRAILER_KEY) :].rstrip(" \t").rpartition("<")
@@ -911,33 +1019,73 @@ def trailer_emails(message: str) -> list[str]:
     return emails
 
 
+#: An account that wrote part of a pull request: its id, its login and its type.
+type Account = tuple[int, str, str]
+
+
+def noreply_account(email: object) -> Account | None:
+    """The account a no-reply address names, and its type."""
+    found = parse_noreply(email)
+    if found is None:
+        return None
+    return *found, "Bot" if found[1].endswith(BOT_SUFFIX) else "User"
+
+
+def commit_authors(c: dict[str, Any]) -> tuple[list[Account], int]:
+    """The accounts that wrote one commit, and how many of its authors could not be identified.
+
+    Its author and co-authors as GitHub resolves them, and the trailers GitHub did not list.
+    worker/src/authors.ts commitAuthors does the same (tests/vectors/authors.json)."""
+    accounts: list[Account] = []
+    unknown = 0
+    listed = set()
+    for a in c["authors"]["nodes"]:
+        if isinstance(a.get("email"), str):
+            listed.add(a["email"].lower())
+        u = a.get("user") or {}
+        if _pos_int(u.get("databaseId")) and is_login(u.get("login")):
+            accounts.append((u["databaseId"], u["login"], "User"))
+        elif account := noreply_account(a.get("email")):
+            accounts.append(account)
+        else:
+            unknown += 1
+    if c["authors"]["totalCount"] > len(c["authors"]["nodes"]):
+        unknown += 1
+    for address in trailer_emails(c["message"]):
+        if address in listed:
+            continue
+        if account := noreply_account(address):
+            accounts.append(account)
+        else:
+            unknown += 1
+    return accounts, unknown
+
+
 def pr_authors(
     ctx: Context, repo: str, pr: dict[str, Any]
-) -> tuple[dict[int, tuple[str, str, list[str]]], int]:
-    """The Worker's rule, written again: opener, commit authors and co-authors (id → login, type,
-    dates); and how many could not be identified.
+) -> tuple[dict[int, tuple[str, list[str]]], int]:
+    """The Worker's rule, written again: opener, commit authors and co-authors (id → type, dates);
+    and how many could not be identified.
     """
     owner, name = repo.split("/")
-    people: dict[int, tuple[str, str, list[str]]] = {}
+    people: dict[int, tuple[str, list[str]]] = {}
     unknown = 0
 
-    def add(gid: int, login: str, kind: str, date: str) -> None:
-        if gid in people:
-            people[gid][2].append(date)
-        else:
-            people[gid] = (login, kind, [date])
+    def add(gid: int, kind: str, date: str) -> None:
+        people.setdefault(gid, (kind, []))[1].append(date)
 
-    user = pr["user"]
+    opener = dig(pr, "user", "id")
+    if not _pos_int(opener):
+        raise RuntimeError("GitHub named no opener")
     # The opener is dated by the pull request's creation, as the Worker does (worker/src/assess.ts).
-    add(user["id"], user["login"], user.get("type", "User"), pr["created_at"][:10])
+    add(opener, dig(pr, "user", "type"), pr["created_at"][:10])
     cursor = None
     seen = 0
     while True:
         page = ctx.gh.graphql(
             COMMITS_QUERY, {"owner": owner, "name": name, "number": pr["number"], "cursor": cursor}
         )
-        pull = (page.get("repository") or {}).get("pullRequest") or {}
-        commits = pull.get("commits")
+        commits = dig(page, "repository", "pullRequest", "commits")
         if not commits:
             raise RuntimeError("GitHub returned no commit list")
         if commits["totalCount"] > MAX_COMMITS:
@@ -946,28 +1094,12 @@ def pr_authors(
             c = n["commit"]
             seen += 1
             # Merge commits count like any other: a merge can carry changes of its own.
-            date = c["authoredDate"][:10]
-            listed = set()
-            for a in c["authors"]["nodes"]:
-                if a.get("email"):
-                    listed.add(a["email"].lower())
-                u = a.get("user")
-                if u and isinstance(u.get("databaseId"), int):
-                    add(u["databaseId"], u["login"], "User", date)
-                elif nr := parse_noreply(a.get("email")):
-                    add(nr[0], nr[1], "Bot" if nr[1].endswith("[bot]") else "User", date)
-                else:
-                    unknown += 1
-            if c["authors"]["totalCount"] > len(c["authors"]["nodes"]):
-                unknown += 1
-            for address in trailer_emails(c["message"]):
-                if address in listed:
-                    continue
-                if nr := parse_noreply(address):
-                    add(nr[0], nr[1], "Bot" if nr[1].endswith("[bot]") else "User", date)
-                else:
-                    unknown += 1
-        if not commits["pageInfo"]["hasNextPage"] or seen >= MAX_COMMITS:
+            accounts, unidentified = commit_authors(c)
+            unknown += unidentified
+            for gid, _login, kind in accounts:
+                add(gid, kind, c["authoredDate"][:10])
+        # An empty page ends the list too: a next page of it could be empty for ever.
+        if not commits["pageInfo"]["hasNextPage"] or not commits["nodes"] or seen >= MAX_COMMITS:
             if seen < commits["totalCount"]:
                 raise Refused("GitHub listed fewer commits than the pull request has")
             break
@@ -1007,24 +1139,20 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
     ids: list[int] = []
     versions: dict[str, int] = {}
     missing: list[int] = []
-    for gid, (_login, kind, dates) in sorted(people.items()):
+    for gid, (kind, dates) in sorted(people.items()):
         if gid in exempt or all(covering_entity(ctx, gid, d) for d in dates):
             continue
-        if kind != "User":
+        rec = existing_record(ctx, gid) if kind == "User" else None
+        if rec is not None and record_valid(ctx.config, rec):
+            ids.append(gid)
+            versions[str(gid)] = rec["version"]
+        else:
             missing.append(gid)
-            continue
-        rec = existing_record(ctx, gid)
-        if rec is None or not record_valid(ctx.config, rec):
-            missing.append(gid)
-            continue
-        ids.append(gid)
-        versions[str(gid)] = rec["version"]
     if missing:
         raise Refused(
             f"merged without a signature from account id(s) {', '.join(map(str, missing))}"
         )
-    owner, name = repo.split("/")
-    path = f"coverage/{owner}/{name}/{number}.json"
+    path = f"coverage/{repo}/{number}.json"
     if ctx.gh.file(ctx.registry, path, BRANCH) is not None:
         return "already recorded"
     record = {
@@ -1032,18 +1160,18 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
         "kind": "coverage",
         "repo": repo,
         "pr": number,
-        "merge_sha": pr["merge_commit_sha"],
-        "merged_at": pr["merged_at"],
+        "merge_sha": pr.get("merge_commit_sha"),
+        "merged_at": pr.get("merged_at"),
         "github_ids": ids,
         "versions": versions,
         "recorded_at": now(),
         "recorder_run_id": ctx.run_id,
     }
-    oid = commit_file(
+    oid = commit_files(
         ctx.gh,
         ctx.registry,
-        path,
-        json.dumps(record, indent=2) + "\n",
+        {path: record_bytes(ctx, path, record)},
+        [],
         f"coverage: {repo}#{number}",
     )
     return f"recorded in {oid}"
@@ -1052,10 +1180,18 @@ def record_coverage(ctx: Context, repo: str, number: int) -> str:
 # --- verify -------------------------------------------------------------------
 
 
-def git(root: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
-    ).stdout
+def git(root: Path, *args: str) -> bytes:
+    return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
+
+
+def git_lines(root: Path, *args: str) -> list[str]:
+    """What git says, line by line: a line feed ends a line and nothing else does, and bytes that
+    are no text are shown."""
+    return git(root, *args).decode("utf-8", "backslashreplace").split("\n")[:-1]
+
+
+#: What a finding of no commit is about.
+NO_COMMIT = "0" * 12
 
 
 @dataclass
@@ -1067,81 +1203,120 @@ class Finding:
         return f"{self.commit[:12]}: {self.problem}"
 
 
+def _int(v: object, n: int) -> bool:
+    """Whether a JSON value is exactly this integer: neither true nor 1.0 is 1."""
+    return type(v) is int and v == n
+
+
 def _pos_int(v: object) -> TypeGuard[int]:
-    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+    return type(v) is int and 0 < v <= MAX_INT
 
 
-def check_record(config: dict[str, Any], path: str, text: str) -> str | None:
+def check_record(config: dict[str, Any], path: str, content: bytes) -> str | None:
     """The shape of one record file (registry/schema/), checked field by field;
     worker/src/registry.ts isSignatureRecord does the same.
     """
-    try:
-        rec = json.loads(text)
-    except json.JSONDecodeError:
-        return "not JSON"
+    rec = parse_json(content)
     if not isinstance(rec, dict):
         return "not a JSON object"
-    if path.startswith("signatures/"):
-        gid = int(path.rsplit("/", 1)[1].split(".")[0])
-        if rec.get("kind") != "individual" or rec.get("github_id") != gid:
-            return "the record does not match its path"
-        if not record_published(config, rec):
-            return "the version or digest is not a published one"
-        if rec.get("schema") == 2:
-            return check_signin_record(config, rec)
-        allowed = {
-            "schema",
-            "kind",
-            "github_id",
-            "login_at_signing",
-            "agreement",
-            "version",
-            "set_sha256",
-            "accepted_at",
-            "method",
-            "evidence",
-            "recorded_at",
-            "recorder_run_id",
-        }
-        if set(rec) != allowed:
-            return f"unexpected or missing fields {sorted(set(rec) ^ allowed)}"
-        ev = rec["evidence"]
-        ok = (
-            rec["schema"] == 1
-            and rec["agreement"] == config["agreement"]
-            and rec["method"] in ("web", "comment")
-            and (
-                rec["method"] == "comment"
-                or config["versions"][str(rec["version"])].get("flow") != "signin"
-            )
-            and isinstance(rec["login_at_signing"], str)
-            and LOGIN_RE.match(rec["login_at_signing"]) is not None
-            and not rec["login_at_signing"].endswith("[bot]")
-            and isinstance(rec["accepted_at"], str)
-            and TIME_RE.match(rec["accepted_at"]) is not None
-            and isinstance(rec["recorded_at"], str)
-            and TIME_RE.match(rec["recorded_at"]) is not None
-            and _pos_int(rec["recorder_run_id"])
-            and isinstance(ev, dict)
-            and set(ev) == {"pr_url", "comment_url", "comment_id", "comment_body_sha256"}
-            and isinstance(ev.get("pr_url"), str)
-            and PR_URL_RE.match(ev["pr_url"]) is not None
-            and _pos_int(ev.get("comment_id"))
-            and ev.get("comment_url") == f"{ev['pr_url']}#issuecomment-{ev.get('comment_id')}"
-            and isinstance(ev.get("comment_body_sha256"), str)
-            and HEX64_RE.match(ev["comment_body_sha256"]) is not None
+    if not path.startswith("signatures/"):
+        return check_coverage_record(path, rec)
+    m = SIGNATURE_PATH_RE.fullmatch(path)
+    if m is None or rec.get("kind") != "individual" or not _int(rec.get("github_id"), int(m[1])):
+        return "the record does not match its path"
+    if not record_published(config, rec):
+        return "the version or digest is not a published one"
+    if _int(rec.get("schema"), 2):
+        return check_signin_record(config, rec)
+    return check_comment_record(config, rec)
+
+
+COMMENT_FIELDS = {
+    "schema",
+    "kind",
+    "github_id",
+    "login_at_signing",
+    "agreement",
+    "version",
+    "set_sha256",
+    "accepted_at",
+    "method",
+    "evidence",
+    "recorded_at",
+    "recorder_run_id",
+}
+COMMENT_EVIDENCE = {"pr_url", "comment_url", "comment_id", "comment_body_sha256"}
+
+
+def check_comment_record(config: dict[str, Any], rec: dict[str, Any]) -> str | None:
+    """Schema 1: an acceptance comment, as registry/schema/individual.schema.json says."""
+    if set(rec) != COMMENT_FIELDS:
+        return f"unexpected or missing fields {sorted(set(rec) ^ COMMENT_FIELDS)}"
+    ev = rec["evidence"]
+    ok = (
+        _int(rec["schema"], 1)
+        and rec["agreement"] == config["agreement"]
+        and rec["method"] in ("web", "comment")
+        and (
+            rec["method"] == "comment"
+            or config["versions"][str(rec["version"])].get("flow") != "signin"
         )
-        if not ok:
-            return "malformed record"
-    else:
-        parts = path.split("/")
-        if (
-            rec.get("kind") != "coverage"
-            or rec.get("repo") != f"{parts[1]}/{parts[2]}"
-            or str(rec.get("pr")) != parts[3].split(".")[0]
-        ):
-            return "the coverage record does not match its path"
-    return None
+        and is_login(rec["login_at_signing"])
+        and record_time(rec["accepted_at"]) is not None
+        and record_time(rec["recorded_at"]) is not None
+        and _pos_int(rec["recorder_run_id"])
+        and isinstance(ev, dict)
+        and set(ev) == COMMENT_EVIDENCE
+        and _matches(ev["pr_url"], PR_URL_RE)
+        and _pos_int(ev["comment_id"])
+        and ev["comment_url"] == f"{ev['pr_url']}#issuecomment-{ev['comment_id']}"
+        and _matches(ev["comment_body_sha256"], HEX64_RE)
+    )
+    return None if ok else "malformed record"
+
+
+COVERAGE_FIELDS = {
+    "schema",
+    "kind",
+    "repo",
+    "pr",
+    "merge_sha",
+    "merged_at",
+    "github_ids",
+    "versions",
+    "recorded_at",
+    "recorder_run_id",
+}
+
+
+def check_coverage_record(path: str, rec: dict[str, Any]) -> str | None:
+    """The authors of one merged pull request, as registry/schema/coverage.schema.json says.
+
+    The versions are those of exactly the accounts it lists."""
+    _, owner, name, number = path.split("/")
+    if (
+        rec.get("kind") != "coverage"
+        or rec.get("repo") != f"{owner}/{name}"
+        or not _int(rec.get("pr"), int(number.removesuffix(".json")))
+    ):
+        return "the coverage record does not match its path"
+    if set(rec) != COVERAGE_FIELDS:
+        return f"unexpected or missing fields {sorted(set(rec) ^ COVERAGE_FIELDS)}"
+    ids, versions = rec["github_ids"], rec["versions"]
+    ok = (
+        _int(rec["schema"], 1)
+        and _matches(rec["merge_sha"], HEX40_RE)
+        and record_time(rec["merged_at"]) is not None
+        and record_time(rec["recorded_at"]) is not None
+        and _pos_int(rec["recorder_run_id"])
+        and isinstance(ids, list)
+        and all(_pos_int(i) for i in ids)
+        and len(set(ids)) == len(ids)
+        and isinstance(versions, dict)
+        and set(versions) == {str(i) for i in ids}
+        and all(_pos_int(v) for v in versions.values())
+    )
+    return None if ok else "malformed record"
 
 
 SIGNIN_FIELDS = {
@@ -1163,10 +1338,6 @@ SIGNIN_FIELDS = {
 SIGNIN_EVIDENCE = {"authorized_at", "signin_client_id", "context_pr_url", "site_commit", "lang"}
 
 
-def _time(v: Any) -> bool:
-    return isinstance(v, str) and TIME_RE.match(v) is not None
-
-
 def check_signin_record(config: dict[str, Any], rec: dict[str, Any]) -> str | None:
     """Schema 2: an acceptance made by signing in.
 
@@ -1181,39 +1352,27 @@ def check_signin_record(config: dict[str, Any], rec: dict[str, Any]) -> str | No
         and rec["method"] == "signin"
         and info.get("flow") == "signin"
         and rec["sentence_sha256"] == sha256(info["sentence"])
-        and isinstance(rec["login_at_signing"], str)
-        and LOGIN_RE.match(rec["login_at_signing"]) is not None
-        and not rec["login_at_signing"].endswith("[bot]")
-        and _time(rec["accepted_at"])
-        and _time(rec["recorded_at"])
+        and is_login(rec["login_at_signing"])
         and _pos_int(rec["recorder_run_id"])
-        and isinstance(rec["recorder_commit"], str)
-        and HEX40_RE.match(rec["recorder_commit"]) is not None
+        and _matches(rec["recorder_commit"], HEX40_RE)
         and isinstance(ev, dict)
         and set(ev) == SIGNIN_EVIDENCE
-        and _time(ev.get("authorized_at"))
-        and isinstance(ev.get("signin_client_id"), str)
-        and CLIENT_ID_RE.match(ev["signin_client_id"]) is not None
-        and isinstance(ev.get("context_pr_url"), str)
-        and PR_URL_RE.match(ev["context_pr_url"]) is not None
-        and isinstance(ev.get("site_commit"), str)
-        and HEX40_RE.match(ev["site_commit"]) is not None
-        and ev.get("lang") in LANGS
+        and _matches(ev["signin_client_id"], CLIENT_ID_RE)
+        and _matches(ev["context_pr_url"], PR_URL_RE)
+        and _matches(ev["site_commit"], HEX40_RE)
+        and ev["lang"] in LANGS
     )
     if not ok:
         return "malformed record"
-    authorized, accepted, recorded = (
-        parse_time(ev["authorized_at"]),
-        parse_time(rec["accepted_at"]),
-        parse_time(rec["recorded_at"]),
-    )
+    authorized = record_time(ev["authorized_at"])
+    accepted = record_time(rec["accepted_at"])
+    recorded = record_time(rec["recorded_at"])
+    if authorized is None or accepted is None or recorded is None:
+        return "malformed record"
     # Two of GitHub's clocks and the runner's: a minute of slack, as the recorder allows.
     slack = dt.timedelta(minutes=1)
     if not (
-        authorized
-        and accepted
-        and recorded
-        and authorized <= accepted + slack
+        authorized <= accepted + slack
         and accepted <= recorded + slack
         and accepted - authorized <= SIGNIN_MAX_AGE
     ):
@@ -1255,16 +1414,14 @@ def by_owner(f: Facts) -> bool:
     )
 
 
-class Witness:
+class Witness(Protocol):
     """What the cross-checks read from GitHub; tests give their own."""
 
-    def comment(
-        self, repo: str, comment_id: int
-    ) -> dict[str, Any] | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def comment(self, repo: str, comment_id: int) -> dict[str, Any] | None:
+        """The comment, as GitHub has it now; None when it is gone."""
 
-    def run(self, run_id: int) -> dict[str, Any] | None:  # pragma: no cover - interface
-        raise NotImplementedError
+    def run(self, run_id: int) -> dict[str, Any] | None:
+        """The run of the recorder, as GitHub has it now; None when there is none."""
 
 
 class Pending(Exception):
@@ -1274,10 +1431,10 @@ class Pending(Exception):
 
 
 def cross_check(
-    config: dict[str, Any], registry: str, path: str, rec: dict[str, Any], witness: Witness
+    config: dict[str, Any], registry: str, rec: dict[str, Any], witness: Witness
 ) -> str | None:
-    """The record's evidence, re-read from GitHub: the acceptance comment it cites and the recorder
-    run that wrote it.
+    """The evidence of a record check_record passed, re-read from GitHub: the acceptance comment it
+    cites and the recorder run that wrote it.
 
     This is what a GitHub-signed github-actions[bot] commit made anywhere
     else (a fork's Actions, say) and pushed here cannot pass."""
@@ -1285,8 +1442,10 @@ def cross_check(
     if not _pos_int(run_id):
         return "no recorder run id"
     head_sha = None
-    if path.startswith("signatures/") and rec.get("schema") == 2:
-        m = PR_URL_RE.match(rec["evidence"]["context_pr_url"])
+    if rec["kind"] == "coverage":
+        title = f"Record coverage {rec['repo']}#{rec['pr']}"
+    elif rec["schema"] == 2:
+        m = PR_URL_RE.fullmatch(rec["evidence"]["context_pr_url"])
         if m is None:
             return "the evidence's context_pr_url is not a pull request address"
         # A sign-in leaves nothing on GitHub to re-read (the token is revoked):
@@ -1296,8 +1455,8 @@ def cross_check(
         head_sha = rec["recorder_commit"]
         if rec["evidence"]["signin_client_id"] not in signin_client_ids(config):
             return "signed in through an app registry/config.json does not name"
-    elif path.startswith("signatures/"):
-        m = PR_URL_RE.match(rec["evidence"]["pr_url"])
+    else:
+        m = PR_URL_RE.fullmatch(rec["evidence"]["pr_url"])
         if m is None:
             return "the evidence's pr_url is not a pull request address"
         repo, pr = m.group(1), int(m.group(2))
@@ -1306,29 +1465,27 @@ def cross_check(
         c = witness.comment(repo, cid)
         if c is None:
             return f"the acceptance comment {cid} cannot be read"
-        if c.get("author_id") != rec["github_id"]:
+        if c["author_id"] != rec["github_id"]:
             return "the acceptance comment was written by another account"
-        if c.get("edited"):
+        if c["edited"]:
             return "the acceptance comment was edited"
-        if c.get("created_at") != rec["accepted_at"]:
+        if c["created_at"] != rec["accepted_at"]:
             return "accepted_at is not the comment's creation time"
-        if sha256(c.get("body", "")) != rec["evidence"]["comment_body_sha256"]:
+        if sha256(c["body"]) != rec["evidence"]["comment_body_sha256"]:
             return "the comment's text does not hash to comment_body_sha256"
-        if (c.get("pr"), c.get("repo")) != (pr, repo):
+        if (c["pr"], c["repo"]) != (pr, repo):
             return "the comment is not on the pull request the record names"
-    else:
-        title = f"Record coverage {rec.get('repo')}#{rec.get('pr')}"
     run = witness.run(run_id)
     if run is None:
         return f"recorder run {run_id} is not a run of {registry}"
     if (
-        (run.get("repository") or {}).get("full_name") != registry
+        dig(run, "repository", "full_name") != registry
         or run.get("path") != RECORD_WORKFLOW_PATH
         or run.get("event") != "workflow_dispatch"
         or run.get("head_branch") != "main"
     ):
         return f"run {run_id} is not {RECORD_WORKFLOW_PATH} dispatched on main of {registry}"
-    if " ".join(str(run.get("display_title", "")).split()) != title:
+    if " ".join(str(run.get("display_title")).split()) != title:
         return f"run {run_id} recorded something else"
     if head_sha is not None and run.get("head_sha") != head_sha:
         return f"run {run_id} did not run the commit the record names"
@@ -1348,10 +1505,14 @@ def signin_client_ids(config: dict[str, Any]) -> set[str]:
     return ids
 
 
-CommitInfo = Callable[[str], "Facts | None"]
+type CommitInfo = Callable[[str], Facts | None]
 
 
-def change_shape(changes: list[list[str]]) -> str | None:
+#: What a commit did to one path, as git diff-tree --name-status says it: the status and the path.
+type Change = tuple[str, str]
+
+
+def change_shape(changes: list[Change]) -> str | None:
     """What a recorder commit may change.
 
     One coverage record, or one account's signature and its time-stamp token.
@@ -1361,9 +1522,9 @@ def change_shape(changes: list[list[str]]) -> str | None:
     added later by the stamp run)."""
     if not changes:
         return "changes nothing"
-    paths = {c[-1]: c[0] for c in changes}
+    paths = {path: status for status, path in changes}
     for path, status in paths.items():
-        if not RECORD_PATH_RE.match(path) or status[0] not in "AMD":
+        if not RECORD_PATH_RE.fullmatch(path) or status not in ("A", "M", "D"):
             return f"{status} {path}: only adding or changing one record (and its token) is allowed"
     if len(paths) == 1:
         ((path, status),) = paths.items()
@@ -1378,7 +1539,7 @@ def change_shape(changes: list[list[str]]) -> str | None:
             if status in ("A", "M")
             else f"{status} {path}: only adding or changing one record is allowed"
         )
-    ids = {m.group(1) for p in paths for m in [SIGNATURE_PATH_RE.match(p)] if m}
+    ids = {m.group(1) for p in paths if (m := SIGNATURE_PATH_RE.fullmatch(p))}
     if len(paths) != 2 or len(ids) != 1:
         return f"changes {len(paths)} files, not one record (and its token)"
     gid = ids.pop()
@@ -1440,31 +1601,21 @@ def verify_history(
     proves nothing. The records of the commits after ``since`` are also
     cross-checked against the comment and the run they cite (``witness``)."""
     findings: list[Finding] = []
-    log = (
-        git(
-            root,
-            "log",
-            "--reverse",
-            "--format=%H%x00%P%x00%an%x00%s",
-            "--end-of-options",
-            ref,
-            "--",
-        )
-        .strip()
-        .splitlines()
+    log = git_lines(
+        root, "log", "--reverse", "--format=%H%x00%P%x00%s%x00%an", "--end-of-options", ref, "--"
     )
     commits = [line.split("\x00") for line in log]
-    start = 0
+    shas = [c[0] for c in commits]
+    checked: set[str] = set()
     if since:
-        shas = [c[0] for c in commits]
         if since not in shas:
             return Verified(
                 [Finding(since, "the previous head is no longer in the history (rewritten?)")], None
             )
-        start = shas.index(since) + 1
+        checked = set(shas[: shas.index(since) + 1])
     checked_through = since
     pending = False
-    for i, (sha, parents, author, subject) in enumerate(commits):
+    for i, (sha, parents, subject, author) in enumerate(commits):
         if len(parents.split()) > 1:
             findings.append(Finding(sha, "a merge commit: the history must be linear"))
         if i == 0:
@@ -1473,20 +1624,25 @@ def verify_history(
         if facts is None:
             findings.append(Finding(sha, "GitHub does not know this commit on the branch"))
             continue
-        owners = by_owner(facts) and re.match(r"^redact:", subject)
-        changes = [
-            line.split("\t")
-            for line in git(root, "diff-tree", "--no-commit-id", "--name-status", "-r", sha)
-            .strip()
-            .splitlines()
+        owners = by_owner(facts) and subject.startswith("redact:")
+        # A path with anything but plain characters is quoted, on one line.
+        changes: list[Change] = [
+            (status, path)
+            for status, _, path in (
+                line.partition("\t")
+                for line in git_lines(
+                    root,
+                    *("-c", "core.quotePath=true", "diff-tree", "--no-commit-id", "--name-status"),
+                    *("-r", sha),
+                )
+            )
         ]
-        before = len(findings)
         if owners:
             # A removal at its holder's request deletes; it never adds or changes an entry.
-            for status, *paths in changes:
-                if status != "D" or not RECORD_PATH_RE.match(paths[-1]):
+            for status, path in changes:
+                if status != "D" or not RECORD_PATH_RE.fullmatch(path):
                     findings.append(
-                        Finding(sha, f"{status} {paths[-1]}: a redact: commit only deletes records")
+                        Finding(sha, f"{status} {path}: a redact: commit only deletes records")
                     )
         else:
             if not by_recorder(facts):
@@ -1500,21 +1656,20 @@ def verify_history(
             problem = change_shape(changes)
             if problem:
                 findings.append(Finding(sha, problem))
-            for status, *paths in changes:
-                path = paths[-1]
+            for status, path in changes:
                 if (
                     status not in ("A", "M")
                     or not path.endswith(".json")
-                    or not RECORD_PATH_RE.match(path)
+                    or not RECORD_PATH_RE.fullmatch(path)
                 ):
                     continue
-                text = git(root, "show", f"{sha}:{path}")
-                problem = check_record(config, path, text)
+                content = git(root, "show", f"{sha}:{path}")
+                problem = check_record(config, path, content)
                 if problem:
                     findings.append(Finding(sha, f"{path}: {problem}"))
-                elif witness is not None and i >= start and not pending:
+                elif witness is not None and sha not in checked and not pending:
                     try:
-                        problem = cross_check(config, registry, path, json.loads(text), witness)
+                        problem = cross_check(config, registry, json.loads(content), witness)
                     except Pending:
                         pending = True
                         problem = None
@@ -1523,12 +1678,12 @@ def verify_history(
         # Every token on the branch after this commit, for the records it
         # touched, verifies over that record as it now is.
         for gid in sorted(
-            {m.group(1) for _s, *ps in changes for m in [SIGNATURE_PATH_RE.match(ps[-1])] if m}
+            {m.group(1) for _, path in changes if (m := SIGNATURE_PATH_RE.fullmatch(path))}
         ):
             problem = tsr_problem(root, config, sha, gid)
             if problem:
                 findings.append(Finding(sha, f"signatures/individual/{gid}.tsr: {problem}"))
-        if i >= start and not pending and len(findings) == before:
+        if not pending:
             checked_through = sha
     return Verified(findings, checked_through if not findings else since)
 
@@ -1542,23 +1697,23 @@ def verify_coverage(
     recorder run may still be queued, and the Worker's cron re-dispatches a
     missing one."""
     findings: list[Finding] = []
-    settled = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=settle_minutes)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    settled = iso(utcnow() - dt.timedelta(minutes=settle_minutes))
     for repo in config["served_repositories"]:
-        owner, name = repo.split("/")
-        pulls = gh.get(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100")
-        findings.extend(
-            Finding(
-                p.get("merge_commit_sha") or "0" * 12,
-                f"{repo}#{p['number']} was merged with no coverage record",
-            )
-            for p in pulls
-            if p.get("merged_at")
-            and p["merged_at"][:10] >= merged_since
-            and p["merged_at"] <= settled
-            and gh.file(registry, f"coverage/{owner}/{name}/{p['number']}.json", BRANCH) is None
-        )
+        for p in gh.pages(f"/repos/{repo}/pulls?state=closed&sort=updated&direction=desc"):
+            # Merged is updated: what follows was merged before that date too.
+            if str(p.get("updated_at")) < merged_since:
+                break
+            merged = p.get("merged_at")
+            if not merged or merged < merged_since or merged > settled:
+                continue
+            if gh.file(registry, f"coverage/{repo}/{p['number']}.json", BRANCH) is None:
+                sha = p.get("merge_commit_sha")
+                findings.append(
+                    Finding(
+                        NO_COMMIT if sha is None else sha,
+                        f"{repo}#{p['number']} was merged with no coverage record",
+                    )
+                )
     return findings
 
 
@@ -1621,7 +1776,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise Refused("--comment-id is required")
                 print(record_sign(ctx, args.repo, args.pr, args.comment_id))
             elif args.kind == "signin":
-                token = signin_token_from_event(os.environ.get("GITHUB_EVENT_PATH", ""))
+                token = signin_token_from_event()
                 app = SigninApp(
                     str(config.get("signin_client_id") or ""),
                     os.environ.get("SIGNIN_CLIENT_SECRET", ""),
@@ -1634,10 +1789,10 @@ def main(argv: list[str] | None = None) -> int:
                         app,
                         args.repo,
                         args.pr,
-                        args.github_id or 0,
-                        args.version or 0,
-                        args.lang or "",
-                        args.site_commit or "",
+                        args.github_id,
+                        args.version,
+                        args.lang,
+                        args.site_commit,
                         token,
                     )
                 )
@@ -1676,19 +1831,19 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if findings else 0
 
 
-TOKEN_RE = re.compile(r"^gh[uo]_[A-Za-z0-9_]{20,255}$")
+TOKEN_RE = re.compile(r"gh[uo]_[A-Za-z0-9_]{20,255}")
 
 
-def signin_token_from_event(path: str) -> str:
+def signin_token_from_event() -> str:
     """The sign-in token from the workflow_dispatch payload.
 
     Masked in the log before anything else; never on a command line or in
     the environment."""
-    try:
-        token = json.loads(Path(path).read_text("utf-8")).get("inputs", {}).get("signin_token", "")
-    except OSError, ValueError, AttributeError:
-        token = ""
-    if not isinstance(token, str) or not TOKEN_RE.match(token):
+    token = None
+    with contextlib.suppress(KeyError, OSError):
+        event = parse_json(Path(os.environ["GITHUB_EVENT_PATH"]).read_bytes())
+        token = dig(event, "inputs", "signin_token")
+    if not _matches(token, TOKEN_RE):
         raise Refused("no well-formed sign-in token in the event")
     if os.environ.get("GITHUB_ACTIONS") == "true":
         print(f"::add-mask::{token}", flush=True)
@@ -1710,30 +1865,30 @@ def commit_facts(gh: GitHub, registry: str, branch: str) -> dict[str, Facts]:
     out: dict[str, Facts] = {}
     cursor = None
     while True:
-        ref = gh.graphql(
+        page = gh.graphql(
             HISTORY_QUERY,
             {"owner": owner, "name": name, "ref": f"refs/heads/{branch}", "cursor": cursor},
-        )["repository"]["ref"]
-        if not ref:
+        )
+        hist = dig(page, "repository", "ref", "target", "history")
+        if hist is None:
             raise RuntimeError(f"the branch {branch} does not exist")
-        hist = ref["target"]["history"]
+        before = len(out)
         for n in hist["nodes"]:
-            sig = n.get("signature") or {}
-            author = (n.get("author") or {}).get("user") or {}
-            committer = n.get("committer") or {}
             out[n["oid"]] = Facts(
-                author.get("databaseId"),
-                (committer.get("user") or {}).get("databaseId"),
-                (committer.get("email") or "").lower(),
-                bool(sig.get("isValid")),
-                bool(sig.get("wasSignedByGitHub")),
+                dig(n, "author", "user", "databaseId"),
+                dig(n, "committer", "user", "databaseId"),
+                str(dig(n, "committer", "email")).lower(),
+                dig(n, "signature", "isValid") is True,
+                dig(n, "signature", "wasSignedByGitHub") is True,
             )
         if not hist["pageInfo"]["hasNextPage"]:
             return out
+        if len(out) == before:
+            raise RuntimeError(f"GitHub's history of {branch} goes on with no commit in it")
         cursor = hist["pageInfo"]["endCursor"]
 
 
-class GitHubWitness(Witness):
+class GitHubWitness:
     def __init__(self, gh: GitHub, registry: str) -> None:
         self.gh = gh
         self.registry = registry
@@ -1744,15 +1899,14 @@ class GitHubWitness(Witness):
             return None
         if status != 200:
             raise RuntimeError(f"reading comment {comment_id} answered {status}")
-        node = self.gh.graphql(COMMENT_QUERY, {"id": rest["node_id"]})["node"] or {}
-        pull = node.get("pullRequest") or {}
+        node = self.gh.graphql(COMMENT_QUERY, {"id": dig(rest, "node_id")}).get("node")
         return {
-            "author_id": (node.get("author") or {}).get("databaseId"),
-            "edited": bool(node.get("lastEditedAt") or node.get("editor")),
-            "created_at": node.get("createdAt"),
-            "body": node.get("body", ""),
-            "pr": pull.get("number"),
-            "repo": (pull.get("repository") or {}).get("nameWithOwner"),
+            "author_id": dig(node, "author", "databaseId"),
+            "edited": bool(dig(node, "lastEditedAt") or dig(node, "editor")),
+            "created_at": dig(node, "createdAt"),
+            "body": str(dig(node, "body")),
+            "pr": dig(node, "pullRequest", "number"),
+            "repo": dig(node, "pullRequest", "repository", "nameWithOwner"),
         }
 
     def run(self, run_id: int) -> dict[str, Any] | None:
@@ -1774,7 +1928,7 @@ def verify_workflows(gh: GitHub, registry: str) -> list[Finding]:
     for wf in ("record.yml", "verify.yml"):
         state = gh.get(f"/repos/{registry}/actions/workflows/{wf}").get("state")
         if state != "active":
-            findings.append(Finding("0" * 12, f"the workflow {wf} is {state}, not active"))
+            findings.append(Finding(NO_COMMIT, f"the workflow {wf} is {state}, not active"))
     return findings
 
 
