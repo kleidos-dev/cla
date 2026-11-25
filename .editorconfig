@@ -18,7 +18,7 @@ indent_size = 4
 trim_trailing_whitespace = false
 
 # Bytes that are hashed, and upstream files, kept byte for byte.
-[{agreements/**,LICENSE,LICENSES/**,.github/commit-check/**}]
+[{agreements/**,LICENSE,LICENSES/**}]
 trim_trailing_whitespace = unset
 insert_final_newline = unset
 indent_size = unset

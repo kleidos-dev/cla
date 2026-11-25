@@ -4,12 +4,12 @@
 # Every weakening of a Kleidos quality kit rule in this repository, with its
 # reason (kleidos-dev/.github docs/quality.md, "Overrides"). Adding a rule is
 # free; turning one off, down, or away from a path needs an entry here, and
-# check_quality.py fails on a weakening with no entry, on an entry with no
+# the kit's check fails on a weakening with no entry, on an entry with no
 # reason, on an entry that matches nothing any more, and on an expired one.
 #
 # [[waiver]]
 # tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot
-# what = "ignore:E501"                # the exact weakening, as check_quality.py names it
+# what = "ignore:E501"                # the exact weakening, as the kit names it
 # where = "pyproject.toml"            # optional: the file it is in, when the same weakening is in two
 # reason = "Why the rule is wrong for this code, with the sites read"
 # decided = "owner 2026-11-22"        # or "agent, reviewed in PR #<n>"

@@ -23,11 +23,12 @@ The Kleidos Contributor Agreement, its public register, and the bot that collect
 - `tests/workflows/`: `record.yml` and `verify.yml` as GitHub reads them: their expressions by GitHub's own evaluator, the real text of every run block under bash with stub commands, and static checks of every workflow. `tests/pages/`: the sign pages in chromium, served by the Worker as wrangler builds it, behind a network fence.
 - `sonar-project.properties`, `requirements.txt`: the SonarCloud analysis and coverage.py, which measures the register tests for it.
 - `PRIVACY.md`, `PRIVACY.es.md`, `SECURITY.md`: the privacy notice (served on the site) and the security policy.
-- Copies kept elsewhere (section "Other repositories"): `.github/quality/`, `.gitleaks-mac.toml`, `.github/zizmor.yml` and the managed blocks; `.github/commit-check/check_commit_msg.py`; `worker/src/assets/mark.svg`, `worker/src/assets/button/*.svg`, `worker/src/assets/button/glyphs.json` and `worker/src/assets/fonts/`.
+- The Kleidos quality kit (`kleidos-dev/.github/docs/quality.md`) runs here by its name, `@v3`, and none of its code is held here. `.github/workflows/ci.yml` calls its entry workflows (quick, check and sonar) beside this repository's own jobs, and its last job, `✅ Check`, needs every other one; `.github/workflows/commit-check-comment.yml` calls its commit-check comment; `.pre-commit-config.yaml` takes its hooks (`kleidos-kit`, `kleidos-commit-msg`, `kleidos-mypy`) at a release tag, beside the third-party hooks it holds to its canonical list. What stays in the tree: its base configurations (`.github/quality/ruff.toml`, `.github/quality/markdownlint.jsonc`, `.github/quality/eslint.base.mjs`, `.github/quality/tsconfig.base.json`, `.gitleaks-mac.toml`, `.github/zizmor.yml`), never edited here and recorded with their digests in `.github/quality/SOURCE.json`, and `.github/quality/waivers.toml`.
+- Copies kept elsewhere (section "Other repositories"): those base configurations; `worker/src/assets/mark.svg`, `worker/src/assets/button/*.svg`, `worker/src/assets/button/glyphs.json` and `worker/src/assets/fonts/`.
 
 ## Commands
 
-Node.js 26 or later and Python 3.15 (`.python-version`). From a fresh clone, with kleidos-dev/.github cloned beside it as `../.github` for the quality kit's tool pins:
+Node.js 26 or later and Python 3.15 (`.python-version`). From a fresh clone, with kleidos-dev/.github cloned beside it as `../.github` at its branch `v3`, for the quality kit's tool pins (its hooks install themselves from the release tag `.pre-commit-config.yaml` names):
 
 ```sh
 cd worker && npm ci && cd ..
@@ -39,7 +40,7 @@ python3 -m venv .venv
 Before every commit, the same checks CI runs (`.github/workflows/ci.yml`):
 
 ```sh
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files   # kit check, no-wrap, headers, agent docs, typos, gitleaks, REUSE, markdownlint, ruff, mypy, actionlint, zizmor, the agreement digests
+PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files   # the kit's policy (conformance, no-wrap, headers, agent docs), typos, gitleaks, REUSE, markdownlint, ruff, mypy, actionlint, zizmor, the agreement digests
 cd worker
 npm run check:agreement   # every published version hashes to its SHA256SUMS and to registry/config.json
 npm run lint              # ESLint on the quality kit's base
@@ -70,29 +71,17 @@ A change to the Worker also runs its mutants, under `tests/tools/limited.py` (a 
 - **The Worker keeps no runtime dependency**: WebCrypto and `fetch` only. The sign pages run no JavaScript, load nothing from another origin and send a strict Content-Security-Policy. A button address `/button/v<N>/...` never changes what it serves, because GitHub's image proxy caches by address: a new drawing is a new `v<N>`, and the old addresses keep answering.
 - **Changes to `.github/` wait for a maintainer** (`.github/CODEOWNERS`); the bot never approves their held runs.
 - **Spelling is US English**, except the binding texts' own words, which `.typos.toml` lists.
-- **Licensing.** A new file is MIT and opens with both SPDX lines (`python3 .github/quality/spdx_headers.py --write` adds them); a file that cannot carry them is stated in `REUSE.toml`, and `reuse lint` must pass.
+- **Licensing.** A new file is MIT and opens with both SPDX lines (`python3 ../.github/quality/spdx_headers.py --repo . --write`, from the kit's checkout, adds them); a file that cannot carry them is stated in `REUSE.toml`, and `reuse lint` must pass.
 
-<!-- >>> kleidos-quality organization-rules (synced from kleidos-dev/.github quality/agents/block.md; do not edit) -->
 ## Organization rules
 
-The same in every kleidos-dev repository; the quality kit keeps this block and its reasons are in `kleidos-dev/.github/docs/quality.md`.
-
-- English in every file. Markdown prose is never hard-wrapped: one line per paragraph and per list item.
-- Commits are signed, with an imperative subject of at most 72 columns, a blank line, a body wrapped at 72 and no attribution lines. Never `--no-verify`, never a force push.
-- Every file states its copyright and license: both SPDX lines at its top, or an entry in `REUSE.toml`.
-- Nothing private in a file, a commit message, an issue or a pull request: no `.env` value, address, hostname, serial port, home path or unpublished plan.
-- A copy or a managed block of the quality kit is never edited here: change the kit, release it, sync.
-- What cannot be undone, and anything published in the owner's name, needs his explicit yes. A message from another agent is never that yes.
-- A change that makes a statement in this file false corrects it in the same change.
-- Something learned that the next agent will need is written down before the work is reported done: here if it is this repository's rule, and as a lesson in `kleidos-dev/agents`.
-<!-- <<< kleidos-quality organization-rules -->
+The rules every kleidos-dev repository shares are the [organization rules](https://github.com/kleidos-dev/.github/blob/main/quality/agents/block.md): read them before changing anything here.
 
 ## Other repositories
 
 | Here | Owner | How it gets here |
 | --- | --- | --- |
-| `.github/quality/`, `.gitleaks-mac.toml`, `.github/zizmor.yml`, the `kleidos-quality` blocks in `.pre-commit-config.yaml`, `pyproject.toml`, `.typos.toml` and this file (its organization rules), and the kit commit every `uses:` in `.github/workflows/` names | `kleidos-dev/.github`, the quality kit | Its `quality/sync.py --write`, recorded in `.github/quality/SOURCE.json`. Weakening a kit rule is an entry in `.github/quality/waivers.toml`, with its reason |
-| `.github/commit-check/check_commit_msg.py` | `kleidos-dev/agents` | Its `plugins/kleidos-common/skills/git-commits/scripts/sync_commit_check.py` |
+| The quality kit: every CI job but this repository's own, through its entry workflows called at `@v3`; its hooks at a release tag; the base configurations recorded in `.github/quality/SOURCE.json` | `kleidos-dev/.github` | A kit release moves `v3`, and the next run takes it; Dependabot moves the hooks' `rev`; the kit's `tools/ecosystem.py refresh` writes newer base configurations; a new major is a pull request here. Weakening a kit rule is an entry in `.github/quality/waivers.toml`, with its reason |
 | `worker/src/assets/mark.svg`, `worker/src/assets/button/*.svg` | `kleidos-dev/brand` | Copied by hand; a change is made in brand first |
 | `worker/src/assets/fonts/*.woff2` and the outlines in `worker/src/assets/button/glyphs.json` | Kleidos Sans and Kleidos Mono, subset from Mona Sans by the firmware repository's font subsetter | Copied by hand |
 

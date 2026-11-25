@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# The shape of a repository's own .gitleaks.toml under the Kleidos quality
-# kit (kleidos-dev/.github quality/gitleaks/default.example.toml). It is not
-# copied: sync.py writes it once when the repository has none, and the file
-# is the repository's from then on, held to these rules by check_quality.py:
+# This repository's own gitleaks configuration, in the shape the Kleidos
+# quality kit asks for (kleidos-dev/.github docs/quality.md). The kit's check
+# holds it to these rules:
 #
 #   - [extend] useDefault = true, with no disabledRules: every default rule
 #     (cloud keys, private keys, tokens, generic high-entropy assignments).

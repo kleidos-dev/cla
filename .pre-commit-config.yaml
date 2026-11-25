@@ -9,44 +9,14 @@ default_install_hook_types: [pre-commit, commit-msg]
 exclude: '^agreements/v[1-9][0-9]*/addendum(\.es)?\.md$'
 
 repos:
-  # >>> kleidos-quality pre-commit-base (synced from kleidos-dev/.github .pre-commit-config.yaml; do not edit)
-  # The kit check: copies, blocks, conformance of the local configs, waivers.
-  - repo: local
+  # The quality kit's hooks (kleidos-dev/.github, docs/quality.md): nothing of
+  # them is held here, and Dependabot moves the rev.
+  - repo: https://github.com/kleidos-dev/.github
+    rev: v3.1.2
     hooks:
-      - id: kleidos-quality
-        name: quality kit (copies, blocks, conformance, waivers)
-        entry: python .github/quality/check_quality.py
-        language: python
-        additional_dependencies: ["pyyaml==6.0.4"]
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-      - id: kleidos-md-nowrap
-        name: Markdown prose is never hard-wrapped
-        entry: python3 .github/quality/md_nowrap.py
-        language: system
-        types: [markdown]
-        stages: [pre-commit]
-      # Both REUSE lines, copyright first, in every file that can carry a
-      # comment (the year git first added it, no e-mail); reuse lint below
-      # covers the files REUSE.toml states.
-      - id: kleidos-spdx-headers
-        name: licensing header lines (copyright and license)
-        entry: python .github/quality/spdx_headers.py
-        language: python
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-      # AGENTS.md and CLAUDE.md keep the organization's standard
-      # (kleidos-dev/.github docs/agent-docs.md): the import, sizes, paths,
-      # links, the organization-rules block.
-      - id: kleidos-agent-docs
-        name: agent instruction files (AGENTS.md, CLAUDE.md)
-        entry: python3 .github/quality/agent_docs.py
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
+      - id: kleidos-kit
+      - id: kleidos-commit-msg
+      - id: kleidos-mypy
   - repo: https://github.com/crate-ci/typos
     rev: 276087d9a4f06398b3e04825487805e2d7375888  # frozen: v1.52.2
     hooks:
@@ -78,32 +48,12 @@ repos:
     rev: d4df4cec471ce155946474590d7b95920f623ccb  # frozen: v0.24.2
     hooks:
       - id: markdownlint-cli2
-  # <<< kleidos-quality pre-commit-base
-  # >>> kleidos-quality pre-commit-python (synced from kleidos-dev/.github .pre-commit-config.yaml; do not edit)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: 9026c9127e153371d7a78dfcb0c45ae2046a3d10  # frozen: v0.17.6
     hooks:
       - id: ruff-check
       - id: ruff-format
         types_or: [python, pyi]
-  # mypy runs from the repository's own environment, where its dependencies
-  # are installed (the kit's quality/requirements-tools.txt, from a kit
-  # checkout, and the repository's requirements); CI runs it in the kit's
-  # mypy workflow. The runner makes one mypy run per group of folders the
-  # repository declares ([[tool.kleidos-quality.mypy-groups]]), or one bare
-  # mypy without any.
-  - repo: local
-    hooks:
-      - id: mypy
-        name: mypy (strict)
-        entry: python3 .github/quality/mypy_groups.py
-        language: system
-        types_or: [python, pyi]
-        pass_filenames: false
-        require_serial: true
-        stages: [pre-commit]
-  # <<< kleidos-quality pre-commit-python
-  # >>> kleidos-quality pre-commit-actions (synced from kleidos-dev/.github .pre-commit-config.yaml; do not edit)
   - repo: https://github.com/rhysd/actionlint
     rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
@@ -114,14 +64,8 @@ repos:
     hooks:
       - id: zizmor
         args: ["--no-progress", "--offline"]
-  # <<< kleidos-quality pre-commit-actions
   - repo: local
     hooks:
-      - id: kleidos-commit-msg
-        name: commit message (72 columns, imperative, no attribution)
-        entry: python3 .github/commit-check/check_commit_msg.py
-        language: system
-        stages: [commit-msg]
       - id: agreement-digests
         name: the agreement texts hash to SHA256SUMS and config.json
         entry: node worker/scripts/check-agreement.mjs
