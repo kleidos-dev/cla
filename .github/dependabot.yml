@@ -3,8 +3,9 @@
 #
 # Every manifest directory with its ecosystem, each update held a week
 # (cooldown) so a compromised or yanked release has time to be noticed.
-# The quality kit's workflow references are moved by its sync, never here;
-# its tools (pre-commit hooks, PyPI pins) are bumped in kleidos-dev/.github.
+# The quality kit's workflows are called by its name, @v3, which its releases
+# move; its hooks' rev and the other hook revisions are moved here, and its
+# own tools (PyPI pins) are bumped in kleidos-dev/.github.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -45,3 +46,22 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+  # The hook revisions of .pre-commit-config.yaml, the kit's and third parties'.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      exclude:
+        - "https://github.com/kleidos-dev/.github"
+    ignore:
+      # The kit's next major is taken by hand, with the fixes it asks for.
+      - dependency-name: "https://github.com/kleidos-dev/.github"
+        update-types: ["version-update:semver-major"]
+      # crate-ci/typos also tags its sub-crates, which read as typos 5.x.
+      - dependency-name: "https://github.com/crate-ci/typos"
+        versions: [">= 2"]
+    groups:
+      hooks:
+        patterns: ["*"]

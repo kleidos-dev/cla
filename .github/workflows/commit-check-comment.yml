@@ -2,20 +2,18 @@
 # SPDX-License-Identifier: MIT
 #
 # Posts, updates or removes the one commit-check comment on a pull request:
-# the Kleidos quality kit's reusable-commit-check-comment.yml (kleidos-dev/.github,
-# docs/quality.md), at the kit commit .github/quality/SOURCE.json records. A
-# pull_request job from a fork gets a read-only token and cannot comment, so
-# the comment is written on workflow_run, which runs this file as the
-# default branch has it, with a token that may write; the called job reads
-# the check's artifact as data only and never runs code from the pull
-# request.
+# the quality kit's reusable-commit-check-comment.yml. A pull_request job
+# from a fork gets a read-only token and cannot comment, so the comment is
+# written on workflow_run, which runs this file as the default branch has
+# it, with a token that may write; the called job reads the check's artifact
+# as data only and never runs code from the pull request.
 name: Commit check comment
 
 # Reviewed: workflow_run is what lets a fork's pull request get a comment,
 # and the called job treats the artifact as data only (see above).
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
-    workflows: [Commit check]
+    workflows: [CI]
     types: [completed]
 
 permissions: {}
@@ -27,8 +25,7 @@ concurrency:
 jobs:
   comment:
     name: "🙋 Commit-check comment"
-    uses: kleidos-dev/.github/.github/workflows/reusable-commit-check-comment.yml@f3cb9fc380dea5a33c4539f013c0b1dab8ca6b1d # quality-v2.3.0
+    uses: kleidos-dev/.github/.github/workflows/reusable-commit-check-comment.yml@v3
     permissions:
       actions: read
-      contents: read
       pull-requests: write

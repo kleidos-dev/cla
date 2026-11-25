@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# typos: the Kleidos quality kit's block (US English) first, then what is
-# this repository's own: the words below are right where they stand.
+# typos: US English, which the Kleidos quality kit holds every repository to,
+# then what is this repository's own: the words below are right where they
+# stand.
 
 [default]
-# >>> kleidos-quality typos (synced from kleidos-dev/.github quality/typos/block.toml; do not edit)
 locale = "en-us"
-# <<< kleidos-quality typos
 
 # SHA-256 digests and their 12-character prefixes (the acceptance
 # sentences quote one) are hex, not words.

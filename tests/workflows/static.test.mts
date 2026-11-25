@@ -3,9 +3,10 @@
 /**
  * What every workflow of the repository must be, read from the parsed
  * YAML: no secret but the sign-in app's, and only where record.yml's
- * sign-in job runs the recorder; no pull_request_target; every action and
- * reusable workflow pinned by its commit; permissions stated, and read-only
- * in CI; the recorder always run isolated (`python3 -I`); no checkout that
+ * sign-in job runs the recorder; no pull_request_target; every action
+ * pinned by its commit, and the quality kit called by its branch, v3, and
+ * nothing else by a name; permissions stated, and read-only in CI; the gate
+ * over every job of CI, under the names the rulesets require; the recorder always run isolated (`python3 -I`); no checkout that
  * keeps its credentials. GitHub's own enforcement of these (environment
  * branch policy, token permissions) is not something a test can run.
  */
@@ -21,7 +22,7 @@ const ALL: [string, Workflow][] = NAMES.map((n) => [n, workflow(n)]);
 
 describe("every workflow", () => {
   it("is one of those this suite knows", () => {
-    assert.deepEqual(NAMES, ["ci.yml", "commit-check-comment.yml", "commit-check.yml", "mutation.yml", "quality-drift.yml", "record.yml", "verify.yml"]);
+    assert.deepEqual(NAMES, ["ci.yml", "commit-check-comment.yml", "mutation.yml", "record.yml", "verify.yml"]);
   });
 
   it("states its permissions at the top, none or read-only", () => {
@@ -32,13 +33,22 @@ describe("every workflow", () => {
     for (const [n, wf] of ALL) assert.ok(!Object.hasOwn(wf.on, "pull_request_target"), n);
   });
 
-  it("pins every action and reusable workflow by a full commit", () => {
+  it("pins every action by a full commit, and calls the quality kit's workflows, and no other, at the branch v3", () => {
+    const kit: string[] = [];
     for (const [n, wf] of ALL) {
       for (const [where, s] of strings(wf.jobs)) {
         if (!where.endsWith(".uses")) continue;
-        assert.match(s, /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/, `${n} ${where}: ${s}`);
+        if (s.startsWith("kleidos-dev/.github/")) kit.push(`${n}${where.replace(".jobs", "")}=${s}`);
+        else assert.match(s, /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/, `${n} ${where}: ${s}`);
       }
+      for (const [job, j] of Object.entries(wf.jobs)) if (j.uses !== undefined) assert.ok(j.uses.startsWith("kleidos-dev/.github/"), `${n}/${job}: ${j.uses}`);
     }
+    assert.deepEqual(kit, [
+      "ci.yml.quick.uses=kleidos-dev/.github/.github/workflows/quick.yml@v3",
+      "ci.yml.check.uses=kleidos-dev/.github/.github/workflows/check.yml@v3",
+      "ci.yml.sonar.uses=kleidos-dev/.github/.github/workflows/sonar.yml@v3",
+      "commit-check-comment.yml.comment.uses=kleidos-dev/.github/.github/workflows/reusable-commit-check-comment.yml@v3",
+    ]);
   });
 
   it("names a secret only for the sign-in app, in record.yml's sign-in recorder, and hands none to a reusable workflow", () => {
@@ -88,12 +98,49 @@ describe("CI", () => {
     assert.deepEqual(ci.on.pull_request, { branches: ["main"] });
   });
 
-  it("reads the repository and writes nothing; only SonarCloud may ask for an OIDC token", () => {
+  it("reads the repository and writes nothing; only SonarCloud may ask for an OIDC token, and the gate reads nothing", () => {
     assert.deepEqual(ci.permissions, { contents: "read" });
+    const own: Record<string, unknown> = { sonar: { contents: "read", "id-token": "write" }, done: {} };
     for (const [job, j] of Object.entries(ci.jobs)) {
-      const want = job === "sonarcloud" ? { contents: "read", "id-token": "write" } : { contents: "read" };
-      if (j.permissions !== undefined || j.uses !== undefined) assert.deepEqual(j.permissions, want, job);
+      if (j.permissions !== undefined || j.uses !== undefined) assert.deepEqual(j.permissions, own[job] ?? { contents: "read" }, job);
     }
+  });
+
+  it("keeps every gate of docs/testing.md under its name, the two the ruleset requires among them, and the last one over all the others", () => {
+    const names = Object.fromEntries(Object.entries(ci.jobs).map(([job, j]) => [job, j.name]));
+    assert.deepEqual(names, {
+      quick: "⚡ Quick",
+      check: "🧪 Check",
+      worker: "🧪 Worker tests",
+      scripts: "🔑 Setup scripts and workflows",
+      "scripts-mutants": "🧬 Mutants of the changed scripts",
+      "register-mutants": "🧬 Mutants of the changed register lines",
+      "worker-mutants": "🧬 Mutants of the changed Worker lines",
+      pages: "🌐 Pages",
+      floors: "🧭 Floors and lists against the base",
+      coverage: "📦 Coverage reports",
+      sonar: "📊 Sonar",
+      done: "✅ Check",
+    });
+    const others = Object.keys(ci.jobs).filter((job) => job !== "done");
+    assert.deepEqual(ci.jobs["done"]!.needs, others);
+    assert.equal(ci.jobs["done"]!.if, "always()");
+    // The jobs a condition may skip, and no other, are those the gate lets be skipped.
+    const conditions = Object.fromEntries(others.filter((job) => ci.jobs[job]!.if !== undefined).map((job) => [job, ci.jobs[job]!.if]));
+    assert.deepEqual(conditions, {
+      "scripts-mutants": "github.event_name == 'pull_request'",
+      "register-mutants": "github.event_name == 'pull_request'",
+      "worker-mutants": "github.event_name == 'pull_request'",
+      floors: "github.event_name == 'pull_request'",
+      coverage: "github.event_name != 'schedule'",
+      sonar: "github.event_name != 'schedule'",
+    });
+    assert.equal(ci.jobs["done"]!.steps![0]!.env!["MAY_SKIP"], Object.keys(conditions).join(" "));
+    // The register's tests, the one suite the kit's check job runs, whole.
+    assert.equal(
+      String(ci.jobs["check"]!.with!["tests"]).trim(),
+      "python -m coverage run tests/tools/py/count.py registry/tests coverage/register-tests.json && python -m coverage xml && python3 tests/tools/ratchet.py tests register --report coverage/register-tests.json || { python -m coverage report --show-missing --skip-covered; exit 1; }",
+    );
   });
 
   it("the mutation runs read the repository and nothing else", () => {
