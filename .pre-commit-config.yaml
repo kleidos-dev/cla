@@ -12,7 +12,7 @@ repos:
   # The quality kit's hooks (kleidos-dev/.github, docs/quality.md): nothing of
   # them is held here, and Dependabot moves the rev.
   - repo: https://github.com/kleidos-dev/.github
-    rev: v3.1.2
+    rev: v3.4.0
     hooks:
       - id: kleidos-kit
       - id: kleidos-commit-msg
